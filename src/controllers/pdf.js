@@ -5,12 +5,28 @@ function s3Key(projectName, fileId) {
   return `papers/${projectName}/${fileId}.pdf`;
 }
 
+function getPdfMetaCollection(projectName) {
+  return getClient().db(projectName).collection('PdfMeta');
+}
+
 // GET /pdf_metadata/:projectName/:fileid
 exports.getMetadata = async (req, res) => {
   const { projectName, fileid } = req.params;
 
   try {
+    // 1. MongoDB 캐시에서 먼저 조회
+    const cached = await getPdfMetaCollection(projectName).findOne({ fileId: fileid });
+    if (cached) {
+      return res.status(200).json({ size: cached.size });
+    }
+
+    // 2. 캐시 미스 → S3에서 조회 후 캐싱
     const metadata = await s3Service.headPdf(s3Key(projectName, fileid));
+    await getPdfMetaCollection(projectName).updateOne(
+      { fileId: fileid },
+      { $set: { fileId: fileid, size: metadata.size } },
+      { upsert: true },
+    );
     res.status(200).json({ size: metadata.size });
   } catch (err) {
     if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
@@ -34,6 +50,14 @@ exports.uploadPdf = async (req, res) => {
   try {
     const key = s3Key(projectName, fileId);
     await s3Service.uploadPdf(key, pdfData);
+
+    // 크기를 MongoDB에 캐싱
+    await getPdfMetaCollection(projectName).updateOne(
+      { fileId },
+      { $set: { fileId, size: pdfData.length } },
+      { upsert: true },
+    );
+
     res.json({ message: 'PDF uploaded successfully to S3' });
   } catch (error) {
     console.error('Error during upload:', error);
@@ -46,38 +70,30 @@ exports.listPdfs = async (req, res) => {
   const { projectName } = req.params;
 
   try {
-    const prefix = `papers/${projectName}/`;
-    const keys = await s3Service.listPdfs(prefix);
-
-    // S3 키에서 fileId 추출: papers/{projectName}/{fileId}.pdf → fileId
-    const fileids = keys.map((key) => {
-      const filename = key.replace(prefix, '');
-      return filename.replace('.pdf', '');
-    });
-
-    res.json({ fileids });
-
-    // 고아 PDF 정리: SaveFile에 없는 PDF를 S3에서 삭제
     const client = getClient();
     const db = client.db(projectName);
     const collection = db.collection('SaveFile');
     const data = await collection.find().toArray();
 
+    // SaveFile에서 논문 타입인 항목의 _id를 fileId 목록으로 반환
     const validFileIds = data
       .filter((item) => item.type === 'GX.MAROScientificPaper' && item._id)
       .map((item) => item._id.toString());
 
-    for (const key of keys) {
-      const fileId = key.replace(prefix, '').replace('.pdf', '');
-      if (!validFileIds.includes(fileId)) {
-        try {
-          await s3Service.deletePdf(key);
-          console.log(`Deleted orphan PDF from S3: ${fileId}`);
-        } catch (err) {
-          console.error(`Failed to delete orphan PDF: ${fileId}`, err);
+    res.json({ fileids: validFileIds });
+
+    // 고아 PDF 정리는 백그라운드로 (응답 차단 안 함)
+    const prefix = `papers/${projectName}/`;
+    s3Service.listPdfs(prefix).then((keys) => {
+      for (const key of keys) {
+        const fileId = key.replace(prefix, '').replace('.pdf', '');
+        if (!validFileIds.includes(fileId)) {
+          s3Service.deletePdf(key)
+            .then(() => console.log(`Deleted orphan PDF from S3: ${fileId}`))
+            .catch((err) => console.error(`Failed to delete orphan PDF: ${fileId}`, err));
         }
       }
-    }
+    }).catch((err) => console.error('Orphan cleanup failed:', err));
   } catch (error) {
     console.error('Error listing PDFs:', error);
     res.status(500).json({ error: 'An error occurred' });
