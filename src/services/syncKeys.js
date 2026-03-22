@@ -51,6 +51,20 @@ function rotateKey(wsId, projectName) {
   projectUploadKeys.set(projectName, newKey);
 }
 
+// 프로젝트에 연결된 모든 클라이언트에게 메시지 전송
+function broadcastToProject(projectName, message) {
+  const payload = typeof message === 'string' ? message : JSON.stringify(message);
+
+  clientProjects.forEach((proj, wsId) => {
+    if (proj === projectName) {
+      const ws = clients.get(wsId);
+      if (ws && ws.readyState === 1) { // WebSocket.OPEN === 1
+        ws.send(payload);
+      }
+    }
+  });
+}
+
 function debugLog() {
   clientProjects.forEach((v, k) => console.log(`client ${k} mongoDB: ${v}`));
   projectUploadKeys.forEach((v, k) => console.log(`MongoDB ${k} key: ${v}`));
@@ -64,5 +78,6 @@ module.exports = {
   onLoadData,
   checkKey,
   rotateKey,
+  broadcastToProject,
   debugLog,
 };

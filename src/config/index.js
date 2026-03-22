@@ -12,8 +12,7 @@ module.exports = {
     s3Bucket: process.env.AWS_S3_BUCKET || 'garden-of-papers',
   },
   grobidUrl: process.env.GROBID_URL || 'http://localhost:8070',
-  llm: {
-    apiKey: process.env.LLM_API_KEY,
-    apiUrl: process.env.LLM_API_URL,
-  },
+  s2ApiKey: process.env.S2_API_KEY || '',
+  serpApiKey: process.env.SERPAPI_KEY || '',
+  geminiApiKey: process.env.GEMINI_API_KEY || '',
 };

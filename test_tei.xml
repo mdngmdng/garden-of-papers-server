@@ -1,0 +1,1499 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">Garden of Papers: Finding, Reading, and Organizing Research Papers in a Visual, Integrated, and Flexible Workspace</title>
+				<funder>
+					<orgName type="full">DRB-KAIST SketchTheFuture Research Center</orgName>
+				</funder>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability status="unknown"><licence/></availability>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Donghyeok</forename><surname>Ma</surname></persName>
+							<email>donghyeok.ma@kaist.ac.kr</email>
+						</author>
+						<author>
+							<persName><forename type="first">Hanbee</forename><surname>Jang</surname></persName>
+							<email>hanbee.jang@kaist.ac.kr</email>
+						</author>
+						<author>
+							<persName><forename type="first">Joon</forename><forename type="middle">Hyub</forename><surname>Lee</surname></persName>
+							<email>joonhyub.lee@kaist.ac.kr</email>
+						</author>
+						<author>
+							<persName><forename type="first">Seok-Hyung</forename><surname>Bae</surname></persName>
+							<email>seokhyung.bae@kaist.ac.kr</email>
+						</author>
+						<author>
+							<affiliation key="aff0">
+								<orgName type="department">Department of Industrial Design KAIST</orgName>
+								<address>
+									<settlement>Daejeon</settlement>
+									<country key="KR">Republic of Korea</country>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<affiliation key="aff1">
+								<orgName type="department">Department of Industrial Design KAIST</orgName>
+								<address>
+									<settlement>Daejeon</settlement>
+									<country key="KR">Republic of Korea</country>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<affiliation key="aff2">
+								<orgName type="department">DRB-KAIST SketchTheFuture Research Center KAIST</orgName>
+								<address>
+									<settlement>Daejeon</settlement>
+									<country key="KR">Republic of Korea</country>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<affiliation key="aff3">
+								<orgName type="department">Department of Industrial Design KAIST</orgName>
+								<orgName type="institution">UIST &apos;25</orgName>
+								<address>
+									<settlement>Daejeon Busan</settlement>
+									<country key="KR">Republic of Korea</country>
+								</address>
+							</affiliation>
+						</author>
+						<title level="a" type="main">Garden of Papers: Finding, Reading, and Organizing Research Papers in a Visual, Integrated, and Flexible Workspace</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date/>
+						</imprint>
+					</monogr>
+					<idno type="MD5">1AD09DB79F4297CAC0BF0EDCC62BD015</idno>
+					<idno type="DOI">10.1145/3746059.3747637</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.2" ident="GROBID" when="2026-03-21T04:57+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<label type="revision">a91ee48</label>
+					<label type="parameters">startPage=-1, endPage=-1, consolidateCitations=0, consolidateHeader=0, consolidateFunders=0, includeRawAffiliations=false, includeRawCitations=false, includeRawCopyrights=false, generateTeiIds=false, generateTeiCoordinates=[ref, biblStruct], sentenceSegmentation=true, flavor=null</label>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<textClass>
+				<keywords>Literature review, node-link diagram</keywords>
+			</textClass>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p><s>Figure 1: In our novel interactive system, Garden of Papers, the researcher can use sketch-based pen and multi-touch gestures on a 2D canvas to (a) find new papers using citation relationships, (b) read papers and jot down thoughts directly within the same workspace, and (c) organize papers based on these citation relationships and thoughts.</s><s>(d) Beyond simply finding new papers that cite or are cited by seed papers, the researcher can intuitively identify foundational papers (stem papers), intermediate papers (branch papers), and converging papers (fruit papers).</s></p><p><s>The researcher can also keep incomplete queries and return to them later (fertilizing).</s><s>(e) Beyond simply reading papers in traditional PDF viewers, the researcher can immediately bring additional materials to the workspace and peruse them side by side (sprouting), while seamlessly transitioning between finding, reading, and organizing activities (switching).</s><s>(f) Beyond simply storing papers in folders, the researcher can arrange them into meaningful clusters (zoning), create new connections between clusters (grafting), and remove unnecessary ones (pruning), cultivating the research landscape as if tending a garden.</s></p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<facsimile>
+		<surface n="1" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="2" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="3" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="4" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="5" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="6" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="7" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="8" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="9" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="10" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="11" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="12" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="13" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="14" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+		<surface n="15" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0"/>
+	</facsimile>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">INTRODUCTION</head><p><s>Researchers write Related Work sections to explain that their papers are based on an existing body of knowledge, differ from it, and contribute to it.</s><s>To do so, they investigate hundreds of papers over several weeks or months, cite dozens of related papers, and describe their relationships in writing.</s></p><p><s>A common method of investigating related papers is to first find seed papers that are considered highly relevant and then conduct an exhaustive survey of the papers that the seed papers cite and the papers that cite the seed papers <ref type="bibr" coords="2,183.42,350.81,9.25,7.94" target="#b3">[5,</ref><ref type="bibr" coords="2,194.91,350.81,6.17,7.94" target="#b4">6]</ref>.</s><s>By doing so, researchers can collect a comprehensive list of old and new papers on the topic.</s></p><p><s>However, each paper usually cites dozens of others.</s><s>Also, it may be cited by hundreds of others.</s><s>Therefore, as the above process is repeated, the number of papers to collect can increase exponentially.</s><s>At this point, it is easy for researchers to feel anxious about missing out on important papers, overwhelmed by the growing pile of papers to read and analyze, and frustrated by the lack of a visual representation to help them see the big picture.</s></p><p><s>We thus present Garden of Papers, a novel interactive system designed to assist researchers in conducting literature reviews.</s><s>This system is the first to integrate graph-based paper finding, reading, and organizing within a unified workspace, with all features translated into elegant and intuitive pen and multi-touch gestures.</s><s>Specifically, the system allows users to find papers by simply sketching their citation relationships with other papers on a 2D canvas.</s><s>By repeating this intuitive process, users can construct node-link diagrams composed of paper nodes and citation links, leveraging their visual thinking and spatial memory.</s><s>As users read the collected papers directly from these diagrams, they can freely annotate their thoughts and flexibly expand or restructure the diagrams as needed, progressively cultivating a personalized landscape of related papers (Figure <ref type="figure" coords="2,145.52,591.90,13.19,7.94">1a-c</ref>).</s></p><p><s>We conducted 2 user studies that complement each other and found 9 usage patterns facilitated by our system during literature review processes (Figure <ref type="figure" coords="2,148.27,624.78,13.48,7.94">1d-f</ref>).</s><s>We describe these patterns using gardening metaphors to reflect the organic and evolving nature of literature reviews.</s></p><p><s>This paper makes the following contributions:</s></p><p><s>• We designed Garden of Papers, a novel interactive system that supports literature reviews by enabling researchers to construct and navigate node-link diagrams of papers and citations through sketch-based interactions.</s></p><p><s>• We implemented a proof-of-concept system and conducted a short-term lab study (4 participants, 1 week) with researchers who had previously published papers, resulting in 7 findings (F1-F7) on how our system could potentially benefit literature reviews.</s></p><p><s>• We upgraded the system and conducted a long-term in-the-wild study (12 participants, 4 weeks), resulting in 2 additional findings (F8, F9), along with quantitative and qualitative evidence supporting all findings (F1-F9) on how our system indeed benefits real-world literature reviews.</s></p><p><s>• We summarized meaningful graph topologies of research papers and the corresponding activities that produce them through gardening metaphors, suggesting a conceptual framework for future literature review tools.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">RELATED WORK</head><p><s>In this section, we analyze previous work on visualization and interaction techniques relevant to literature reviews.</s><s>We also discuss how our proposed system differs from existing tools designed to support literature reviews.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1">Node-Link Diagrams for Papers &amp; Citations</head><p><s>In Related Work sections, researchers explain previous work relevant to their own work and position their contributions within the overall research landscape of the field.</s><s>This requires finding, reading, and classifying numerous papers, as well as understanding the citation relationships among them.</s><s>Various commercial tools have been developed to support this process of reviewing and managing related work.</s><s>Many of these tools provide list-based interfaces <ref type="bibr" coords="2,317.96,416.56,9.44,7.94" target="#b5">[7,</ref><ref type="bibr" coords="2,329.69,416.56,10.21,7.94">12]</ref>, which are suitable for presenting search results and their classifications but less so for showing the complex graphs of citation relationships among a multitude of papers within a large-scale research landscape <ref type="bibr" coords="2,389.26,449.44,13.36,7.94" target="#b19">[25]</ref>.</s></p><p><s>Previous work aimed to better visualize citation relationships among papers using node-link diagrams <ref type="bibr" coords="2,469.98,471.35,9.43,7.94" target="#b3">[5,</ref><ref type="bibr" coords="2,481.65,471.35,6.18,7.94" target="#b4">6,</ref><ref type="bibr" coords="2,490.07,471.35,6.18,7.94">9,</ref><ref type="bibr" coords="2,498.49,471.35,10.35,7.94" target="#b6">11,</ref><ref type="bibr" coords="2,511.08,471.35,10.35,7.94" target="#b13">19,</ref><ref type="bibr" coords="2,523.66,471.35,10.35,7.94" target="#b15">21,</ref><ref type="bibr" coords="2,536.25,471.35,10.35,7.94" target="#b24">30,</ref><ref type="bibr" coords="2,548.84,471.35,10.35,7.94" target="#b32">39,</ref><ref type="bibr" coords="2,317.75,482.31,10.35,7.94" target="#b34">41,</ref><ref type="bibr" coords="2,330.79,482.31,10.35,7.94">43,</ref><ref type="bibr" coords="2,343.83,482.31,10.35,7.94" target="#b38">46,</ref><ref type="bibr" coords="2,356.88,482.31,10.21,7.94" target="#b43">51]</ref>.</s><s>On a 2D canvas, papers are represented as nodes and their citations as links, helping researchers easily identify relationships between papers.</s><s>However, even when represented as a node-link diagram, an increasing number of papers can make it difficult for researchers to revisit and process the information they have found <ref type="bibr" coords="2,361.21,537.11,13.36,7.94" target="#b48">[56]</ref>.</s></p><p><s>People are known to remember an item's location better when they place it in a location of their own choosing <ref type="bibr" coords="2,509.76,559.03,13.61,7.94" target="#b35">[42,</ref><ref type="bibr" coords="2,526.72,559.03,10.21,7.94" target="#b46">54]</ref>.</s><s>Our proposed system also employs a node-link diagram, but unlike previous work that automatically determined the placement of paper nodes and the citation links between them <ref type="bibr" coords="2,493.01,591.90,9.23,7.94" target="#b4">[6,</ref><ref type="bibr" coords="2,504.20,591.90,6.10,7.94">9,</ref><ref type="bibr" coords="2,512.25,591.90,10.27,7.94" target="#b6">11,</ref><ref type="bibr" coords="2,524.47,591.90,10.27,7.94" target="#b13">19,</ref><ref type="bibr" coords="2,536.69,591.90,10.27,7.94" target="#b15">21,</ref><ref type="bibr" coords="2,548.92,591.90,10.27,7.94" target="#b24">30,</ref><ref type="bibr" coords="2,317.96,602.86,10.27,7.94" target="#b32">39,</ref><ref type="bibr" coords="2,330.33,602.86,10.27,7.94" target="#b34">41,</ref><ref type="bibr" coords="2,342.70,602.86,10.27,7.94">43,</ref><ref type="bibr" coords="2,355.08,602.86,10.27,7.94" target="#b38">46,</ref><ref type="bibr" coords="2,367.45,602.86,10.05,7.94" target="#b43">51]</ref>, it lets researchers manually position paper nodes and determine their citation links.</s><s>This approach helps researchers easily recall the position of each paper and the local structures of their research landscape <ref type="bibr" coords="2,408.93,635.74,9.33,7.94" target="#b3">[5,</ref><ref type="bibr" coords="2,420.50,635.74,10.13,7.94" target="#b41">49]</ref>.</s></p><p><s>People are also known to recognize images more easily than text <ref type="bibr" coords="2,317.96,657.66,13.61,7.94" target="#b25">[31,</ref><ref type="bibr" coords="2,333.89,657.66,10.20,7.94" target="#b44">52]</ref>.</s><s>Therefore, unlike previous work that represented nodes using abstract symbols and text labels <ref type="bibr" coords="2,452.04,668.62,9.23,7.94" target="#b3">[5,</ref><ref type="bibr" coords="2,462.80,668.62,6.10,7.94" target="#b4">6,</ref><ref type="bibr" coords="2,470.44,668.62,6.10,7.94">9,</ref><ref type="bibr" coords="2,478.08,668.62,10.27,7.94" target="#b6">11,</ref><ref type="bibr" coords="2,489.88,668.62,10.27,7.94" target="#b13">19,</ref><ref type="bibr" coords="2,501.69,668.62,10.27,7.94" target="#b15">21,</ref><ref type="bibr" coords="2,513.50,668.62,10.27,7.94" target="#b24">30,</ref><ref type="bibr" coords="2,525.30,668.62,10.27,7.94" target="#b32">39,</ref><ref type="bibr" coords="2,537.11,668.62,10.27,7.94" target="#b34">41,</ref><ref type="bibr" coords="2,548.92,668.62,10.27,7.94">43,</ref><ref type="bibr" coords="2,317.75,679.57,10.28,7.94" target="#b38">46,</ref><ref type="bibr" coords="2,330.27,679.57,10.28,7.94" target="#b41">49,</ref><ref type="bibr" coords="2,342.80,679.57,10.07,7.94" target="#b43">51]</ref>, our system represents nodes as thumbnails that display actual pages of papers <ref type="bibr" coords="2,402.36,690.53,9.41,7.94" target="#b1">[2,</ref><ref type="bibr" coords="2,414.01,690.53,10.19,7.94" target="#b25">31]</ref>, along with any annotations left on those pages <ref type="bibr" coords="2,364.45,701.49,13.49,7.94" target="#b45">[53]</ref>, helping researchers more easily recognize and remember specific papers and their citation relationships within a complex, overall research landscape.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2">Interactions for Node-Link Diagrams</head><p><s>To find and organize papers with a node-link diagram, user interactions for effectively expressing papers and their citation links are needed.</s><s>Xia et al. <ref type="bibr" coords="3,120.76,159.03,14.85,7.94" target="#b47">[55]</ref> proposed a system that interprets quickly drawn sketches and transforms them into interactive objects, enabling users to continue their work without disrupting their flow of thought.</s><s>Subramonyam et al. <ref type="bibr" coords="3,160.71,191.90,14.62,7.94" target="#b42">[50]</ref> proposed a system that converts portions of text highlighted by users into a node-link diagram.</s><s>Similarly, our system, when researchers quickly sketch papers and their citation relationships, automatically retrieves the corresponding papers from academic databases and transforms them into interactive paper nodes and citation links, enabling researchers to organically generate new ideas and further develop them.</s></p><p><s>To search for and add new information, many systems rely on a search box that users can type text into, while some systems make use of node-link diagrams.</s><s>For example, when users create and label a node as an "artist" and create a link indicating that the node has been "influenced by" another known artist node, the system searches for people who match those conditions <ref type="bibr" coords="3,228.63,323.41,13.40,7.94" target="#b12">[18,</ref><ref type="bibr" coords="3,244.22,323.41,10.27,7.94" target="#b20">26,</ref><ref type="bibr" coords="3,256.69,323.41,6.70,7.94" target="#b30">37</ref>].</s><s>In our system, researchers can sketch a blank sheet and its relationships with existing papers, along with keywords, to formulate diverse search conditions.</s><s>By combining keyword-based and graph-based queries, researchers can efficiently find desired papers and integrate them to the existing node-link diagram with minimal effort.</s></p><p><s>As new papers are added, new citation relationships emerge, causing the node-link diagrams of papers and citations to rapidly expand in size and complexity.</s><s>We thus designed a coherent set of effective interactions for selecting and moving nodes, forming clusters, and creating and deleting links, by referring to various pen and multi-touch interaction techniques <ref type="bibr" coords="3,199.32,443.96,13.51,7.94" target="#b14">[20,</ref><ref type="bibr" coords="3,215.06,443.96,10.13,7.94" target="#b47">55]</ref>.</s><s>We also designed interactions for reading and annotating papers that harmonize with the node-link diagram interactions.</s><s>In addition, we implemented mouse and keyboard interactions to be compatible with the pen and multi-touch interactions originally designed for tablets, enabling researchers to use them on desktops as well.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.3">Tools for Supporting Literature Reviews</head><p><s>Literature review is a nonlinear process in which the tasks of finding, reading, and organizing papers frequently alternate <ref type="bibr" coords="3,239.79,548.07,13.22,7.94" target="#b7">[13]</ref>.</s><s>Tools that support this process should enable such frequent task switching without disturbing the continuous flow of thought <ref type="bibr" coords="3,235.08,569.99,13.22,7.94" target="#b50">[58]</ref>.</s><s>Most of the aforementioned work proposed systems specialized for individual tasks, but some attempted to integrate multiple tasks.</s><s>For example, while researchers are reading a paper, such systems may display a list of papers cited in a selected portion of the paper <ref type="bibr" coords="3,247.16,613.82,13.38,7.94" target="#b16">[22]</ref>, provide brief summaries of cited papers in the margins <ref type="bibr" coords="3,227.85,624.78,13.41,7.94" target="#b33">[40]</ref>, present a list of new papers retrieved through keyword-based search <ref type="bibr" coords="3,263.05,635.74,14.85,7.94" target="#b29">[36]</ref> and large language models <ref type="bibr" coords="3,137.20,646.70,13.28,7.94" target="#b17">[23]</ref>, or recommend new papers that match the content the researchers have previously read and their known research interests <ref type="bibr" coords="3,120.31,668.62,9.39,7.94" target="#b2">[4]</ref>.</s></p><p><s>To the best of our knowledge, our system is the first to integrate all three tasks of finding, reading, and organizing papers within a single, unified 2D workspace.</s><s>In this workspace, researchers can use node-link diagrams to search for and collect papers, construct an overall research landscape, read papers actively while recording ideas and notes, and develop the node-link diagrams further, which can lead to a virtuous cycle.</s></p><p><s>We previously introduced a subset of the interaction techniques for such a system <ref type="bibr" coords="3,387.52,142.59,13.60,7.94" target="#b21">[27,</ref><ref type="bibr" coords="3,403.93,142.59,10.20,7.94" target="#b22">28]</ref>, but did not validate its usefulness in actual research practices.</s><s>In this paper, we present a long-term inthe-wild study involving researchers from diverse fields, reporting both quantitative and qualitative findings that demonstrate our system's ability to effectively support literature reviews in actual research practices.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">PROOF OF CONCEPT</head><p><s>In this section, we derive design goals for a novel interactive system supporting literature reviews from analysis of related work and introduce interactions that meet these goals.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">Design Goals</head><p><s>We aim to address the cognitive load researchers face when finding, reading, and organizing a large number of papers.</s><s>To this end, we set 3 key design goals that align with the natural flow of thought:</s></p><p><s>• Visual.</s><s>The system should visualize all information in alignment with researchers' intentions on a 2D canvas; the system should represent citation relationships between papers through a nodelink diagram; the system should support finding papers using a node-link diagram.</s></p><p><s>• Integrated.</s><s>The system should support the complete workflow of finding, reading, and organizing papers within a single workspace, enabling a continuous flow of researchers' thinking.</s></p><p><s>• Flexible.</s><s>The system should allow researchers to switch seamlessly at any time between finding, reading, and organizing papers; the system should allow researchers to freely utilize every region of a 2D canvas for different purposes; the system should allow researchers to freely utilize papers and sticky notes for different purposes.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">Interactions</head><p><s>Building on our design goals, we introduce novel node-link diagram techniques that allow researchers to find, read, and organize papers directly on a 2D canvas.</s><s>We implemented a proof-of-concept system based on pen and multi-touch inputs, as these modalities best demonstrate our sketch-based interactions.</s></p><p><s>• Find.</s><s>Researchers can create a blank sheet on the canvas and specify search conditions to discover and collect related papers (Figure <ref type="figure" coords="3,346.02,613.82,3.44,7.94" target="#fig_0">2</ref>) that match various keywords and citation relationships (Figure <ref type="figure" coords="3,345.89,624.78,2.94,7.94" target="#fig_1">3</ref>).</s></p><p><s>• Read.</s><s>Researchers can flip through the full-text pages of collected papers directly on the canvas (Figure <ref type="figure" coords="3,491.64,646.70,7.44,7.94" target="#fig_2">4a</ref>) and jot down thoughts that come to mind while reading (Figure <ref type="figure" coords="3,502.73,657.66,6.62,7.94" target="#fig_2">4b</ref>).</s></p><p><s>• Organize.</s><s>Researchers can selectively display specific citation links among paper nodes (Figure <ref type="figure" coords="3,435.41,679.57,6.20,7.94" target="#fig_2">4c</ref>), select multiple nodes and links to manipulate simultaneously (Figure <ref type="figure" coords="3,454.30,690.53,6.54,7.94" target="#fig_2">4d</ref>), and remove unnecessary entities from diagrams (Figure <ref type="figure" coords="3,430.99,701.49,6.41,7.94" target="#fig_2">4e</ref>).</s><s><ref type="figure" coords="4,195.36,173.64,14.10,8.97">(c-d</ref>) Then, the recognized keywords and citation relationships from the sketch are used as search conditions to find papers in an external database <ref type="bibr" coords="4,279.21,184.60,14.73,8.97" target="#b9">[15]</ref>.</s><s>(e) The user can collect papers at desired locations on the canvas.</s><s>Citation links to and from the collected papers are automatically generated.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">SHORT-TERM LAB STUDY</head><p><s>To understand how our proof-of-concept system can support literature reviews in a controlled setting and to identify its limitations for real-world use, we conducted a short-term lab study.</s><s>Over the course of 1 week, we asked experienced researchers from various fields to use our system for literature reviews, and conducted preand post-interviews with them to compare our system against their usual workflows.</s></p><p><s>• Participants.</s><s>We recruited 4 researchers (2 males and 2 females, ages 26-29) from various fields (Table <ref type="table" coords="4,212.84,593.68,2.88,7.94">1</ref>).</s><s>All participants had previously written and published research papers, with an average of 5.0 years of research experience and 3.5 publications as first authors or co-authors.</s></p><p><s>• Apparatus.</s><s>We implemented our system using Unity and built a tablet application supporting pen and multi-touch inputs.</s><s>We used Selvy Pen SDK <ref type="bibr" coords="4,111.49,659.43,14.84,7.94" target="#b36">[44]</ref> to recognize handwriting, and Serp API <ref type="bibr" coords="4,278.17,659.43,13.48,7.94" target="#b37">[45]</ref>, a third-party API for Google Scholar <ref type="bibr" coords="4,193.90,670.39,13.49,7.94" target="#b9">[15]</ref>, and Semantic Scholar API <ref type="bibr" coords="4,70.24,681.35,14.85,7.94" target="#b18">[24]</ref> to retrieve paper metadata, including the title, authors, publication venue, PDF URL, and citation relationships for each</s></p><p><s>Table 1: Participant demographics for the lab study.</s><s>G: gender, A: age, Y: years of research experience, F: number of firstauthor papers, C: number of co-author papers.</s><s>G A Y F C Major Research area P1 M 26 5 5 0 Electrical engineering Audio deep learning P2 M 26 4 1 3 Mechanical engineering Vision deep learning P3 F 29 6 0 1 Biological science Optogenetics P4 F 27 5 1 3 Biomolecular engineering RNA engineering</s></p><p><s>paper.</s><s>We deployed our system on a 14.4" Microsoft Surface Laptop Studio, a convertible device that we primarily used in tablet mode, paired with a Microsoft Slim Pen.</s></p><p><s>• Procedure.</s><s>On Day 1, we visited the participants individually at their workplaces to conduct pre-interviews about their usual literature review workflows.</s><s>We then provided 30-minute tutorial sessions, during which we demonstrated each feature of the system step by step and guided the participants through hands-on practice until they became fully familiar with it.</s><s>We also provided printed manuals describing each feature.</s><s>From Day 2 to Day 5, we visited the participants at their workplaces every day and observed them conducting literature reviews on topics of personal interest using our system.</s><s>Each supervised session lasted approximately 1 hour.</s><s>We also responded to their questions in person whenever they encountered difficulties.</s><s>After each session, we encouraged them to review the collected papers on their own to deepen their understanding and familiarity with those papers.</s></p><p><s>On Day 6, we conducted post-interviews in which we asked the participants to review their usage logs and node-link diagrams arranged by date, and to reflect on the perceived advantages and disadvantages of our system compared to their usual workflows.</s></p><p><s>• Measurements.</s><s>We recorded the total usage time of our system, the number of paper nodes, citation links, and sticky notes created and deleted over time, and the frequency and duration of all invoked system features.</s><s>We also captured screen recordings of the participants' interactions for qualitative analysis.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1">Pre-Interview</head><p><s>According to the participants, they typically begin literature review processes by conducting keyword searches in databases like Google Scholar <ref type="bibr" coords="5,83.63,443.16,13.43,7.94" target="#b9">[15]</ref>, or by exploring recent papers on publisher websites such as Nature <ref type="bibr" coords="5,110.31,454.12,14.73,7.94" target="#b40">[48]</ref> and Science [3] or prepublication repositories such as arXiv [10] and bioRxiv <ref type="bibr" coords="5,166.01,465.08,9.27,7.94">[8]</ref>.</s><s>They prioritize papers based on the title, venue, publication year, citation count, abstract, figures, and introduction.</s><s>Additionally, they explore papers cited by these papers, as well as papers that cite them.</s></p><p><s>As the number of papers grows, the participants utilize tools such as Mendeley [12], Notion [34], Google Sheets <ref type="bibr" coords="5,234.90,519.87,13.22,7.94" target="#b10">[16]</ref>, and Google Slides <ref type="bibr" coords="5,78.17,530.83,14.85,7.94" target="#b11">[17]</ref> to group related papers for easy retrieval later.</s><s>They organize papers into dedicated folders within Mendeley, and create separate Notion documents to summarize key points, take notes, and collect notable figures (P1, P2).</s><s>Additionally, they record metadata and assign custom keywords to each paper in Google Sheets, enabling easy retrieval through keyword filtering (P3).</s><s>Finally, they use Google Slides to consolidate notes and notable figures from multiple papers into coherent narrative blocks (P4).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">Results</head><p><s>Over the 1-week period, the 4 participants used our system for a total of 14 hours and 16 minutes (Table <ref type="table" coords="5,216.13,657.66,3.00,7.94" target="#tab_1">2</ref>).</s><s>On average, each participant spent 3 hours and 34 minutes using the system, creating 4 canvases containing 162 paper nodes, 148 citation links, and 147 sticky notes.</s><s>Each canvas contained 40.5 paper nodes and 37.0 citation links from 101.5 queries using keyword-only (27.8 (27.4%)), graph-only (45.5 (44.8%)), and both (28.3 (27.9%)) search conditions, while also viewing all citation relationships 33.5 times (Table <ref type="table" coords="5,550.59,217.71,3.00,7.94" target="#tab_1">2</ref>).</s><s>Each canvas also contained 26.8 sticky notes (Table <ref type="table" coords="5,507.50,228.67,2.94,7.94" target="#tab_1">2</ref>).</s></p><p><s>Notably, most participants (P1, P2, P3) primarily collected papers using graph-based queries, which resulted in higher numbers of automatically generated citation links (Figure <ref type="figure" coords="5,490.73,261.54,7.38,7.94" target="#fig_0">2e</ref>) than manually added ones.</s><s>In contrast, P4 mainly relied on keyword-based queries, which resulted in a higher number of manually added citation links than automatically generated ones.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.3">Post-Interview</head><p><s>Through the analysis of the results and follow-up interviews, we found 7 usage patterns in which researchers benefited from using our system's features for finding and organizing research papers (F1-F7).</s><s>Here, we compare constructing and expanding node-link diagrams from a few key papers to planting and nurturing trees in a garden, extending the commonly used term seed papers.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>4.</head><p><s>3.1 Finding Papers.</s><s>We found that the participants could identify 3 types of papers essential to conducting literature reviews (F1-F3), as well as employ a strategy for deferred discovery (F4).</s></p><p><s>• Stem paper (F1).</s><s>We found that the participants could identify papers serving as the knowledge foundation for many subsequent papers, either by querying for papers commonly cited by multiple existing papers (Figure <ref type="figure" coords="5,420.44,493.27,7.44,7.94" target="#fig_3">5a</ref>) (P1, P2) or by examining citation relationships among all collected papers (Figure <ref type="figure" coords="5,495.27,504.23,7.12,7.94" target="#fig_2">4c</ref>) (P3).</s></p><p><s>• Fruit paper (F2).</s><s>We found that the participants could identify papers that integrate knowledge from prior papers, whether close ones (self-pollination) or distant ones (cross-pollination), either by querying for papers that cite multiple existing papers (Figure <ref type="figure" coords="5,317.96,559.03,7.43,7.94" target="#fig_3">5b</ref>) (P1) or by examining citation relationships among all collected papers (Figure <ref type="figure" coords="5,372.71,569.99,7.12,7.94" target="#fig_2">4c</ref>) (P4).</s></p><p><s>• Branch paper (F3).</s><s>We found that the participants could identify intermediate papers connecting stem papers to fruit papers, illustrating how knowledge evolved over time or how alternative approaches were applied to similar problems, either by querying for papers that cite existing papers and are cited by other existing papers (Figure <ref type="figure" coords="5,373.44,635.74,7.23,7.94" target="#fig_3">5c</ref>) (P1, P2) or by examining citation relationships among all collected papers (Figure <ref type="figure" coords="5,445.75,646.70,7.12,7.94" target="#fig_2">4c</ref>) (P3, P4).</s></p><p><s>• Fertilizing (F4).</s><s>We found that the participants could accumulate spontaneous and abstract thoughts for future investigations by jotting down relevant keywords on sticky notes (Figure <ref type="figure" coords="5,547.14,679.57,7.74,7.94" target="#fig_3">5d</ref>) (P4) or blank sheets (P3, P4), which they used as placeholders for undeveloped directions of inquiry.</s><s>P2 collected a paper (brown) similar to his own research by searching for papers (beige) that cite a paper (green, left) on a 3D point dataset he had used and also cited by a survey paper (green, right) on 3D point networks.</s><s>(d) P4, specializing in RNA engineering, referred to a handwritten sticky note (green) containing keywords about proteins associated with Alzheimer's disease, then transcribed those keywords onto a blank sheet (brown) to initiate a search for related papers.</s><s>(e) P1 collected a vision-related paper (brown) on the left side and a language-related paper (green) on the right side of the search result panel.</s><s>(f) P4 collected 3 papers (green) that belonged to a group and 1 paper (brown) that belonged to another group from the search results using the same sheet (beige) and examined citation relationships among them (light blue) to determine which was most relevant to her research and should be read first.</s><s>(g) P3, specializing in optogenetics, newly learned about calcium ion reactions in cancer cells from a paper (brown) that belonged to a group and explored the highlighted citation links (light blue) to see whether previously collected papers (green) that belonged to another group mentioned these reactions.</s><s>(h) P2 removed an unnecessary citation link (brown) to disconnect a diffusion model paper (green, upper) from another generative model paper (green, lower), and constructed a visually divided research landscape (beige) focused on diffusion models for autonomous driving.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>4.3.2</head><p><s>Organizing Papers.</s><s>We found 3 additional usage patterns (F5-F7) of the participants that reflect their strategies for semantically and functionally organizing collected papers, ultimately working toward coherent storytelling across their entire research landscapes.</s></p><p><s>• Zoning (F5).</s><s>We found that the participants could designate semantic or functional regions on the canvas by clustering papers with similar topics (P1) (Figure <ref type="figure" coords="6,171.88,536.88,6.54,7.94" target="#fig_3">5e</ref>), separating unread from read papers (P2), and arranging papers in their preferred reading order (P1, P2, P4).</s></p><p><s>• Grafting (F6).</s><s>We found that the participants could create new relationships between disparate zones, representing the convergence of seemingly unrelated fields and the synthesis of new insights, by examining potentially overlooked citation relationships among collected papers (Figure <ref type="figure" coords="6,173.02,613.59,6.07,7.94" target="#fig_3">5f</ref>, g) (P3, P4) or by reorganizing papers in innovative ways (P1, P2).</s></p><p><s>• Pruning (F7).</s><s>We found that the participants could curate essential relationships between papers necessary for coherent storytelling, either by examining citation relationships among collected papers and showing necessary ones (Figure <ref type="figure" coords="6,208.78,668.38,6.98,7.94" target="#fig_2">4c</ref>) (P1, P3, P4) or hiding unnecessary ones (Figure <ref type="figure" coords="6,148.95,679.34,7.78,7.94" target="#fig_3">5h</ref>) (P1, P2, P3).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>4.3.3</head><p><s>Limitations.</s><s>All participants expressed a strong interest in using our system for their personal research projects even after their trial had ended.</s><s>However, the inherent limitations of our proofof-concept system, designed specifically for a lab study, prevented them from doing so.</s></p><p><s>• Lack of support for active reading.</s><s>We focused on testing whether the participants could easily learn our interactions and use them to find and organize research papers.</s><s>Therefore, by design, our lab study excluded the active reading of papers in our system and required the participants to study their collected papers elsewhere, on their own.</s><s>However, active reading is indispensable in realworld literature reviews, as it is during this activity that papers are organized and many new ones are discovered.</s></p><p><s>• Controlled environment and equipment.</s><s>The participants used our system in a controlled environment with provided equipment.</s><s>In reality, however, researchers find, read, and organize papers alongside various research activities, such as programming, experimenting, attending seminars, and writing papers, on devices that may not support pen or multi-touch input.</s><s>Moreover, since these activities often span multiple devices, cloud-based data synchronization is essential.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">GARDEN OF PAPERS</head><p><s>Building on the potential demonstrated in the short-term lab study, we upgraded our interactive system into a fully-fledged workspace suitable for conducting literature reviews in real-world research environments, by adding features for studying the content of collected papers and also making the system cross-platform.</s><s>We call this workspace Garden of Papers, inspired by the lab study participants' gardening-like behaviors of planting and nurturing ideas.</s></p><p><s>• Active reading.</s><s>We implemented key features commonly found in commercial PDF viewers <ref type="bibr" coords="7,179.01,336.95,9.34,7.94" target="#b0">[1]</ref>, including text selection and highlighting (Figure <ref type="figure" coords="7,130.95,347.91,6.58,7.94" target="#fig_4">6a</ref>), citation hyperlinks (Figure <ref type="figure" coords="7,248.01,347.91,6.75,7.94" target="#fig_4">6b</ref>), and text search (Figure <ref type="figure" coords="7,109.74,358.87,6.45,7.94" target="#fig_4">6c</ref>).</s><s>To give researchers versatile options for capturing their thoughts, we provided features to attach sticky notes to a specific page of a paper (Figure <ref type="figure" coords="7,192.03,380.79,7.66,7.94" target="#fig_2">4b</ref>) or directly to the paper itself (Figure <ref type="figure" coords="7,104.00,391.75,6.81,7.94" target="#fig_4">6d</ref>), and to create and attach text labels to citation links (Figure <ref type="figure" coords="7,102.61,402.71,6.50,7.94" target="#fig_4">6e</ref>).</s><s>Additionally, we implemented contextual menu interfaces to freely adjust font size, text alignment, note size, and note color (Figure <ref type="figure" coords="7,121.29,424.62,2.94,7.94" target="#fig_5">7</ref>).</s></p><p><s>• Cross-platform.</s><s>In implementing cross-platform compatibility for both desktop and tablet environments, we ensured that all system interactions could be performed with mouse and keyboard inputs, in addition to pen and touch inputs (Figure <ref type="figure" coords="7,241.83,468.46,2.96,7.94" target="#fig_6">8</ref>).</s><s>We also developed a cloud database system to seamlessly synchronize data across devices, enabling researchers to utilize the system flexibly in diverse research settings.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6">LONG-TERM IN-THE-WILD STUDY</head><p><s>We conducted a long-term in-the-wild study in which researchers from various fields used our system on their own devices to find, read, and organize papers necessary for their personal research.</s><s>The goal was to verify whether our system could help experienced researchers conduct actual literature reviews in real-world settings, beyond controlled environments.</s></p><p><s>To enable a more meaningful evaluation of the holistic user experience, we chose to examine our system in its entirety and without arbitrary restrictions, rather than individual features in isolation and out of context.</s><s>This choice was in consideration of the nature of our system, which is complex and highly integrated, with many features often used together in a continuous workflow.</s></p><p><s>Moreover, we chose not to include a common baseline condition in this study.</s><s>Pre-interviews during our lab study revealed that researchers use different applications for each task, with combinations varying by field and personal preference.</s><s>As no single combination  could reasonably represent all participants' workflows, imposing a uniform baseline would misrepresent their actual practices and thus hinder an accurate assessment of how well our system fits into and enhances them.</s></p><p><s>• Participants.</s><s>We recruited 12 researchers (6 males and 6 females, ages 25-32) from diverse fields (Table <ref type="table" coords="7,476.73,668.62,2.88,7.94" target="#tab_2">3</ref>).</s><s>All participants had previously written and published research papers, with an average of 4.3 years of research experience and 4.4 publications as first authors or co-authors.</s><s>All of them owned a desktop and a tablet.</s><s>• Apparatus.</s><s>We implemented our system using Unity and built multiple platform-specific clients: a desktop version with mouse and keyboard inputs, and a tablet version with pen and multi-touch inputs.</s><s>We used Serp API <ref type="bibr" coords="8,145.83,317.93,13.23,7.94" target="#b37">[45]</ref>, a third-party API for Google Scholar <ref type="bibr" coords="8,53.80,328.89,13.22,7.94" target="#b9">[15]</ref>, and Semantic Scholar API <ref type="bibr" coords="8,167.73,328.89,13.22,7.94" target="#b18">[24]</ref>, to retrieve paper metadata, including the title, authors, publication venue, PDF URL, and citation relationships for each paper.</s><s>We used MongoDB Atlas <ref type="bibr" coords="8,259.25,350.81,14.85,7.94" target="#b27">[33]</ref> for a cloud database and Google Cloud Platform <ref type="bibr" coords="8,212.86,361.77,14.74,7.94" target="#b8">[14]</ref> for a cloud server in implementing cross-platform data synchronization.</s><s>We asked the participants to install our system on their personal desktops and tablets.</s></p><p><s>• Procedure.</s><s>On Day 1, we visited the participants individually at their workplaces to introduce the overall purpose and procedure of the study.</s><s>We then provided 30-minute tutorial sessions, during which we demonstrated each feature of both the desktop and tablet applications step by step and guided the participants through handson practice until they became fully familiar with it.</s><s>We also provided online manuals with video clips describing each feature, which the participants could refer to at any time.</s></p><p><s>From Day 2 to Day 29, the participants used the system freely as part of their ongoing literature reviews.</s><s>They were free to choose how and when to use the system on their preferred devices, though we encouraged them to use the system instead of their existing tools and methods.</s><s>Each week, we held regular 30-minute in-person sessions and responded to any questions they had.</s></p><p><s>On Day 30, we asked the participants to complete a 5-point Likert scale survey assessing their satisfaction with our system.</s><s>We then conducted post-interviews in which we asked the participants to review their usage logs and node-link diagrams arranged by date, demarcate clusters on their canvases manually, and reflect on the perceived advantages and disadvantages of our system compared to their usual workflows.</s></p><p><s>• Measurements.</s><s>We recorded the total usage time of our system, along with the number of paper nodes, citation links, and sticky notes created, deleted, and manipulated over time.</s><s>In addition, we counted the number of the participant-defined clusters and the number of nodes and links within and across the clusters.</s><s>Specifically, we counted stem papers that had at least two incoming citation links, fruit papers that had at least two outgoing links, and branch papers that had both at least one incoming and one outgoing link, all within the same cluster.</s><s>We also recorded the frequency and duration of all invoked system features and classified them by task and device.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.1">Results</head><p><s>Over the 4-week period, the 12 participants used our system for a total of 83 hours and 31 minutes, creating 21 canvases (Table <ref type="table" coords="8,551.79,170.38,3.48,7.94" target="#tab_3">4</ref>) containing 88 clusters (Table <ref type="table" coords="8,422.91,181.34,2.88,7.94">5</ref>), 503 paper nodes, 344 citation links, and 498 sticky notes (Table <ref type="table" coords="8,419.09,192.30,2.94,7.94" target="#tab_3">4</ref>), by invoking system features 39,520 times (Figure <ref type="figure" coords="8,368.26,203.26,2.94,7.94">9</ref>).</s></p><p><s>On average, the participants spent 3 hours and 59 minutes on each canvas, finding papers for 28 minutes (11.9%), reading papers for 2 hours and 37 minutes (66.0%), and organizing papers for 53 minutes (22.1%) (Table <ref type="table" coords="8,400.18,247.10,2.88,7.94" target="#tab_3">4</ref>).</s><s>Each canvas contained 4.2 clusters (Table <ref type="table" coords="8,317.96,258.05,2.88,7.94">5</ref>), 24.0 paper nodes, 16.4 citation links, and 23.7 sticky notes (Table <ref type="table" coords="8,317.75,269.01,2.92,7.94" target="#tab_3">4</ref>).</s><s>Specifically, out of the 24.0 paper nodes were 1.2 stem, 1.9 fruit, and 2.7 branch paper nodes (Table <ref type="table" coords="8,452.01,279.97,3.13,7.94">5</ref>, left).</s><s>Also, out of the 16.4 citation links were 10.1 within-cluster and 5.3 across-cluster citation links (Table <ref type="table" coords="8,362.66,301.89,3.07,7.94">5</ref>, right).</s></p><p><s>On average, the participants switched between finding, reading, and organizing tasks 304.6 times per canvas, spending 54.8 seconds on each task (Table <ref type="table" coords="8,396.00,334.77,3.13,7.94">6</ref>, Figure <ref type="figure" coords="8,432.58,334.77,3.00,7.94">9</ref>).</s><s>Out of the 12 participants, 10 participants who used both desktop and tablet devices invoked 69.5% of features on desktop and 30.5% on tablet (Table <ref type="table" coords="8,521.23,356.68,2.94,7.94">6</ref>).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.2">Survey</head><p><s>In the 5-point Likert scale survey assessing the participants' satisfaction with our system (Figure <ref type="figure" coords="8,423.33,406.40,6.40,7.94">10</ref>), all survey items scored above the neutral point (Q1-Q15, average: 4.4/5.0).</s><s>Specifically, the system's features (Q1-Q9: 4.4/5.0),</s><s>usability (Q10-Q11: 3.8/5.0)</s><s>and usefulness (Q12-Q15: 4.7/5.0)</s><s>all received scores above neutral.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7">DISCUSSION</head><p><s>Based on the findings from both the short-term lab study and the long-term in-the-wild study, this section discusses how our system can benefit literature reviews, using gardening metaphors (Figure <ref type="figure" coords="8,317.75,510.91,7.47,7.94" target="#fig_8">11</ref>) to illustrate how the participants could make sense of and actively cultivate their evolving research landscapes.</s></p><p><s>We conducted a quantitative analysis of usage logs and a qualitative analysis of survey responses and follow-up interview transcripts.</s><s>The analyses confirmed the previous 7 findings on usage patterns from the lab study (F1-F7), and revealed 2 additional findings on usage patterns arising from the added features for active reading (F8) and cross-platform support (F9).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.1">Finding Papers</head><p><s>During the long-term in-the-wild study, the 4 previously identified usage patterns for finding papers were confirmed: identifying stem (F1), fruit (F2), and branch (F3) papers, and fertilizing (F4).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.1.1">Stem paper (F1).</head><p><s>On average, each canvas contained 1.2 stem papers that each had 2.7 incoming citation links (Table <ref type="table" coords="8,550.59,679.57,3.00,7.94">5</ref>).</s><s>The participants agreed that the system was helpful for identifying foundational papers (Q1: 4.5/5.0)</s><s>(Figure <ref type="figure" coords="8,467.45,701.49,6.49,7.94">10</ref>).</s><s>Table 5: Graph topology and graph layout per canvas during the in-the-wild study.</s><s>†: the average number of links per node, ‡: the average number of nodes or links per cluster, ∥: the number of nodes or clusters connected by across-cluster links.</s><s>5.0 7 18 2.6 10 1.4 8 38 13 4.8 1.6 18 20 8 P3-A 5 18 3.6 10 25 2.5 6 18 3.0 10 1.7 8 38 17 4.8 2.1 23 18 7 P4-A 4 11 2.8 1 5 5.0 3 5 1.7 5 1.7 4 31 15 7.8 3.8 3 4 2 P5-A 2 4 2.0 2 6 3.0 4 5 1.3 4 1.0 4 11 7 2.8 1.8 3 4 3 P5-B 1 3 3.0 2 5 2.5 2 2 1.0 2 1.0 4 13 7 3.3 1.8 2 3 3 P5-C 0 0 0.0 0 0 0.0 3 5 1.7 3 1.0 3 10 4 3.3 1.3 2 3 3 P6-A 2 4 2.0 1 2 2.0 2 3 1.5 5 2.5 8 21 7 2.6 0.9 0 0 0 P7-A 1 3 3.0 3 7 2.3 4 6 1.5 6 1.5 4 23 14 5.8 3.5 0 0 0 P7-B 2 4 2.0 2 6 3.0 3 6 2.0 6 2.0 3 11 10 3.7 3.3 2 3 2 P7-C 3 10 3.3 1 5 5.0 3 5 1.7 10 3.3 2 7 5 3.5 2.5 10 7 2 P8-A 1 2 2.0 2 5 2.5 4 7 1.8 4 1.0 2 7 6 3.5 3.0 3 5 2 P8-B 1 2 2.0 1 2 2.0 0 0 0.0 0 0.0 3 6 3 2.0 1.0 1 2 2 P9-A 0 0 0.0 0 0 0.0 0 0 0.0 0 0.0 4 31 1 7.8 0.3 0 0 0 P10-A 0 0 0.0 1 3 3.0 0 0 0.0 0 0.0 3 21 3 7.0 1.0 0 0 0 P10-B 1 2 2.0 2 5 2.5 2 7 3.5 3 1.5 2 21 11 10.5 5.5 1 2 2 P11-A 0 0 0.0 3 7 2.3 0 0 0.0 0 0.0 3 21 7 7.0 2.3 3 5 2 P12-A 2 4 2.0 2 6 3.0 7 9 1.3 11 1.6 4 31 17 7.8 4.3 3 4 2 P12-B 0 0 0.0 0 0 0.0 5 12 2.4 16 3.2 4 24 11 6.0 2.8 11 13 4 Total 25 67 29.7 39 162 81.2 56 111 29.8 96 25.4 88 445 197 112.8 50.5 111 122 52 Avg.</s><s>1.2 3.2 2.7 1.9 7.7 4.2 2.7 5.3 2.0 4.6 1.7 4.2 22.5 10.1 5.4 2.4 5.3 5.8 2.5</s></p><p><s>For example, P8, who is researching robot vision, wanted to explore related work starting from a recent paper recommended to her in a lab seminar.</s><s>She began by collecting the references cited in that paper, then recursively gathered the references cited in those papers to trace further back through the literature, eventually arriving at foundational papers commonly cited by many of her accumulated papers (Figure <ref type="figure" coords="9,109.90,680.11,10.45,7.94" target="#fig_9">12a</ref>).</s><s>She likened this experience to simultaneous localization and mapping (SLAM), a common technique in her field, where one becomes better aware of one's surroundings as well as one's place in it, at the same time (P8-A).</s></p><p><s>P5, who is researching reinforcement learning for quadrupedal robots, sought to extend his work to robots with different leg configurations, where his previous techniques were no longer effective.</s><s>Unsure of which specific keywords to search for, he instead discovered several highly cited papers on more generalizable reinforcement learning techniques through YouTube.</s><s>He used these papers For example, the aforementioned P7 also began constructing a diagram out of papers he had read in the past, in order to identify papers that can serve as performance baselines against which to compare his own work.</s><s>He was specifically looking for papers that were grounded in foundational work and had sufficiently influenced subsequent work.</s><s>His usual workflow would have involved printing out papers individually, reading them carefully, and storing them sequentially in a physical binder.</s><s>In contrast, our system allowed him to visually grasp, at a glance, each paper's position within academic lineage, making it easier for him to spot well-positioned papers that met his needs (P7-A, P7-B, P7-C).</s></p><p><s>Note that this pattern was particularly common among AI researchers (P5, P7, P8), who each created an average of 2.3 canvases with 7.7 branch papers, over 1.5 times more canvases and 3.1 times more branch papers than the others (Table <ref type="table" coords="11,208.84,558.32,2.88,7.94">5</ref>).</s><s>They used these canvases to identify baselines and datasets commonly used by papers tackling similar problems to theirs but with different approaches.</s></p><p><s>7.1.4</s><s>Fertilizing (F4).</s><s>On average, the participants collected 43.6 paper nodes originating from blank sheets where they specified keywords or citation links as search conditions, per canvas.</s><s>Also, they attached 6.4 sticky notes directly to canvas for recording investigation ideas (Table <ref type="table" coords="11,140.27,646.70,2.89,7.94" target="#tab_3">4</ref>).</s><s>The participants agreed that the system was helpful for saving incomplete queries and returning to them later (Q4: 4.7/5.0)</s><s>(Figure <ref type="figure" coords="11,146.73,668.62,6.49,7.94">10</ref>).</s></p><p><s>For example, the aforementioned P7 also noticed that recent papers positioned at the far right edge of the canvas sparked his curiosity as he thought to himself, "there must have been more recent advancements in this area."</s><s>He acted on this impulse by creating a blank sheet and adding outgoing citation links from it to the recent papers, and kept it as a placeholder for his curiosity about the latest research.</s><s>He periodically returned to it and refreshed the search results throughout his investigation (P7-A).</s></p><p><s>P1 and P10 both reported frequently coming up with ideas for follow-up investigations while reading papers.</s><s>In their usual workflows using conventional PDF viewers, they would open a paper at a time and jot down their ideas within the document using annotation tools.</s><s>However, P1 lamented that "after some time passes, I just remember that I wrote something down, but often forget which paper I wrote it in," since annotations remain out of sight unless the exact PDF file is reopened.</s><s>In contrast, they found our system more effective, as it allows them to capture higher-level ideas by placing sticky notes directly on the canvas instead of tying them to a specific page of a paper.</s><s>P10 noted that "I could always revisit my notes and eventually act on the ideas" (Figure <ref type="figure" coords="11,482.21,580.24,11.14,7.94" target="#fig_9">12c</ref>) (P1-B, P10-B).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.2">Organizing Papers</head><p><s>During the long-term in-the-wild study, the 3 previously identified usage patterns for organizing papers were confirmed: zoning (F5), grafting (F6), and pruning (F7).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.2.1">Zoning (F5).</head><p><s>On average, each canvas contained 4.2 userdefined clusters, with each cluster containing 5.4 paper nodes and 2.4 citation links (Table <ref type="table" coords="11,404.07,679.57,2.89,7.94">5</ref>).</s><s>The participants agreed that the system was helpful for arranging papers into meaningful clusters (Q5: 4.6/5.0)</s><s>(Figure <ref type="figure" coords="11,374.39,701.49,6.49,7.94">10</ref>).</s><s>For example, P10 shared that he usually relied on tagging to organize papers into groups.</s><s>However, he found the tagging process cognitively burdensome, noting that "I added tags to categorize papers, but I gave them different names every time, so in the end, they just caused more confusion."</s><s>In contrast, he appreciated how our system allowed papers to be grouped based on spatial arrangement, noting that "I could loosely group them first and then refine the organization later."</s><s>This usage pattern aligns with previous work <ref type="bibr" coords="12,53.80,525.92,13.40,7.94" target="#b23">[29,</ref><ref type="bibr" coords="12,69.14,525.92,10.05,7.94" target="#b39">47]</ref>, which emphasizes supporting implicit spatial relationships to reduce users' cognitive load (P10-A, P10-B).</s></p><p><s>P12 also found spatial organization helpful when selecting which papers to read.</s><s>She explained that she usually dumped all unread papers into a single "unread" folder, where only the paper titles were visible.</s><s>Because the titles alone provided little context, it was difficult for her to distinguish between papers or decide which papers to read first.</s><s>She noted, "since I hadn't read the papers yet, I couldn't decide which folder they belonged to, other than the unread folder."</s><s>In contrast, with our system, she was able to immediately judge newly collected papers from their appearances and spatially arrange them by topic.</s><s>"As I worked, they naturally became grouped by theme," she noted with satisfaction (P12-A, P12-B) (Figure <ref type="figure" coords="12,277.92,657.43,10.50,7.94" target="#fig_9">12d</ref>).</s><s>7.2.2</s><s>Grafting (F6).</s><s>On average, each canvas contained 5.3 citation links that crossed boundaries of user-defined clusters, connecting 5.8 paper nodes across 2.5 clusters (Table <ref type="table" coords="12,222.00,701.49,2.98,7.94">5</ref>).</s><s>The participants agreed that the system was helpful for creating new connections between clusters (Q6: 4.6/5.0)</s><s>(Figure <ref type="figure" coords="12,455.54,449.21,6.49,7.94">10</ref>).</s></p><p><s>For example, P3, who is researching AI-based protein design, complained that his Markdown text editor with a graph view for interlinked notes <ref type="bibr" coords="12,383.48,482.08,14.84,7.94" target="#b28">[35]</ref> automatically rearranged the graph layout each time a new relationship was added, often causing large shifts in the entire diagram and making it difficult for him to maintain a meaningful spatial organization.</s><s>In contrast, our system allowed him to deliberately arrange design case papers and AI model papers in separate areas and examine citation links between them.</s><s>He noted that this allowed him to clearly see which AI methods were applied to which design cases (P3-A).</s></p><p><s>P2, who is researching AI services for financial literacy, previously attempted to organize papers using a free-form diagramming tool <ref type="bibr" coords="12,334.84,591.67,13.49,7.94" target="#b26">[32]</ref>.</s><s>However, she found the process of manually gathering metadata and constructing the diagrams herself too tedious, and eventually gave up.</s><s>In contrast, with our system, all collected papers and citations were automatically loaded as interactive objects.</s><s>Notably, she could examine every possible citation link between any collected papers with no effort required on her part (Figure <ref type="figure" coords="12,542.93,646.47,9.99,7.94" target="#fig_9">12e</ref>).</s><s>This allowed her to quickly trace connections between conceptual foundations and practical applications, and she enthusiastically shared, "I found the exact paper I was looking for" (P2-B).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>7.2.3</head><p><s>Pruning (F7).</s><s>On average, each canvas contained 16.4 citation links, accounting for 52.9% of the total 31.0</s><s>cumulatively created citation links, including 12.6 that were automatically generated and 18.4 that were manually added (Table <ref type="table" coords="13,223.99,120.67,2.89,7.94" target="#tab_3">4</ref>).</s><s>The participants agreed that the system was helpful for removing unnecessary connections (Q7: 3.9/5.0)</s><s>(Figure <ref type="figure" coords="13,160.99,142.59,6.49,7.94">10</ref>).</s></p><p><s>For example, P5 used our system to find robot manipulation papers that employed a reinforcement learning technique proposed in a well-known foundational paper.</s><s>These papers were collected using graph-based queries, and the system automatically displayed citation links from them to the foundational paper.</s><s>However, because his research focused specifically on quadrupedal robots, he intentionally removed the citation link to a paper on bipedal robots and put it aside "just in case it's needed" (P5-C) (Figure <ref type="figure" coords="13,254.25,230.26,9.87,7.94" target="#fig_9">12f</ref>).</s></p><p><s>Meanwhile, P1, P2, P7, and P8 preferred to actively keep a larger portion of all possible citation links visible between the collected papers, keeping 65.4% of the cumulatively created links on average, which is approximately 1.2 times more than the proportion retained by the others.</s><s>They explained that their goal was to understand the broad academic landscape, and showing all citation links helped them gain that overview.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.3">Reading Papers</head><p><s>During the long-term in-the-wild study, 2 additional usage patterns for reading papers with our system emerged: sprouting (F8) and switching (F9).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.3.1">Sprouting (F8).</head><p><s>On average, each canvas contained 7.6 paper nodes that had either sticky notes attached or text highlighted.</s><s>5.1 sticky notes were attached around paper nodes, and 12.1 sticky notes were attached to specific pages (Table <ref type="table" coords="13,216.61,419.05,2.95,7.94" target="#tab_3">4</ref>).</s><s>Additionally, each canvas contained 1.2 citation links that had text labels attached (Table <ref type="table" coords="13,78.49,440.97,2.97,7.94" target="#tab_3">4</ref>).</s><s>The participants agreed that the system was helpful for generating insights from multiple papers (Q8: 4.5/5.0)</s><s>(Figure <ref type="figure" coords="13,279.76,451.93,6.49,7.94">10</ref>).</s></p><p><s>For example, P6, who is researching legged robots, collected 5 papers presenting widely known robot design methods.</s><s>He used sticky notes in different colors to write down what kind of PC modules, IMU sensors, and motors were used in each paper (Figure <ref type="figure" coords="13,278.31,495.76,10.27,7.94" target="#fig_9">12g</ref>).</s><s>By viewing multiple papers side by side and comparing their features, he was able to choose and purchase the specific components needed for his ongoing robot design project (P6-A).</s></p><p><s>P1 used to annotate new ideas directly on PDFs and store them in folders as part of her reading workflow.</s><s>However, when she had ideas that concerned multiple papers simultaneously, she felt hesitant to write it down on any single paper.</s><s>In contrast, with our system, she appreciated being able to lay out multiple papers side by side within a single workspace, read and compare them in parallel, scribble ideas on sticky notes, and place them wherever felt most appropriate: on specific pages, on entire papers, or anywhere between them on the 2D canvas (P1-B).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.3.2">Switching (F9).</head><p><s>On average, the participants spent 11.9%, 66.0%, and 22.1% of their time on finding, reading, and organizing papers, respectively (Table <ref type="table" coords="13,154.46,668.62,2.97,7.94" target="#tab_3">4</ref>).</s><s>During this process, they switched tasks an average of 304.6 times, spending an average of 54.8 seconds per task (Table <ref type="table" coords="13,108.59,690.53,3.01,7.94">6</ref>, Figure <ref type="figure" coords="13,141.58,690.53,2.88,7.94">9</ref>).</s><s>The participants who used both devices spent 69.5% of time on desktops and 30.5% of time on tablets (Table <ref type="table" coords="13,317.96,87.79,2.89,7.94">6</ref>).</s><s>On desktops, the participants spent 10.4% more time on finding, and on tablets, they spent 9.1% more time on reading (Table <ref type="table" coords="13,533.51,98.75,2.88,7.94">6</ref>).</s><s>The participants agreed that the system was helpful for transitioning between finding, reading, and organizing (Q9: 4.3/5.0)</s><s>(Figure <ref type="figure" coords="13,544.73,120.67,6.49,7.94">10</ref>).</s></p><p><s>For example, P2, P5, and P12 found the ability to seamlessly switch between finding and organizing papers especially important at the beginning stages of new research projects.</s><s>In their usual workflows, the web browsers they used to find papers quickly filled up with many tabs of papers and became disorganized.</s><s>In contrast, our system provided a big enough workspace where they could lay out all the papers and transition back and forth between finding and organizing tasks as needed.</s><s>While finding papers, they often gained insights that helped them better organize those papers, and while organizing papers, they often noticed gaps that led them to find further papers.</s><s>Prior work found that reducing friction in such iterative cycles of information collection and reorganization can help manage situations where new information accumulates rapidly <ref type="bibr" coords="13,346.24,274.09,13.50,7.94" target="#b31">[38,</ref><ref type="bibr" coords="13,361.98,274.09,11.53,7.94" target="#b49">57]</ref> (P2-B, P5-B, P12-B).</s></p><p><s>P4 shared that she had purchased a tablet device at the beginning of graduate school.</s><s>However, she rarely ended up using it, as she could not find any research tasks where the device made a meaningful difference for her.</s><s>In contrast, with our system, the tablet form factor allowed her to continue literature review processes seamlessly even while moving between locations.</s><s>She especially appreciated the ability to quickly zoom in and out using pinch gestures, which made it easy to see both the overall research landscape and specific handwritten notes on individual papers (P4-A).</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7.4">Gardening Papers</head><p><s>During the long-term in-the-wild study, the participants leveraged the 9 confirmed usage patterns (F1-F9) to generate outcomes that helped them see the big picture of literature reviews (Q12: 4.8/5.0)</s><s>and keep track of literature reviews (Q13: 4.8/5.0)</s><s>(Figure <ref type="figure" coords="13,527.22,438.48,6.45,7.94">10</ref>).</s><s>As a result, they found the system helpful for their research (Q14: 4.7/5.0)</s><s>and expressed willingness to continue using it even after the study ended (Q15: 4.4/5.0)</s><s>(Figure <ref type="figure" coords="13,420.42,471.35,6.49,7.94">10</ref>).</s></p><p><s>• Visual thinking.</s><s>In their usual workflows, all participants managed their papers solely through folders or tables, which made it difficult to understand complex relationships between papers and construct a coherent narrative.</s><s>As a result, they had to take extra steps to summarize the papers individually and then elaborate their connections on separate documents (P1, P7, P11, P12) or slides (P4, P9, P10).</s><s>In contrast, P9 noted that our system helped him not only see each paper's place within the broader research landscape, but also how it contributed to that landscape (Figure <ref type="figure" coords="13,490.95,569.99,10.47,7.94" target="#fig_9">12h</ref>).</s><s>P2 noted that, for her, the system transformed literature reviews into a process of visually shaping the "mind map" of research papers.</s></p><p><s>• Spatial memory.</s><s>The participants noted that visual features of their canvases, such as visual appearances of papers and their annotations (P1-P12), spatial placement of paper nodes (P2, P3, P4, P9), and topological fingerprints of citation links (P2, P5, P7, P8), helped them keep track of their literature reviews.</s><s>For example, P3, who often brought his tablet to meetings with his advisor, shared an instance in which a specific paper suddenly came to mind during a discussion.</s><s>Although he could not recall the paper's title, he could quickly launch our system on his tablet and locate the paper based on where he had previously placed it on the canvas.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="8">LIMITATIONS &amp; FUTURE WORK</head><p><s>In this section, we discuss the limitations identified in our shortterm lab study and long-term in-the-wild study, and suggest future research directions.</s></p><p><s>• Support for broader sources.</s><s>Our system was designed primarily to help researchers query academic databases such as Google Scholar <ref type="bibr" coords="14,82.27,156.29,13.22,7.94" target="#b9">[15]</ref>.</s><s>However, researchers often come across new and interesting papers through curated sources such as publisher websites, popular blogs, and social media platforms, which often provide timely highlights, contextual summaries, or expert commentary.</s><s>Therefore, future work should accommodate the ways researchers discover papers across diverse and fragmented channels.</s></p><p><s>• Support for intelligent assistance.</s><s>Our system provided basic annotation features comparable to those of commercial PDF viewers.</s><s>However, there has been a growing trend in academia to actively leverage large language models (LLMs) for translating, summarizing, inquiring, and ideating, although such interactions are often limited to a single paper at a time.</s><s>Therefore, future work should incorporate LLMs not only at the level of individual papers, but also at the level of graph topologies and clusters, enabling intelligent assistance grounded in a global research context.</s></p><p><s>• Support for teams and organizations.</s><s>Our 4-week deployment provided insights into long-term use in a real-world setting.</s><s>Nevertheless, researchers often spend several months or years managing multiple projects in collaboration with other researchers.</s><s>As related papers accumulate, researchers may seek to consolidate them into a unified and evolving body of knowledge.</s><s>Therefore, future work should explore supporting long-term, large-scale collaborative literature reviews for teams and organizations.</s></p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="9">CONCLUSION</head><p><s>In this study, we present Garden of Papers, a visual, integrated, and flexible workspace for authoring a node-link diagram of research papers through a harmonious set of sketch-based interactions.</s><s>In our system, users can search for papers through in situ graphbased queries, reducing the anxiety of missing important papers in the process of finding them; utilize the infinite 2D canvas as a workspace for browsing and note-taking, reducing feelings of being overwhelmed by a rapidly growing pile of papers to read; and progressively refine their knowledge graph of related work, reducing the frustration of wrestling with complex relationships among numerous papers to organize them into a coherent narrative.</s></p><p><s>We first developed a proof-of-concept system and conducted a 1week lab study with 4 experienced researchers.</s><s>Through this study, we identified both the system's potential and its limitations.</s><s>Based on these insights, we upgraded the system and conducted a 4-week in-the-wild study with 12 experienced researchers from diverse fields.</s><s>They used the system as part of their ongoing literature reviews for a total of 83 hours and 31 minutes, creating 21 canvases containing 503 paper nodes, 344 citation links, and 498 sticky notes.</s></p><p><s>From these studies, we quantitatively and qualitatively found that our system facilitates 9 usage patterns that enhance literature review practices.</s><s>Researchers identified papers with important topological characteristics within citation graphs, such as foundational papers (F1: stem paper), converging papers (F2: fruit paper), and intermediate papers (F3: branch paper), and left placeholders for future searches (F4: fertilizing).</s><s>Researchers also created meaningful spatial arrangements by clustering related papers together (F5: zoning), drawing new connections between disparate clusters (F6: grafting), and retaining selective information relevant to their research narrative (F7: pruning).</s><s>While engaging multiple papers simultaneously, researchers captured spontaneous ideas whenever and wherever they emerged (F8: sprouting), and seamlessly transitioned between finding, reading, and organizing tasks as needed (F9: switching).</s></p><p><s>We describe these patterns using gardening metaphors, as they resemble the act of tending a garden, involving continuous cultivation, selective pruning, and thoughtful shaping over time, suggesting a conceptual framework for future literature review tools.</s><s>We believe that such tools grounded in visual thinking and spatial memory will play a vital role in helping researchers not only make sense of, but also shape their evolving research landscapes.</s></p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 2 :</head><label>2</label><figDesc><div><p><s>Figure 2: The user can sketch a blank sheet on a 2D canvas by (a) drawing a box, writing one or more keywords, and (b) drawing one or more citation relationships.(c-d)</s><s>Then, the recognized keywords and citation relationships from the sketch are used as search conditions to find papers in an external database<ref type="bibr" coords="4,279.21,184.60,14.73,8.97" target="#b9">[15]</ref>.</s><s>(e) The user can collect papers at desired locations on the canvas.</s><s>Citation links to and from the collected papers are automatically generated.</s></p></div></figDesc><graphic coords="4,53.80,83.69,504.41,75.06" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 3 :</head><label>3</label><figDesc><div><p><s>Figure 3: By drawing various node-link diagrams, the user can query (a) all papers citing a paper, (b) all papers cited by a paper, (c) all papers citing a paper and cited by another paper, (d) all papers citing multiple papers and cited by other multiple papers, and (e) all papers containing specific keywords, citing multiple papers, and cited by other multiple papers.</s></p></div></figDesc><graphic coords="4,53.80,217.53,504.41,75.06" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 4 :</head><label>4</label><figDesc><div><p><s>Figure 4: The user can (a) navigate through pages of a paper by holding it down with a finger and flicking it with another finger, (b) create a sticky note by sketching a small square and attach it to a page by dragging it, (c) view all existing citation relationships between a paper and the other papers by long-pressing it and curate preferred relationships by drawing over them, (d) select multiple papers by long-pressing a paper with a finger and tapping other papers with another finger, and (e) erase unnecessary information by scribbling over entities.</s></p></div></figDesc><graphic coords="4,53.80,340.41,504.41,75.06" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 5 :</head><label>5</label><figDesc><div><p><s>Figure5: Reproduced snapshots of the lab study participants using our proof-of-concept system for literature reviews.</s><s>(a) P2, specializing in computer vision, collected an important paper (brown) by searching for papers (beige) cited by 2 video-generating AI papers (green).</s><s>(b) P1, specializing in audio and speech processing, collected a cross-pollinating paper (brown) by searching for papers (beige) citing both a speech deep learning paper (green, lower) and a vision deep learning paper (green, upper).</s><s>(c) P2 collected a paper (brown) similar to his own research by searching for papers (beige) that cite a paper (green, left) on a 3D point dataset he had used and also cited by a survey paper (green, right) on 3D point networks.</s><s>(d) P4, specializing in RNA engineering, referred to a handwritten sticky note (green) containing keywords about proteins associated with Alzheimer's disease, then transcribed those keywords onto a blank sheet (brown) to initiate a search for related papers.</s><s>(e) P1 collected a vision-related paper (brown) on the left side and a language-related paper (green) on the right side of the search result panel.</s><s>(f) P4 collected 3 papers (green) that belonged to a group and 1 paper (brown) that belonged to another group from the search results using the same sheet (beige) and examined citation relationships among them (light blue) to determine which was most relevant to her research and should be read first.</s><s>(g) P3, specializing in optogenetics, newly learned about calcium ion reactions in cancer cells from a paper (brown) that belonged to a group and explored the highlighted citation links (light blue) to see whether previously collected papers (green) that belonged to another group mentioned these reactions.</s><s>(h) P2 removed an unnecessary citation link (brown) to disconnect a diffusion model paper (green, upper) from another generative model paper (green, lower), and constructed a visually divided research landscape (beige) focused on diffusion models for autonomous driving.</s></p></div></figDesc><graphic coords="6,53.80,83.69,504.41,168.14" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 6 :</head><label>6</label><figDesc><div><p><s>Figure 6: The user can (a) select or highlight text in a paper by dragging, and (b) find a cited paper by double-tapping the citation number within the text.</s><s>(c) By pressing Ctrl + F, the user can open a search box and enter one or more keywords.</s><s>The number of matches per page is displayed at the top of the paper, and tapping a result navigates to the corresponding page.</s><s>(d) When the user attaches a sticky note near a paper, the note and paper become grouped and can be moved together.</s><s>(e) Double-tapping a citation link allows the user to create a text label, which can then be dragged and positioned along the path of the link.</s></p></div></figDesc><graphic coords="7,53.80,83.69,504.41,75.06" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 7 :</head><label>7</label><figDesc><div><p><s>Figure 7: (a) When the user selects a sticky note, (b) icons for adjusting the note's properties appear.</s><s>Dragging across (c) left icons changes the font size, (d) top icons changes the text alignment, (e) right icons changes the note size, and (f) bottom icons changes the note color.</s></p></div></figDesc><graphic coords="7,317.96,231.48,240.24,120.12" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><head>Figure 8 :</head><label>8</label><figDesc><div><p><s>Figure 8: In our system, interactions for creation, manipulation, and navigation are performed via (a) pen and (b, c) touch inputs on the tablet, and via (d) right-click, (e) left-click, and (f) middle-click mouse inputs on the desktop, respectively.</s></p></div></figDesc><graphic coords="7,317.96,424.12,240.24,120.12" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_7"><figDesc><div><p><s>links In-l/N † Nodes Out-links Out-l/N † Nodes In-links In-l/N † Out-links Out-l/N † Nodes Links N/C ‡ L/C ‡ Links Nodes ∥ Clusters ∥</s></p></div></figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_8"><head>Figure 11 :</head><label>11</label><figDesc><div><p><s>Figure 11: We confirmed 9 findings on usage patterns (F1-F9) through which researchers conduct literature reviews using our system in real-world research environments.</s><s>We describe these patterns using gardening metaphors likening the process to planting and nurturing trees.</s><s>(a) Stem paper (F1) provides shared knowledge foundational to different research directions.</s><s>(b) Fruit paper (F2) integrates multiple strands of knowledge to achieve advanced or interdisciplinary outcomes.</s><s>(c) Branch paper (F3) shows how knowledge has developed over time.</s><s>(d) Fertilizing (F4) refers to spreading placeholders at relevant positions even when search ideas are still unclear, expecting future exploration.</s><s>(e) Zoning (F5) refers to arranging related papers close together and unrelated papers far apart to create a meaningful spatial structure.</s><s>(f) Grafting (F6) refers to connecting different groups of papers to discover new insights.</s><s>(g) Pruning (F7) refers to removing unnecessary information and retaining only what is relevant.</s><s>(h) Sprouting (F8) refers to reading papers alongside existing ones to generate fresh ideas.</s><s>(i) Switching (F9) refers to transitioning between finding, reading, and organizing papers as needed, without interruption.</s></p></div></figDesc><graphic coords="11,53.80,83.69,504.41,189.58" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_9"><head>Figure 12 :</head><label>12</label><figDesc><div><p><s>Figure12: Reproduced snapshots of the in-the-wild study participants using our system for literature reviews.</s><s>(a) P8, specializing in computer vision, mapped out a research landscape on LiDAR, starting from a recent paper (brown) recommended in a seminar, and identified a foundational paper (green) commonly cited within the citation graph.</s><s>(b) P7, specializing in computer vision, collected a recent state-of-the-art paper (brown) by searching for papers (beige) citing 2 recent Gaussian Splatting papers (green).</s><s>(c) P10, specializing in catalysis, read a paper (beige) on Li-ion cathode materials, noticed a referenced supplementary material, left a sticky note (brown) reminding himself to review it, and then collected the paper (green) later, to the left of the paper.</s><s>(d) P12, specializing in NLP, quickly formed 3 distinct clusters of relevant papers (green) just as she collected them starting from a paper (brown) on measuring social bias in LLMs.</s><s>P2, specializing in HCI, examined all citation relationships between a paper (brown) and the other collected papers and discovered that it addressed both financial literacy (green) and AI services (beige) fields.</s><s>(f) P5, specializing in robotics, collected a paper (green) on quadrupedal robot control and a paper (brown) on bipedal robot control citing the same paper (beige), but intentionally removed an automatically generated citation link (brown) to emphasize the relationship (green) most relevant to his research.</s><s>(g) P6, specializing in robotics, attached colored sticky notes next to robot-design papers, comparing PC modules (blue), IMU sensors (green), and motors (pink).</s><s>(h) P9, specializing in catalysis, visually organized papers by placing material properties of Iridium in the center, catalytic reactions with other materials to the right, experimental methods to the left, and experimental equipment at the bottom.</s></p></div></figDesc><graphic coords="12,53.80,83.69,504.41,168.14" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="1,53.80,228.74,504.41,195.55" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0"><graphic coords="10,53.80,363.34,240.25,242.76" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 2 :</head><label>2</label><figDesc><div><p><s>System usage log per participant during the lab study.</s></p></div></figDesc><table><row><cell></cell><cell>Time spent</cell><cell cols="3">Paper nodes (#)</cell><cell></cell><cell cols="2">Citation links (#)</cell><cell></cell><cell></cell><cell cols="2">Queries (#)</cell><cell></cell><cell>All citation</cell><cell>Sticky</cell></row><row><cell></cell><cell>(hh:mm)</cell><cell cols="11">Added Deleted Total Generated Added Deleted Total Keyword Graph Both Total</cell><cell>views (#)</cell><cell>notes (#)</cell></row><row><cell>P1</cell><cell>03:43</cell><cell>63</cell><cell>25</cell><cell>38</cell><cell>58</cell><cell>15</cell><cell>34</cell><cell>39</cell><cell>16</cell><cell>60</cell><cell>13</cell><cell>89</cell><cell>22</cell><cell>37</cell></row><row><cell>P2</cell><cell>03:29</cell><cell>85</cell><cell>34</cell><cell>51</cell><cell>92</cell><cell>4</cell><cell>37</cell><cell>59</cell><cell>17</cell><cell>54</cell><cell>42</cell><cell>113</cell><cell>3</cell><cell>29</cell></row><row><cell>P3</cell><cell>03:29</cell><cell>65</cell><cell>25</cell><cell>30</cell><cell>41</cell><cell>3</cell><cell>19</cell><cell>25</cell><cell>22</cell><cell>48</cell><cell>42</cell><cell>112</cell><cell>40</cell><cell>12</cell></row><row><cell>P4</cell><cell>03:36</cell><cell>38</cell><cell>5</cell><cell>33</cell><cell>4</cell><cell>26</cell><cell>5</cell><cell>25</cell><cell>56</cell><cell>20</cell><cell>16</cell><cell>92</cell><cell>69</cell><cell>29</cell></row><row><cell>Total</cell><cell>14:16</cell><cell>251</cell><cell>89</cell><cell>162</cell><cell>195</cell><cell>48</cell><cell>95</cell><cell>148</cell><cell>111</cell><cell>182</cell><cell>113</cell><cell>406</cell><cell>134</cell><cell>147</cell></row><row><cell>Avg.</cell><cell>03:34</cell><cell>62.8</cell><cell>22.3</cell><cell>40.5</cell><cell>48.8</cell><cell>12.0</cell><cell>23.8</cell><cell>37.0</cell><cell>27.8</cell><cell>45.5</cell><cell cols="2">28.3 101.5</cell><cell>33.5</cell><cell>26.8</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 3 :</head><label>3</label><figDesc><div><p><s>Participant demographics for the in-the-wild study.</s><s>G: gender, A: age, Y: years of research experience, F: number of first-author papers, C: number of co-author papers.</s></p></div></figDesc><table><row><cell>G A Y F C</cell><cell>Major</cell><cell>Research area</cell></row><row><cell>P1 F 28 6 4 0</cell><cell>Industrial design</cell><cell>HCI</cell></row><row><cell>P2 F 27 3 1 1</cell><cell>Industrial design</cell><cell>HCI</cell></row><row><cell>P3 M 30 5 3 0</cell><cell>Biological science</cell><cell>Synthetic biology</cell></row><row><cell>P4 F 25 5 5 0</cell><cell>Biological science</cell><cell>Synthetic biology</cell></row><row><cell cols="2">P5 M 28 2 1 4 Mechanical engineering</cell><cell>Robotics</cell></row><row><cell cols="2">P6 M 25 6 0 1 Mechanical engineering</cell><cell>Robotics</cell></row><row><cell>P7 M 32 5 2 1</cell><cell>Electrical engineering</cell><cell>Computer vision</cell></row><row><cell>P8 F 25 4 2 0</cell><cell>Electrical engineering</cell><cell>Computer vision</cell></row><row><cell>P9 M 28 3 1 2</cell><cell>Materials science</cell><cell>Catalysis</cell></row><row><cell>P10 M 28 6 3 8</cell><cell>Materials science</cell><cell>Catalysis</cell></row><row><cell>P11 F 28 3 4 4</cell><cell>Computer science</cell><cell>NLP</cell></row><row><cell>P12 F 29 5 1 3</cell><cell>Computer science</cell><cell>NLP</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 4 :</head><label>4</label><figDesc><div><p><s>System usage log per canvas during the in-the-wild study.</s></p></div></figDesc><table><row><cell>Time spent (hh:mm (%))</cell><cell></cell><cell cols="3">Paper nodes (#)</cell><cell></cell><cell></cell><cell cols="3">Citation links (#)</cell><cell></cell><cell></cell><cell cols="3">Sticky notes (#)</cell><cell></cell></row><row><cell>Finding Reading Organizing Total</cell><cell cols="12">Collected by Deleted Studied Total Generated Added Deleted Labeled Total Created Deleted sheet in-text</cell><cell cols="3">Attached to canvas paper page</cell><cell>Total</cell></row><row><cell cols="2">P1-A 00:26 (19.6) 01:06 (49.2) 00:42 (31.2) 02:14 14</cell><cell>78</cell><cell>35</cell><cell>2</cell><cell>57</cell><cell>81</cell><cell>1</cell><cell>27</cell><cell>0</cell><cell>55</cell><cell>68</cell><cell>7</cell><cell>46</cell><cell>7</cell><cell cols="2">8 61</cell></row><row><cell cols="2">P1-B 00:13 ( 2.8) 06:44 (88.0) 00:42 ( 9.2) 07:39 15</cell><cell>13</cell><cell>10</cell><cell>7</cell><cell>18</cell><cell>13</cell><cell>1</cell><cell>4</cell><cell>7</cell><cell>10</cell><cell>89</cell><cell>13</cell><cell>12</cell><cell>9</cell><cell cols="2">55 76</cell></row><row><cell cols="2">P2-A 00:30 (17.5) 01:54 (66.2) 00:28 (16.2) 02:53 55</cell><cell>0</cell><cell>37</cell><cell>10</cell><cell>18</cell><cell>0</cell><cell>4</cell><cell>1</cell><cell>1</cell><cell>3</cell><cell>45</cell><cell>28</cell><cell>3</cell><cell>0</cell><cell cols="2">14 17</cell></row><row><cell cols="2">P2-B 00:47 (20.0) 01:59 (50.5) 01:09 (29.5) 03:55 118</cell><cell>0</cell><cell>79</cell><cell>13</cell><cell>39</cell><cell>24</cell><cell>39</cell><cell>31</cell><cell>5</cell><cell>32</cell><cell>33</cell><cell>9</cell><cell>1</cell><cell>4</cell><cell cols="2">19 24</cell></row><row><cell cols="2">P3-A 00:44 (12.7) 02:46 (47.7) 02:18 (39.6) 05:48 74</cell><cell>0</cell><cell>36</cell><cell>13</cell><cell>38</cell><cell>0</cell><cell>51</cell><cell>12</cell><cell>0</cell><cell>39</cell><cell>50</cell><cell>15</cell><cell>14</cell><cell>0</cell><cell cols="2">21 35</cell></row><row><cell cols="2">P4-A 00:53 (17.0) 02:25 (45.8) 01:58 (37.2) 05:16 81</cell><cell>0</cell><cell>44</cell><cell>6</cell><cell>37</cell><cell>16</cell><cell>26</cell><cell>22</cell><cell>0</cell><cell>20</cell><cell>30</cell><cell>21</cell><cell>2</cell><cell>5</cell><cell>2</cell><cell>9</cell></row><row><cell cols="2">P5-A 00:45 ( 7.0) 09:28 (88.1) 00:32 ( 4.9) 10:45 31</cell><cell>8</cell><cell>26</cell><cell>7</cell><cell>13</cell><cell>16</cell><cell>14</cell><cell>20</cell><cell>0</cell><cell>10</cell><cell>16</cell><cell>14</cell><cell>0</cell><cell>0</cell><cell>2</cell><cell>2</cell></row><row><cell cols="2">P5-B 00:16 (16.3) 01:06 (66.0) 00:18 (17.7) 01:39 17</cell><cell>4</cell><cell>7</cell><cell>2</cell><cell>14</cell><cell>4</cell><cell>10</cell><cell>5</cell><cell>0</cell><cell>9</cell><cell>7</cell><cell>3</cell><cell>2</cell><cell>0</cell><cell>2</cell><cell>4</cell></row><row><cell cols="2">P5-C 00:20 (40.4) 00:05 ( 9.6) 00:25 (50.0) 00:50 27</cell><cell>0</cell><cell>8</cell><cell>0</cell><cell>19</cell><cell>1</cell><cell>15</cell><cell>10</cell><cell>0</cell><cell>6</cell><cell>0</cell><cell>0</cell><cell>0</cell><cell>0</cell><cell>0</cell><cell>0</cell></row><row><cell cols="2">P6-A 00:24 ( 8.8) 02:34 (56.2) 01:36 (35.0) 04:34 55</cell><cell>1</cell><cell>34</cell><cell>5</cell><cell>22</cell><cell>4</cell><cell>22</cell><cell>17</cell><cell>7</cell><cell>9</cell><cell>81</cell><cell>40</cell><cell>8</cell><cell>10</cell><cell cols="2">23 41</cell></row><row><cell cols="2">P7-A 00:33 (16.9) 01:57 (59.8) 00:46 (23.3) 03:16 66</cell><cell>0</cell><cell>43</cell><cell>9</cell><cell>23</cell><cell>6</cell><cell>14</cell><cell>6</cell><cell>0</cell><cell>14</cell><cell>48</cell><cell>22</cell><cell>6</cell><cell>6</cell><cell cols="2">14 26</cell></row><row><cell cols="2">P7-B 00:13 (19.5) 00:35 (50.6) 00:21 (29.9) 01:09 28</cell><cell>0</cell><cell>17</cell><cell>3</cell><cell>11</cell><cell>1</cell><cell>12</cell><cell>1</cell><cell>5</cell><cell>12</cell><cell>24</cell><cell>10</cell><cell>2</cell><cell>2</cell><cell cols="2">10 14</cell></row><row><cell cols="2">P7-C 00:03 ( 8.7) 00:23 (58.0) 00:13 (33.3) 00:40 16</cell><cell>0</cell><cell>9</cell><cell>1</cell><cell>7</cell><cell>0</cell><cell>18</cell><cell>3</cell><cell>0</cell><cell>15</cell><cell>8</cell><cell>3</cell><cell>1</cell><cell>3</cell><cell>1</cell><cell>5</cell></row><row><cell cols="2">P8-A 00:14 ( 6.4) 02:50 (78.8) 00:32 (14.8) 03:36 23</cell><cell>0</cell><cell>16</cell><cell>1</cell><cell>7</cell><cell>3</cell><cell>12</cell><cell>3</cell><cell>0</cell><cell>9</cell><cell>20</cell><cell>19</cell><cell>0</cell><cell>0</cell><cell>1</cell><cell>1</cell></row><row><cell cols="2">P8-B 00:32 (62.0) 00:07 (12.8) 00:13 (25.2) 00:52 16</cell><cell>0</cell><cell>9</cell><cell>1</cell><cell>7</cell><cell>3</cell><cell>8</cell><cell>6</cell><cell>0</cell><cell>5</cell><cell>4</cell><cell>2</cell><cell>2</cell><cell>0</cell><cell>0</cell><cell>2</cell></row><row><cell cols="2">P9-A 00:44 (11.3) 04:23 (67.4) 01:23 (21.3) 06:30 61</cell><cell>1</cell><cell>31</cell><cell>20</cell><cell>31</cell><cell>27</cell><cell>40</cell><cell>66</cell><cell>0</cell><cell>1</cell><cell>63</cell><cell>11</cell><cell>14</cell><cell>19</cell><cell cols="2">19 52</cell></row><row><cell cols="2">P10-A 00:29 ( 7.4) 04:33 (68.5) 01:36 (24.1) 06:39 47</cell><cell>0</cell><cell>23</cell><cell>13</cell><cell>24</cell><cell>0</cell><cell>8</cell><cell>3</cell><cell>0</cell><cell>5</cell><cell>100</cell><cell>64</cell><cell>2</cell><cell>12</cell><cell cols="2">22 36</cell></row><row><cell cols="2">P10-B 00:19 ( 7.4) 03:12 (74.0) 00:48 (18.6) 04:20 46</cell><cell>0</cell><cell>22</cell><cell>12</cell><cell>24</cell><cell>7</cell><cell>15</cell><cell>7</cell><cell>0</cell><cell>15</cell><cell>35</cell><cell>10</cell><cell>0</cell><cell>22</cell><cell cols="2">3 25</cell></row><row><cell cols="2">P11-A 00:25 (11.6) 02:24 (66.5) 00:47 (21.9) 03:36 40</cell><cell>23</cell><cell>41</cell><cell>16</cell><cell>22</cell><cell>30</cell><cell>7</cell><cell>26</cell><cell>0</cell><cell>11</cell><cell>24</cell><cell>11</cell><cell>4</cell><cell>5</cell><cell cols="2">4 13</cell></row><row><cell cols="2">P12-A 00:46 (12.9) 03:50 (65.0) 01:18 (22.1) 05:54 54</cell><cell>0</cell><cell>8</cell><cell>11</cell><cell>46</cell><cell>7</cell><cell>60</cell><cell>25</cell><cell>0</cell><cell>42</cell><cell>64</cell><cell>24</cell><cell>12</cell><cell>3</cell><cell cols="2">25 40</cell></row><row><cell cols="2">P12-B 00:16 (18.1) 00:47 (54.2) 00:24 (27.7) 01:27 31</cell><cell>0</cell><cell>5</cell><cell>7</cell><cell>26</cell><cell>21</cell><cell>13</cell><cell>12</cell><cell>0</cell><cell>22</cell><cell>22</cell><cell>7</cell><cell>4</cell><cell>1</cell><cell cols="2">10 15</cell></row><row><cell cols="3">Total 09:55 (11.9) 55:07 (66.0) 18:28 (22.1) 83:31 915 128</cell><cell>540</cell><cell>159</cell><cell>503</cell><cell>264</cell><cell>387</cell><cell>307</cell><cell>25</cell><cell>344</cell><cell>831</cell><cell>333</cell><cell cols="4">135 108 255 498</cell></row><row><cell cols="3">Avg. 00:28 (11.9) 02:37 (66.0) 00:53 (22.1) 03:59 43.6 6.1</cell><cell>25.7</cell><cell cols="2">7.6 24.0</cell><cell>12.6</cell><cell>18.4</cell><cell>14.6</cell><cell>1.2</cell><cell cols="2">16.4 39.6</cell><cell>15.9</cell><cell>6.4</cell><cell cols="3">5.1 12.1 23.7</cell></row></table></figure>
+		</body>
+		<back>
+
+			<div type="acknowledgement">
+<div><head>Acknowledgments</head><p><s>This research was supported by the <rs type="funder">DRB-KAIST SketchTheFuture Research Center</rs> and the <rs type="institution">KAIST Convergence Research Institute Operation Program</rs>.</s><s>We thank <rs type="person">Jin Park</rs>, <rs type="person">Hyelim Hwang</rs>, and <rs type="person">Jeongche Yoon</rs> for their help with the figures and <rs type="person">Chaeyeon Ahn</rs> for her help with the usage log analysis.</s></p></div>
+			</div>
+			<listOrg type="funding">
+			</listOrg>
+			<div type="annex">
+<div xmlns="http://www.tei-c.org/ns/1.0"><p><s>7.1.2</s><s>Fruit paper (F2).</s><s>On average, each canvas contained 1.9 fruit papers that each had 4.2 outgoing citation links (Table <ref type="table" coords="10,533.37,355.18,2.89,7.94">5</ref>).</s><s>The participants agreed that the system was helpful for identifying converging papers (Q2: 4.3/5.0)</s><s>(Figure <ref type="figure" coords="10,461.99,377.10,6.49,7.94">10</ref>).</s><s>For example, the aforementioned P5 also wanted to collect papers that commonly cited both the ones he had gathered on robot manipulation and another paper he had collected on a reinforcement learning technique not specific to robots.</s><s>To do so, he needed to exhaustively retrieve all citing papers of each and identify their intersections.</s><s>However, he explained that "seminal machine learning papers typically have very high citation counts," and that his usual workflow involved searching in a web browser and opening dozens of papers in multiple tabs, which quickly became overwhelming.</s><s>"It was practically impossible to go through every citing paper, so I wouldn't even attempt it," he noted, describing how difficult it was to identify such papers amid the clutter.</s><s>In contrast, using our system, he used outgoing citation links to multiple papers he wanted as his search criteria.</s><s>He said that "the search results were instantly and dramatically narrowed down, giving me the confidence that I could review them one by one" (P5-A).</s></p><p><s>P7, who is researching vision AI, searched for papers that cited recent ones he already knew, and found a highly up-to-date paper that was published just a few days earlier (Figure <ref type="figure" coords="10,503.82,585.32,10.65,7.94">12b</ref>).</s><s>He noted that his field was evolving so rapidly that he had developed a habit of regularly checking blogs that introduce new papers.</s><s>Notably, through our system, he discovered a brand-new paper not yet covered by those blogs, and remarked with excitement that "I found fresh, hot-off-the-press information even before blogs" (P7-A).</s></p><p><s>7.1.3</s><s>Branch paper (F3).</s><s>On average, each canvas contained 2.7 branch papers that each had 2.0 incoming citation links and 1.7 outgoing citation links (Table <ref type="table" coords="10,428.70,679.57,2.96,7.94">5</ref>).</s><s>The participants agreed that the system was helpful for identifying intermediate papers (Q3: 4.6/5.0)</s><s>(Figure <ref type="figure" coords="10,345.89,701.49,6.49,7.94">10</ref>).</s></p></div>			</div>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct coords="14,333.39,368.00,225.88,6.23;14,333.39,376.02,32.34,6.18" xml:id="b0">
+	<monogr>
+		<title level="m" type="main">Adobe Acrobat Reader</title>
+		<author>
+			<persName><surname>Adobe</surname></persName>
+		</author>
+		<ptr target="https://get.adobe.com/reader" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,383.99,224.81,6.18;14,333.39,391.91,225.88,6.23;14,333.39,399.93,80.76,6.18" xml:id="b1">
+	<analytic>
+		<title level="a" type="main">Keepin&apos; it real: pushing the desktop metaphor with physics, piles and the pen</title>
+		<author>
+			<persName><forename type="first">Anand</forename><surname>Agarawala</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ravin</forename><surname>Balakrishnan</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/1124772.1124965</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;06</title>
+		<meeting>CHI &apos;06</meeting>
+		<imprint>
+			<date type="published" when="2006">2006</date>
+			<biblScope unit="page" from="1283" to="1292" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,423.84,224.81,6.18;14,333.39,431.81,224.81,6.18;14,333.39,439.73,224.81,6.23;14,333.23,447.75,122.17,6.18" xml:id="b2">
+	<analytic>
+		<title level="a" type="main">Citesee: augmenting citations in scientific papers with persistent and personalized historical context</title>
+		<author>
+			<persName><forename type="first">Joseph</forename><surname>Chee Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amy</forename><forename type="middle">X</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Bragg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrew</forename><surname>Head</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Lo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Doug</forename><surname>Downey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><forename type="middle">S</forename><surname>Weld</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3544548.3580847</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;23</title>
+		<meeting>CHI &apos;23</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">737</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,455.72,225.88,6.18;14,333.15,463.69,225.05,6.18;14,333.39,471.61,219.92,6.23" xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Apolo: making sense of large network data by combining rich user interaction and machine learning</title>
+		<author>
+			<persName><forename type="first">Duen</forename><surname>Horng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chau</forename></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aniket</forename><surname>Kittur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><forename type="middle">I</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christos</forename><surname>Faloutsos</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/1978942.1978967</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;11</title>
+		<meeting>CHI &apos;11</meeting>
+		<imprint>
+			<date type="published" when="2011">2011</date>
+			<biblScope unit="page" from="167" to="176" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,479.63,224.99,6.18;14,333.39,487.60,225.07,6.18;14,333.13,495.52,225.53,6.23;14,333.39,503.54,76.35,6.18" xml:id="b4">
+	<analytic>
+		<title level="a" type="main">supporting the discovery process in the literature review workflow for novice researchers</title>
+		<author>
+			<persName><forename type="first">Kiroong</forename><surname>Choe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Seokweon</forename><surname>Jung</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Seokhyeon</forename><surname>Park</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hwajung</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jinwook</forename><surname>Seo</surname></persName>
+		</author>
+		<idno type="DOI">10.1109/PacificVis52677.2021.00037</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. PacificVis &apos;21</title>
+		<meeting>PacificVis &apos;21</meeting>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="volume">101</biblScope>
+			<biblScope unit="page" from="176" to="180" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,511.46,210.93,6.23" xml:id="b5">
+	<monogr>
+		<title level="m" type="main">EndNote</title>
+		<ptr target="https://endnote.com" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+			<publisher>Clarivate</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,559.33,224.81,6.18;14,333.39,567.25,225.88,6.23;14,333.39,575.27,32.31,6.18" xml:id="b6">
+	<analytic>
+		<title level="a" type="main">CiteWiz: a tool for the visualization of scientific citation networks</title>
+		<author>
+			<persName><forename type="first">Niklas</forename><surname>Elmqvist</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Philippas</forename><surname>Tsigas</surname></persName>
+		</author>
+		<idno type="DOI">10.1057/palgrave.ivs.9500156</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Inf. Vis</title>
+		<imprint>
+			<biblScope unit="volume">6</biblScope>
+			<biblScope unit="page" from="215" to="232" />
+			<date type="published" when="2007">2007. 2007</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,591.16,225.57,6.23;14,333.39,599.13,118.77,6.23" xml:id="b7">
+	<analytic>
+		<title level="a" type="main">A non-linear model of information seeking behaviour</title>
+		<author>
+			<persName><forename type="first">Allen</forename><surname>Foster</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">J. Am. Soc. Inf. Sci. Technol</title>
+		<imprint>
+			<biblScope unit="volume">55</biblScope>
+			<biblScope unit="page" from="228" to="237" />
+			<date type="published" when="2004">2004. 2004</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,607.10,224.81,6.23" xml:id="b8">
+	<monogr>
+		<title level="m" type="main">Google Cloud</title>
+		<author>
+			<persName><surname>Google</surname></persName>
+		</author>
+		<ptr target="https://cloud.google.com" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,615.07,225.88,6.23;14,333.39,623.09,12.01,6.18" xml:id="b9">
+	<monogr>
+		<title level="m" type="main">Google Scholar</title>
+		<author>
+			<persName><surname>Google</surname></persName>
+		</author>
+		<ptr target="https://scholar.google.com" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,631.01,225.88,6.23;14,333.39,639.03,50.65,6.18" xml:id="b10">
+	<monogr>
+		<title level="m" type="main">Google Sheets</title>
+		<author>
+			<persName><surname>Google</surname></persName>
+		</author>
+		<ptr target="https://docs.google.com/spreadsheets" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,646.95,225.26,6.23;14,333.39,654.97,35.67,6.18" xml:id="b11">
+	<monogr>
+		<title level="m" type="main">Google Slides</title>
+		<author>
+			<persName><surname>Google</surname></persName>
+		</author>
+		<ptr target="https://docs.google.com/presentation" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,662.94,225.88,6.18;14,333.39,670.86,225.27,6.23;14,333.39,678.83,215.26,6.23" xml:id="b12">
+	<analytic>
+		<title level="a" type="main">QueryVOWL: visual composition of SPARQL queries</title>
+		<author>
+			<persName><forename type="first">Florian</forename><surname>Haag</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Steffen</forename><surname>Lohmann</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stephan</forename><surname>Siek</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Ertl</surname></persName>
+		</author>
+		<idno type="DOI">10.1007/978-3-319-25639-9_12</idno>
+	</analytic>
+	<monogr>
+		<title level="m">The Semantic Web: ESWC 2015 Satellite Events</title>
+		<imprint>
+			<date type="published" when="2015">2015. 2015</date>
+			<biblScope unit="page" from="62" to="66" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="14,333.39,686.85,224.81,6.18;14,333.39,694.77,225.27,6.23;14,333.18,702.79,56.66,6.18" xml:id="b13">
+	<analytic>
+		<title level="a" type="main">CiteRivers: visual analytics of citation patterns</title>
+		<author>
+			<persName><forename type="first">Florian</forename><surname>Heimerl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qi</forename><surname>Han</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Steffen</forename><surname>Koch</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Thomas</forename><surname>Ertl</surname></persName>
+		</author>
+		<idno type="DOI">10.1109/TVCG.2015.2467621</idno>
+	</analytic>
+	<monogr>
+		<title level="j">IEEE TVCG</title>
+		<imprint>
+			<biblScope unit="volume">22</biblScope>
+			<biblScope unit="page" from="190" to="199" />
+			<date type="published" when="2016">2016. 2016</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,89.10,225.58,6.18;15,68.99,97.07,225.06,6.18;15,69.23,104.99,143.07,6.23" xml:id="b14">
+	<analytic>
+		<title level="a" type="main">Pen + touch = new tools</title>
+		<author>
+			<persName><forename type="first">Ken</forename><surname>Hinckley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Koji</forename><surname>Yatani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michel</forename><surname>Pahud</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nicole</forename><surname>Coddington</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jenny</forename><surname>Rodenhouse</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andy</forename><surname>Wilson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hrvoje</forename><surname>Benko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bill</forename><surname>Buxton</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/1866029.1866036</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. UIST &apos;10</title>
+		<meeting>UIST &apos;10</meeting>
+		<imprint>
+			<date type="published" when="2010">2010</date>
+			<biblScope unit="page" from="27" to="36" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,113.01,225.88,6.18;15,69.23,120.93,224.81,6.23;15,68.49,128.90,117.22,6.23" xml:id="b15">
+	<analytic>
+		<title level="a" type="main">NetLens: iterative exploration of content-actor network data</title>
+		<author>
+			<persName><forename type="first">Hyunmo</forename><surname>Kang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Catherine</forename><surname>Plaisant</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bongshin</forename><surname>Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Benjamin</forename><forename type="middle">B</forename><surname>Bederson</surname></persName>
+		</author>
+		<idno type="DOI">10.1109/VAST.2006.261426</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. VAST &apos;06. 91-98</title>
+		<meeting>VAST &apos;06. 91-98</meeting>
+		<imprint>
+			<date type="published" when="2006">2006</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,136.92,225.88,6.18;15,69.03,144.89,225.02,6.18;15,69.23,152.81,225.88,6.23;15,69.07,160.83,62.16,6.18" xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Threddy: an interactive system for personalized thread-based exploration and organization of scientific literature</title>
+		<author>
+			<persName><forename type="first">B</forename><surname>Hyeonsu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><forename type="middle">Chee</forename><surname>Kang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yongsung</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aniket</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Kittur</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3526113.3545660</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. UIST &apos;22</title>
+		<meeting>UIST &apos;22</meeting>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">94</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,168.80,225.89,6.18;15,69.23,176.77,224.81,6.18;15,69.23,184.69,181.63,6.23" xml:id="b17">
+	<analytic>
+		<title level="a" type="main">Synergi: a mixed-initiative system for scholarly synthesis and sensemaking</title>
+		<author>
+			<persName><forename type="first">B</forename><surname>Hyeonsu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tongshuang</forename><surname>Kang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><forename type="middle">Chee</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aniket</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Kittur</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3586183.3606759</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. UIST &apos;23</title>
+		<meeting>UIST &apos;23</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">43</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,192.71,224.81,6.18;15,69.23,200.68,225.99,6.18;15,69.23,208.65,225.58,6.18;15,69.23,216.62,225.58,6.18;15,69.23,224.59,224.81,6.18;15,69.23,232.56,224.94,6.18;15,69.23,240.53,224.81,6.18;15,69.23,248.50,225.58,6.18;15,68.99,256.47,225.06,6.18;15,68.90,264.44,226.22,6.18;15,68.90,272.41,225.12,6.18" xml:id="b18">
+	<monogr>
+		<author>
+			<persName><forename type="first">Rodney</forename><surname>Michael Kinney</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chloe</forename><surname>Anastasiades</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Russell</forename><surname>Authur</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Iz</forename><surname>Beltagy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Bragg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexandra</forename><surname>Buraczynski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Isabel</forename><surname>Cachola</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stefan</forename><surname>Candra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yoganand</forename><surname>Chandrasekhar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arman</forename><surname>Cohan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Miles</forename><surname>Crawford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Doug</forename><surname>Downey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Dunkelberger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oren</forename><surname>Etzioni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rob</forename><surname>Evans</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sergey</forename><surname>Feldman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><surname>Gorney</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><forename type="middle">W</forename><surname>Graham</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">F</forename><forename type="middle">Q</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Regan</forename><surname>Huff</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>King</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Kohlmeier</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bailey</forename><surname>Kuehl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Langan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haokun</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kyle</forename><surname>Lo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jaron</forename><surname>Lochner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kelsey</forename><surname>Macmillan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tyler</forename><surname>Murray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Newell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shaurya</forename><surname>Smita R Rao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Paul</forename><surname>Rohatgi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zejiang</forename><surname>Sayre</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amanpreet</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luca</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shivashankar</forename><surname>Soldaini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Subramanian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><forename type="middle">D</forename><surname>Tanaka</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Linda</forename><forename type="middle">M</forename><surname>Wade</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lucy</forename><forename type="middle">Lu</forename><surname>Wagner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Caroline</forename><surname>Wilhelm</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiangjiang</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Angele</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Zamarron</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2301.10140[cs.DL]</idno>
+		<title level="m">The semantic scholar open data platform</title>
+		<imprint>
+			<publisher>Madeleine van Zuylen, and Daniel S. Weld</publisher>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,280.38,224.81,6.18;15,69.23,288.30,225.89,6.23;15,69.23,296.32,26.81,6.18" xml:id="b19">
+	<analytic>
+		<title level="a" type="main">Why a diagram is (sometimes) worth ten thousand words</title>
+		<author>
+			<persName><forename type="first">Jill</forename><forename type="middle">H</forename><surname>Larkin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Herbert</forename><forename type="middle">A</forename><surname>Simon</surname></persName>
+		</author>
+		<idno type="DOI">10.1111/j.1551-6708.1987.tb00863.x</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Cogn. Sci</title>
+		<imprint>
+			<biblScope unit="volume">11</biblScope>
+			<biblScope unit="page" from="65" to="100" />
+			<date type="published" when="1987">1987. 1987</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,304.29,225.88,6.18;15,69.23,312.26,224.81,6.18;15,69.23,320.18,225.88,6.23;15,69.07,328.20,19.46,6.18" xml:id="b20">
+	<analytic>
+		<title level="a" type="main">KGVQL: a knowledge graph visual query language with bidirectional transformations</title>
+		<author>
+			<persName><forename type="first">Pengkai</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qiang</forename><surname>Fu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yajun</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuan-Fang</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qingpeng</forename><surname>Zhang</surname></persName>
+		</author>
+		<idno type="DOI">10.1016/j.knosys.2022.108870</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Knowl.-Based Syst</title>
+		<imprint>
+			<biblScope unit="volume">250</biblScope>
+			<biblScope unit="page">108870</biblScope>
+			<date type="published" when="2022">2022. 2022</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,336.17,224.81,6.18;15,69.06,344.14,224.99,6.18;15,68.98,352.06,226.14,6.23;15,69.07,360.08,62.16,6.18" xml:id="b21">
+	<analytic>
+		<title level="a" type="main">Understanding visual, integrated, and flexible workspace for comprehensive literature reviews with SketchingRelatedWork</title>
+		<author>
+			<persName><forename type="first">Donghyeok</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joon</forename><surname>Hyub Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Seok-Hyung</forename><surname>Bae</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3613905.3650791</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI EA &apos;24</title>
+		<meeting>CHI EA &apos;24</meeting>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">348</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,368.05,225.89,6.18;15,69.23,376.02,224.81,6.18;15,69.23,383.94,225.26,6.23;15,69.23,391.96,46.93,6.18" xml:id="b22">
+	<analytic>
+		<title level="a" type="main">SketchingRelatedWork: finding and organizing papers through inking a node-link diagram</title>
+		<author>
+			<persName><forename type="first">Donghyeok</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joon</forename><surname>Hyub Lee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junwoo</forename><surname>Yoon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Taegyu</forename><surname>Jin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Seok-Hyung</forename><surname>Bae</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3586182.3616685</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. UIST &apos;23 Adjunct</title>
+		<meeting>UIST &apos;23 Adjunct</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">20</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,399.93,225.63,6.18;15,69.23,407.85,224.81,6.23" xml:id="b23">
+	<analytic>
+		<title level="a" type="main">Two years before the mist: experiences with Aquanet</title>
+		<author>
+			<persName><forename type="first">Catherine</forename><forename type="middle">C</forename><surname>Marshall</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Russell</forename><forename type="middle">A</forename><surname>Rogers</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/168466.168490</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. ECHT &apos;92</title>
+		<meeting>ECHT &apos;92</meeting>
+		<imprint>
+			<date type="published" when="1992">1992</date>
+			<biblScope unit="page" from="53" to="62" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,415.87,225.99,6.18;15,69.23,423.79,224.81,6.23" xml:id="b24">
+	<analytic>
+		<title level="a" type="main">Citeology: visualizing paper genealogy</title>
+		<author>
+			<persName><forename type="first">Justin</forename><surname>Matejka</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tovi</forename><surname>Grossman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">George</forename><surname>Fitzmaurice</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/2212776.2212796</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI EA &apos;12</title>
+		<meeting>CHI EA &apos;12</meeting>
+		<imprint>
+			<date type="published" when="2012">2012</date>
+			<biblScope unit="page" from="181" to="190" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,431.81,225.63,6.18;15,69.23,439.73,224.81,6.23;15,68.49,447.70,103.57,6.23" xml:id="b25">
+	<analytic>
+		<title level="a" type="main">Paper forager: supporting the rapid exploration of research document collections</title>
+		<author>
+			<persName><forename type="first">Justin</forename><surname>Matejka</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tovi</forename><surname>Grossman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">George</forename><surname>Fitzmaurice</surname></persName>
+		</author>
+		<idno type="DOI">10.20380/GI2021.27</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. GI &apos;21</title>
+		<meeting>GI &apos;21</meeting>
+		<imprint>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="237" to="245" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,455.67,178.83,6.23" xml:id="b26">
+	<monogr>
+		<title/>
+		<author>
+			<persName><surname>Miro</surname></persName>
+		</author>
+		<ptr target="https://miro.com" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,463.64,225.88,6.23;15,69.23,471.66,137.03,6.18" xml:id="b27">
+	<monogr>
+		<title level="m" type="main">MongoDB Atlas</title>
+		<author>
+			<persName><surname>Mongodb</surname></persName>
+		</author>
+		<ptr target="https://www.mongodb.com/products/platform/atlas-database" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,487.55,209.59,6.23" xml:id="b28">
+	<monogr>
+		<title level="m" type="main">Obsidian</title>
+		<author>
+			<persName><surname>Obsidian</surname></persName>
+		</author>
+		<ptr target="https://obsidian.md" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,495.57,225.58,6.18;15,69.23,503.54,224.81,6.18;15,69.23,511.46,225.26,6.23;15,69.23,519.48,46.93,6.18" xml:id="b29">
+	<analytic>
+		<title level="a" type="main">Relatedly: scaffolding literature reviews with existing related work sections</title>
+		<author>
+			<persName><forename type="first">Srishti</forename><surname>Palani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aakanksha</forename><surname>Naik</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Doug</forename><surname>Downey</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amy</forename><forename type="middle">X</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Bragg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><surname>Chee</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chang</forename></persName>
+		</author>
+		<idno type="DOI">10.1145/3544548.3580841</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;23</title>
+		<meeting>CHI &apos;23</meeting>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="volume">742</biblScope>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,527.45,225.58,6.18;15,69.23,535.37,225.57,6.23;15,69.23,543.34,131.15,6.23" xml:id="b30">
+	<analytic>
+		<title level="a" type="main">VISAGE: interactive visual graph querying</title>
+		<author>
+			<persName><forename type="first">Robert</forename><surname>Pienta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Acar</forename><surname>Tamersoy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Endert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shamkant</forename><surname>Navathe</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hanghang</forename><surname>Tong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Duen</forename><surname>Horng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chau</forename></persName>
+		</author>
+		<idno type="DOI">10.1145/2909132.2909246</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. AVI &apos;16</title>
+		<meeting>AVI &apos;16</meeting>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+			<biblScope unit="page" from="272" to="279" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,551.36,224.81,6.18;15,69.23,559.28,225.57,6.23;15,69.23,567.25,94.15,6.23" xml:id="b31">
+	<analytic>
+		<title level="a" type="main">The sensemaking process and leverage points for analyst technology as identified through cognitive task analysis</title>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Pirolli</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stuart</forename><surname>Card</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. Int. Conf. Intell. Anal</title>
+		<meeting>Int. Conf. Intell. Anal</meeting>
+		<imprint>
+			<date type="published" when="2005">2005. 2005</date>
+			<biblScope unit="volume">5</biblScope>
+			<biblScope unit="page" from="2" to="4" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,575.27,225.64,6.18;15,69.23,583.19,225.88,6.23;15,69.23,591.21,80.76,6.18" xml:id="b32">
+	<analytic>
+		<title level="a" type="main">PaperQuest: a visualization tool to support literature review</title>
+		<author>
+			<persName><forename type="first">Antoine</forename><surname>Ponsard</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Francisco</forename><surname>Escalona</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tamara</forename><surname>Munzner</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/2851581.2892334</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI EA &apos;16</title>
+		<meeting>CHI EA &apos;16</meeting>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+			<biblScope unit="page" from="2264" to="2271" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,599.18,225.89,6.18;15,69.23,607.15,224.81,6.18;15,69.23,615.07,144.72,6.23" xml:id="b33">
+	<analytic>
+		<title level="a" type="main">Citeread: integrating localized citation contexts into scientific paper reading</title>
+		<author>
+			<persName><forename type="first">Napol</forename><surname>Rachatasumrit</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jonathan</forename><surname>Bragg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Amy</forename><forename type="middle">X</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><forename type="middle">S</forename><surname>Weld</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3490099.3511162</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. IUI &apos;22</title>
+		<meeting>IUI &apos;22</meeting>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="707" to="719" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,623.04,225.89,6.23;15,69.23,631.06,47.32,6.18" xml:id="b34">
+	<monogr>
+		<title/>
+		<author>
+			<persName><surname>Researchrabbit</surname></persName>
+		</author>
+		<ptr target="https://www.researchrabbit.ai" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,639.03,224.81,6.18;15,69.03,647.00,225.20,6.18;15,69.23,654.92,224.81,6.23" xml:id="b35">
+	<analytic>
+		<title level="a" type="main">Data Mountain: using spatial memory for document management</title>
+		<author>
+			<persName><forename type="first">George</forename><surname>Robertson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mary</forename><surname>Czerwinski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kevin</forename><surname>Larson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><forename type="middle">C</forename><surname>Robbins</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Thiel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maarten</forename><surname>Van Dantzich</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/288392.288596</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. UIST &apos;98</title>
+		<meeting>UIST &apos;98</meeting>
+		<imprint>
+			<date type="published" when="1998">1998</date>
+			<biblScope unit="page" from="153" to="162" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,670.86,225.89,6.23;15,69.23,678.88,35.67,6.18" xml:id="b36">
+	<monogr>
+		<title level="m" type="main">Selvy Pen SDK</title>
+		<author>
+			<persName><forename type="first">A</forename><forename type="middle">I</forename><surname>Selvas</surname></persName>
+		</author>
+		<ptr target="https://handwriting.selvasai.com" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,686.80,203.33,6.23" xml:id="b37">
+	<monogr>
+		<title/>
+		<author>
+			<persName><surname>Serpapi</surname></persName>
+		</author>
+		<ptr target="https://serpapi.com" />
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,69.23,694.82,225.63,6.18;15,69.23,702.74,219.29,6.23" xml:id="b38">
+	<analytic>
+		<title level="a" type="main">BiblioViz: a system for visualizing bibliography information</title>
+		<author>
+			<persName><forename type="first">Zeqian</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Ogawa</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Soon</forename><forename type="middle">Tee</forename><surname>Teoh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kwan-Liu</forename><surname>Ma</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. APVIS &apos;06</title>
+		<meeting>APVIS &apos;06</meeting>
+		<imprint>
+			<date type="published" when="2006">2006</date>
+			<biblScope unit="page" from="93" to="102" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,89.10,225.99,6.18;15,333.39,97.02,225.89,6.23;15,333.39,105.04,74.27,6.18" xml:id="b39">
+	<analytic>
+		<title level="a" type="main">Spatial hypertext: an alternative to navigational and semantic links</title>
+		<author>
+			<persName><forename type="first">M</forename><surname>Frank</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Catherine</forename><forename type="middle">C</forename><surname>Shipman</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Marshall</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/345966.346001</idno>
+	</analytic>
+	<monogr>
+		<title level="j">ACM CSUR</title>
+		<imprint>
+			<biblScope unit="volume">31</biblScope>
+			<biblScope unit="page">14</biblScope>
+			<date type="published" when="1999">1999. 1999</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,112.96,225.88,6.23;15,333.39,120.98,12.01,6.18" xml:id="b40">
+	<analytic>
+		<title/>
+		<ptr target="https://www.nature.com" />
+	</analytic>
+	<monogr>
+		<title level="j">Nature</title>
+		<imprint>
+			<date type="published" when="2025-07-23">2025. Jul 23</date>
+			<publisher>Springer Nature</publisher>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,128.95,225.99,6.18;15,333.39,136.87,225.88,6.23;15,333.39,144.89,92.04,6.18" xml:id="b41">
+	<analytic>
+		<title level="a" type="main">Jigsaw: supporting investigative analysis through interactive visualization</title>
+		<author>
+			<persName><forename type="first">John</forename><surname>Stasko</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carsten</forename><surname>Görg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhicheng</forename><surname>Liu</surname></persName>
+		</author>
+		<idno type="DOI">10.1057/palgrave.ivs.9500180</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Inf. Vis</title>
+		<imprint>
+			<biblScope unit="volume">7</biblScope>
+			<biblScope unit="page" from="118" to="132" />
+			<date type="published" when="2008">2008. 2008</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,152.86,225.88,6.18;15,333.39,160.78,224.81,6.23;15,332.65,168.75,109.69,6.23" xml:id="b42">
+	<analytic>
+		<title level="a" type="main">texSketch: active diagramming through pen-and-ink annotations</title>
+		<author>
+			<persName><forename type="first">Hariharan</forename><surname>Subramonyam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Colleen</forename><surname>Seifert</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Priti</forename><surname>Shah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eytan</forename><surname>Adar</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3313831.3376155</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;20</title>
+		<meeting>CHI &apos;20</meeting>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="1" to="13" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,176.77,224.81,6.18;15,333.39,184.69,225.88,6.23;15,333.39,192.71,80.76,6.18" xml:id="b43">
+	<analytic>
+		<title level="a" type="main">Understanding and supporting academic literature review workflows with litSense</title>
+		<author>
+			<persName><forename type="first">Nicole</forename><surname>Sultanum</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christine</forename><surname>Murad</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Wigdor</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3399715.3399830</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. AVI &apos;20</title>
+		<meeting>AVI &apos;20</meeting>
+		<imprint>
+			<date type="published" when="2020">2020</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,200.68,225.64,6.18;15,333.39,208.60,225.89,6.23;15,333.23,216.62,62.16,6.18" xml:id="b44">
+	<analytic>
+		<title level="a" type="main">Active reading and its discontents: the situations, problems and ideas of readers</title>
+		<author>
+			<persName><forename type="first">Craig</forename><forename type="middle">S</forename><surname>Tashman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><forename type="middle">Keith</forename><surname>Edwards</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/1978942.1979376</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;11</title>
+		<meeting>CHI &apos;11</meeting>
+		<imprint>
+			<date type="published" when="2011">2011</date>
+			<biblScope unit="page" from="2927" to="2936" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,224.59,224.81,6.18;15,333.39,232.51,225.27,6.23;15,333.23,240.53,46.93,6.18" xml:id="b45">
+	<analytic>
+		<title level="a" type="main">LiquidText: a flexible, multitouch environment to support active reading</title>
+		<author>
+			<persName><forename type="first">Craig</forename><forename type="middle">S</forename><surname>Tashman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">W</forename><forename type="middle">Keith</forename><surname>Edwards</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/1978942.1979430</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;11</title>
+		<meeting>CHI &apos;11</meeting>
+		<imprint>
+			<date type="published" when="2011">2011</date>
+			<biblScope unit="page" from="3285" to="3294" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,248.50,225.89,6.18;15,333.39,256.42,225.89,6.23;15,333.39,264.44,80.76,6.18" xml:id="b46">
+	<analytic>
+		<title level="a" type="main">The sandbox for analysis: concepts and methods</title>
+		<author>
+			<persName><forename type="first">William</forename><surname>Wright</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Schroh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pascale</forename><surname>Proulx</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alex</forename><surname>Skaburskis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Brian</forename><surname>Cort</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/1124772.1124890</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;06</title>
+		<meeting>CHI &apos;06</meeting>
+		<imprint>
+			<date type="published" when="2006">2006</date>
+			<biblScope unit="page" from="801" to="810" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,272.41,225.99,6.18;15,333.39,280.33,225.88,6.23;15,333.39,288.35,80.76,6.18" xml:id="b47">
+	<analytic>
+		<title level="a" type="main">Writ-Large: ink unleashed by unified scope, action, &amp; zoom</title>
+		<author>
+			<persName><forename type="first">Haijun</forename><surname>Xia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ken</forename><surname>Hinckley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michel</forename><surname>Pahud</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiao</forename><surname>Tu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bill</forename><surname>Buxton</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3025453.3025664</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;17</title>
+		<meeting>CHI &apos;17</meeting>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page" from="3227" to="3240" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,296.32,225.58,6.18;15,333.39,304.29,224.81,6.18;15,333.39,312.21,224.81,6.23" xml:id="b48">
+	<analytic>
+		<title level="a" type="main">Scalability of network visualisation from a cognitive load perspective</title>
+		<author>
+			<persName><forename type="first">Yalong</forename><surname>Vahan Yoghourdjian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lee</forename><surname>Dwyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Lawrence</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kim</forename><surname>Wybrow</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Marriott</surname></persName>
+		</author>
+		<idno type="DOI">10.1109/TVCG.2020.3030459</idno>
+	</analytic>
+	<monogr>
+		<title level="j">IEEE TVCG</title>
+		<imprint>
+			<biblScope unit="volume">27</biblScope>
+			<biblScope unit="page" from="1677" to="1687" />
+			<date type="published" when="2021">2021. 2021</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,320.23,224.81,6.18;15,333.39,328.15,225.57,6.23;15,333.39,336.12,163.79,6.23" xml:id="b49">
+	<analytic>
+		<title level="a" type="main">Towards a comprehensive model of the cognitive process and mechanisms of individual sensemaking</title>
+		<author>
+			<persName><forename type="first">Pengyi</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dagobert</forename><surname>Soergel</surname></persName>
+		</author>
+		<idno type="DOI">10.1002/asi.23125</idno>
+	</analytic>
+	<monogr>
+		<title level="j">J. Assoc. Inf. Sci. Technol</title>
+		<imprint>
+			<biblScope unit="volume">65</biblScope>
+			<biblScope unit="page" from="1733" to="1756" />
+			<date type="published" when="2014">2014. 2014</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct coords="15,333.39,344.14,225.99,6.18;15,333.39,352.06,225.26,6.23;15,333.23,360.08,46.93,6.18" xml:id="b50">
+	<analytic>
+		<title level="a" type="main">CiteSense: supporting sensemaking of research literature</title>
+		<author>
+			<persName><forename type="first">Xiaolong</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yan</forename><surname>Qu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><forename type="middle">Lee</forename><surname>Giles</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Piyou</forename><surname>Song</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/1357054.1357161</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. CHI &apos;08</title>
+		<meeting>CHI &apos;08</meeting>
+		<imprint>
+			<date type="published" when="2008">2008</date>
+			<biblScope unit="page" from="677" to="680" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>

@@ -1,5 +1,8 @@
 const { getClient } = require('../services/mongo');
 const s3Service = require('../services/s3');
+const grobidService = require('../services/grobid');
+const { enrichReferences } = require('../services/refEnricher');
+const syncKeys = require('../services/syncKeys');
 
 function s3Key(projectName, fileId) {
   return `papers/${projectName}/${fileId}.pdf`;
@@ -48,20 +51,121 @@ exports.uploadPdf = async (req, res) => {
   const pdfData = req.file.buffer;
 
   try {
+    // 1. S3에 PDF 업로드
     const key = s3Key(projectName, fileId);
     await s3Service.uploadPdf(key, pdfData);
 
-    // 크기를 MongoDB에 캐싱
+    // 2. 크기를 MongoDB에 캐싱
     await getPdfMetaCollection(projectName).updateOne(
       { fileId },
       { $set: { fileId, size: pdfData.length } },
       { upsert: true },
     );
 
+    // 3. GROBID로 인용 추출 (백그라운드 - 응답 차단 안 함)
+    extractAndSaveCitations(projectName, fileId, pdfData);
+
     res.json({ message: 'PDF uploaded successfully to S3' });
   } catch (error) {
     console.error('Error during upload:', error);
     res.status(500).json({ error: 'An error occurred during the upload process' });
+  }
+};
+
+// GROBID 본문 인용 + 참고문헌 추출 → MongoDB 저장 → WebSocket 알림
+async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
+  try {
+    console.log(`[GROBID] Extracting citations for ${fileId}...`);
+    const { citationHits, pageSizes, refInfo } = await grobidService.extractCitations(pdfBuffer);
+    console.log(`[GROBID] Found ${citationHits.length} citation hits, ${Object.keys(refInfo).length} references for ${fileId}`);
+
+    // TODO: 레퍼런스 enrichment (S2 → SerpAPI fallback) — S2 API 키 활성화 후 복원
+    // const enrichedRefs = await enrichReferences(refInfo);
+
+    // Dictionary → 배열 변환 (Unity JsonUtility 호환)
+    const pageSizeList = Object.entries(pageSizes).map(([page, size]) => ({
+      page: parseInt(page, 10),
+      widthPt: size.widthPt,
+      heightPt: size.heightPt,
+    }));
+    const referenceList = Object.entries(refInfo).map(([refId, info]) => ({
+      refId,
+      ...info,
+    }));
+
+    // SaveFile 내 해당 논문 문서에 citation 데이터 저장
+    const db = getClient().db(projectName);
+    const { ObjectId } = require('mongodb');
+    let query;
+    try {
+      query = { _id: new ObjectId(fileId) };
+    } catch {
+      query = { _id: fileId };
+    }
+    await db.collection('SaveFile').updateOne(
+      query,
+      {
+        $set: {
+          citationHits,
+          pageSizeList,
+          referenceList,
+          citationsExtractedAt: new Date(),
+        },
+      },
+    );
+    console.log(`[GROBID] Saved citations into SaveFile for ${fileId}`);
+
+    // WebSocket으로 해당 프로젝트의 모든 클라이언트에게 알림
+    syncKeys.broadcastToProject(projectName, {
+      type: 'citations_ready',
+      fileId,
+      citationHits,
+      pageSizeList,
+      referenceList,
+    });
+    console.log(`[GROBID] Notified clients for ${fileId}`);
+  } catch (err) {
+    console.error(`[GROBID] Failed to extract citations for ${fileId}:`, err.message);
+
+    // 실패도 알림 (Unity에서 fallback 처리 가능)
+    syncKeys.broadcastToProject(projectName, {
+      type: 'citations_failed',
+      fileId,
+      error: err.message,
+    });
+  }
+}
+
+// GET /citations/:projectName/:fileid
+// Unity에서 업로드 후 인용 데이터를 가져갈 때 사용
+exports.getCitations = async (req, res) => {
+  const { projectName, fileid } = req.params;
+
+  try {
+    const db = getClient().db(projectName);
+    const { ObjectId } = require('mongodb');
+    let query;
+    try {
+      query = { _id: new ObjectId(fileid) };
+    } catch {
+      query = { _id: fileid };
+    }
+    const doc = await db.collection('SaveFile').findOne(query);
+
+    if (!doc || !doc.citationHits) {
+      return res.status(404).json({ error: 'Citations not yet extracted', status: 'processing' });
+    }
+
+    res.json({
+      fileId: fileid,
+      citationHits: doc.citationHits,
+      pageSizes: doc.pageSizes,
+      references: doc.references,
+      extractedAt: doc.citationsExtractedAt,
+    });
+  } catch (err) {
+    console.error('Error fetching citations:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 

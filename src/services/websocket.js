@@ -14,13 +14,8 @@ function createWebSocketServer(wsPort) {
     console.log('A client has connected with id:', id);
 
     ws.on('message', (message) => {
-      const jsonMessage = JSON.stringify({ message });
-
-      wss.clients.forEach((client) => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(jsonMessage);
-        }
-      });
+      // 클라이언트→서버 메시지 수신 (릴레이 없음, 필요 시 처리)
+      console.log(`[WS] Message from ${id}:`, message.toString().substring(0, 100));
     });
 
     ws.on('close', () => {

@@ -6,12 +6,14 @@ const cors = require('cors');
 const config = require('./config');
 const { connect } = require('./services/mongo');
 const { createWebSocketServer } = require('./services/websocket');
+const { spawnUdpRelay } = require('./services/udpRelay');
 
 // Routes
 const projectsRouter = require('./routes/projects');
 const dataRouter = require('./routes/data');
 const pdfRouter = require('./routes/pdf');
 const papersRouter = require('./routes/papers');
+const analyzeRouter = require('./routes/analyze');
 
 const app = express();
 
@@ -35,6 +37,9 @@ app.use('/', pdfRouter);
 // 새로운 논문 관리 API
 app.use('/papers', papersRouter);
 
+// LLM 분석 API
+app.use('/analyze', analyzeRouter);
+
 // Start
 connect()
   .then(() => {
@@ -42,6 +47,7 @@ connect()
       console.log(`Express server running on port ${config.port}`);
     });
     createWebSocketServer(config.wsPort);
+    spawnUdpRelay();
   })
   .catch((err) => {
     console.error('Failed to start server:', err);
