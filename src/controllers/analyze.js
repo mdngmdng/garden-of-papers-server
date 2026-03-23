@@ -1,4 +1,6 @@
-const { analyzeRelations, analyzeRelationsForLayout, getEmbeddings, generateClusterLabels } = require('../services/gemini');
+const { analyzeRelations, analyzeRelationsForLayout, getEmbeddings, generateClusterLabels, findRelevantSentences } = require('../services/gemini');
+const { extractSentences } = require('../services/grobid');
+const s3Service = require('../services/s3');
 const { getClient } = require('../services/mongo');
 const { UMAP } = require('umap-js');
 
@@ -317,4 +319,103 @@ function kMeans(vectors, k, maxIter = 50) {
 
   return assignments;
 }
+
+// POST /analyze/highlights
+// 관련 연구 문단에서 언급된 논문들의 본문에서 관련 문장 찾기
+exports.highlights = async (req, res) => {
+  const { projectName, paragraph, papers: inputPapers } = req.body;
+
+  if (!projectName || !paragraph || !inputPapers || !Array.isArray(inputPapers)) {
+    return res.status(400).json({
+      error: 'projectName, paragraph, and papers[] (with marker/fileId) required',
+    });
+  }
+
+  try {
+    const db = getClient().db(projectName);
+    const { ObjectId } = require('mongodb');
+
+    console.log(`[Highlights] Processing ${inputPapers.length} papers...`);
+
+    const highlights = [];
+
+    for (const paper of inputPapers) {
+      const { fileId, marker } = paper;
+      console.log(`[Highlights] --- Processing ${marker} (${fileId}) ---`);
+
+      try {
+        // 1. MongoDB에서 논문 정보 + 저장된 TEI 문장 확인
+        let query;
+        try {
+          query = { _id: new ObjectId(fileId) };
+        } catch {
+          query = { _id: fileId };
+        }
+        const doc = await db.collection('SaveFile').findOne(query);
+        if (!doc) {
+          console.warn(`[Highlights] ${marker}: Document not found in MongoDB, skipping`);
+          highlights.push({ fileId, marker, title: 'Unknown', quotes: [] });
+          continue;
+        }
+        const paperTitle = doc?.paperName || 'Untitled';
+        console.log(`[Highlights] ${marker}: title="${paperTitle}"`);
+
+        // 2. S3에서 TEI XML 가져와서 문장 추출
+        let sentences = [];
+        const teiKey = `tei/${projectName}/${fileId}.xml`;
+        try {
+          const teiXml = await s3Service.downloadTeiXml(teiKey);
+          sentences = extractSentences(teiXml);
+          console.log(`[Highlights] ${marker}: ${sentences.length} sentences from cached TEI XML`);
+        } catch (teiErr) {
+          // TEI XML이 없으면 PDF에서 GROBID 추출
+          console.log(`[Highlights] ${marker}: No cached TEI XML, extracting from PDF...`);
+          const { processFulltext } = require('../services/grobid');
+          const s3Key = `papers/${projectName}/${fileId}.pdf`;
+          const s3Res = await s3Service.downloadPdf(s3Key);
+          const chunks = [];
+          for await (const chunk of s3Res.Body) chunks.push(chunk);
+          const pdfBuffer = Buffer.concat(chunks);
+
+          const teiXml = await processFulltext(pdfBuffer);
+          sentences = extractSentences(teiXml);
+          console.log(`[Highlights] ${marker}: GROBID extracted ${sentences.length} sentences`);
+
+          // TEI XML을 S3에 저장 (다음에 재사용)
+          await s3Service.uploadTeiXml(teiKey, teiXml);
+        }
+
+        if (sentences.length === 0) {
+          console.warn(`[Highlights] ${marker}: No sentences found, skipping`);
+          highlights.push({ fileId, marker, title: paperTitle, quotes: [] });
+          continue;
+        }
+
+        // 3. Gemini로 관련 문장 인덱스 찾기
+        console.log(`[Highlights] ${marker}: Finding relevant sentences (${sentences.length} total)...`);
+        const { indices } = await findRelevantSentences(paragraph, marker, paperTitle, sentences);
+
+        // 4. 인덱스 → 원본 문장 추출
+        const quotes = indices.map((i) => sentences[i]);
+        console.log(`[Highlights] ${marker}: Found ${quotes.length} relevant quotes`);
+
+        highlights.push({
+          fileId,
+          marker,
+          title: paperTitle,
+          quotes,
+        });
+      } catch (paperErr) {
+        console.error(`[Highlights] ${marker} (${fileId}): ERROR - ${paperErr.message}`);
+        highlights.push({ fileId, marker, title: 'Error', quotes: [] });
+      }
+    }
+
+    console.log(`[Highlights] Done. ${highlights.length} papers processed.`);
+    res.json({ highlights });
+  } catch (err) {
+    console.error('[Highlights] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
 

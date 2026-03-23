@@ -193,4 +193,85 @@ Return ONLY valid JSON, no markdown:
   }
 }
 
-module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels };
+/**
+ * 관련 연구 문단에서 특정 논문에 대한 서술과 관련된 문장을 해당 논문 본문에서 찾기
+ * @param {string} paragraph - 관련 연구 문단 텍스트
+ * @param {string} marker - 논문 마커 (e.g., "[22]")
+ * @param {string[]} sentences - 해당 논문의 GROBID 추출 문장 목록 (번호가 매겨짐)
+ * @returns {{ indices: number[] }} - 관련 문장의 인덱스 배열
+ */
+async function findRelevantSentences(paragraph, marker, paperTitle, sentences) {
+  const CHUNK_SIZE = 150; // 한번에 보낼 최대 문장 수
+
+  if (sentences.length <= CHUNK_SIZE) {
+    return _findRelevantSentencesChunk(paragraph, marker, paperTitle, sentences, 0);
+  }
+
+  // 문장이 많으면 청크로 분할 처리
+  console.log(`[Gemini] Splitting ${sentences.length} sentences into chunks of ${CHUNK_SIZE}...`);
+  const allIndices = [];
+  for (let start = 0; start < sentences.length; start += CHUNK_SIZE) {
+    const chunk = sentences.slice(start, start + CHUNK_SIZE);
+    const { indices } = await _findRelevantSentencesChunk(
+      paragraph, marker, paperTitle, chunk, start,
+    );
+    allIndices.push(...indices);
+  }
+  return { indices: allIndices };
+}
+
+async function _findRelevantSentencesChunk(paragraph, marker, paperTitle, sentences, offset) {
+  const numberedSentences = sentences
+    .map((s, i) => `[${offset + i}] ${s}`)
+    .join('\n');
+
+  const prompt = `You are a scientific paper analyst. A Related Work section mentions paper ${marker} ("${paperTitle}"). Find sentences in that paper's body text that are relevant to what the Related Work paragraph says about it.
+
+## Related Work paragraph (from another paper)
+${paragraph}
+
+## Sentences from paper ${marker} ("${paperTitle}")
+${numberedSentences}
+
+## Instructions
+1. Identify what the Related Work paragraph says about paper ${marker}
+2. Find sentences from the paper's body that support, describe, or are directly related to that description
+3. Return ONLY the sentence indices (numbers in brackets)
+4. Select 3-10 most relevant sentences
+5. Return ONLY valid JSON, no markdown
+
+## Output Format
+{
+  "indices": [0, 5, 12, 23]
+}`;
+
+  const res = await axios.post(
+    `${GEMINI_URL}?key=${config.geminiApiKey}`,
+    {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: 'application/json',
+      },
+    },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000,
+    },
+  );
+
+  const text = res.data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+  const totalLen = offset + sentences.length;
+
+  try {
+    const result = JSON.parse(text);
+    const validIndices = (result.indices || [])
+      .filter((i) => Number.isInteger(i) && i >= 0 && i < totalLen);
+    return { indices: validIndices };
+  } catch {
+    console.error('[Gemini] Failed to parse highlight response:', text);
+    return { indices: [] };
+  }
+}
+
+module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences };

@@ -274,11 +274,41 @@ function normalizeWs(s) {
 }
 
 /**
+ * TEI XML에서 본문 문장 추출 (segmentSentences=1이 활성화된 경우)
+ * <s> 태그 안의 텍스트를 문장 단위로 분리
+ */
+function extractSentences(teiXml) {
+  // <body> 영역만 추출
+  const bodyMatch = teiXml.match(/<body>([\s\S]*?)<\/body>/);
+  if (!bodyMatch) return [];
+
+  const body = bodyMatch[1];
+  const sentences = [];
+  const sentenceRegex = /<s>([\s\S]*?)<\/s>/g;
+  let m;
+
+  while ((m = sentenceRegex.exec(body)) !== null) {
+    // XML 태그 제거, 공백 정리
+    const text = m[1]
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (text.length > 10) { // 너무 짧은 문장 제외
+      sentences.push(text);
+    }
+  }
+
+  return sentences;
+}
+
+/**
  * 메인 API: PDF → GROBID → 파싱된 CitationHit + 페이지 정보
  */
 async function extractCitations(pdfBuffer) {
   const teiXml = await processFulltext(pdfBuffer);
-  return parseTeiToCitationHits(teiXml);
+  const result = parseTeiToCitationHits(teiXml);
+  result.teiXml = teiXml;
+  return result;
 }
 
-module.exports = { processFulltext, parseTeiToCitationHits, extractCitations };
+module.exports = { processFulltext, parseTeiToCitationHits, extractCitations, extractSentences };

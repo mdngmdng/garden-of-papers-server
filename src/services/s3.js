@@ -40,4 +40,21 @@ async function headPdf(key) {
   return { size: res.ContentLength };
 }
 
-module.exports = { uploadPdf, downloadPdf, deletePdf, listPdfs, headPdf };
+async function uploadTeiXml(key, xmlString) {
+  await s3.send(new PutObjectCommand({
+    Bucket,
+    Key: key,
+    Body: Buffer.from(xmlString, 'utf-8'),
+    ContentType: 'application/xml',
+  }));
+  return key;
+}
+
+async function downloadTeiXml(key) {
+  const res = await s3.send(new GetObjectCommand({ Bucket, Key: key }));
+  const chunks = [];
+  for await (const chunk of res.Body) chunks.push(chunk);
+  return Buffer.concat(chunks).toString('utf-8');
+}
+
+module.exports = { uploadPdf, downloadPdf, deletePdf, listPdfs, headPdf, uploadTeiXml, downloadTeiXml };

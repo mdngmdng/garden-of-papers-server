@@ -76,7 +76,7 @@ exports.uploadPdf = async (req, res) => {
 async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
   try {
     console.log(`[GROBID] Extracting citations for ${fileId}...`);
-    const { citationHits, pageSizes, refInfo } = await grobidService.extractCitations(pdfBuffer);
+    const { citationHits, pageSizes, refInfo, teiXml } = await grobidService.extractCitations(pdfBuffer);
     console.log(`[GROBID] Found ${citationHits.length} citation hits, ${Object.keys(refInfo).length} references for ${fileId}`);
 
     // TODO: 레퍼런스 enrichment (S2 → SerpAPI fallback) — S2 API 키 활성화 후 복원
@@ -114,6 +114,11 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
       },
     );
     console.log(`[GROBID] Saved citations into SaveFile for ${fileId}`);
+
+    // TEI XML을 S3에 저장 (highlights에서 재사용)
+    const teiKey = `tei/${projectName}/${fileId}.xml`;
+    await s3Service.uploadTeiXml(teiKey, teiXml);
+    console.log(`[GROBID] Saved TEI XML to S3 for ${fileId}`);
 
     // WebSocket으로 해당 프로젝트의 모든 클라이언트에게 알림
     syncKeys.broadcastToProject(projectName, {
