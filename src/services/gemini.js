@@ -149,15 +149,41 @@ async function getEmbeddings(texts) {
 
 /**
  * 클러스터별 논문 제목 → 그룹 라벨 생성
+ * paragraph 텍스트가 주어지면 인용 문맥 기반으로 라벨 생성
+ *
  * @param {Object} clusterTitles - { "0": ["title1", "title2"], "1": [...] }
+ * @param {string} [paragraph] - Related Work 원문 텍스트
+ * @param {Object} [clusterMarkers] - { "0": ["[1]", "[3]"], "1": ["[2]"] }
  * @returns {Object} - { "0": "Citation Visualization", "1": "Literature Review Tools" }
  */
-async function generateClusterLabels(clusterTitles) {
-  const clusterList = Object.entries(clusterTitles)
-    .map(([id, titles]) => `Cluster ${id}:\n${titles.map((t) => `  - ${t}`).join('\n')}`)
-    .join('\n\n');
+async function generateClusterLabels(clusterTitles, paragraph, clusterMarkers) {
+  let clusterList;
 
-  const prompt = `You are a research paper analyst. Below are clusters of academic paper titles grouped by similarity. Give each cluster a concise label (2-5 words) that captures the common theme.
+  if (paragraph && clusterMarkers) {
+    // paragraph에서 각 클러스터의 마커가 인용되는 문장들을 추출
+    const sentences = paragraph.split(/(?<=[.!?])\s+/);
+    clusterList = Object.entries(clusterTitles)
+      .map(([id, titles]) => {
+        const markers = clusterMarkers[id] || [];
+        const markerPattern = new RegExp(
+          markers.map((m) => m.replace(/[[\]]/g, '\\$&')).join('|'),
+        );
+        const citingSentences = sentences
+          .filter((s) => markerPattern.test(s))
+          .slice(0, 5)
+          .join(' ');
+        return `Cluster ${id}:\n  Papers: ${titles.join('; ')}\n  Context from Related Work: "${citingSentences}"`;
+      })
+      .join('\n\n');
+  } else {
+    clusterList = Object.entries(clusterTitles)
+      .map(([id, titles]) => `Cluster ${id}:\n${titles.map((t) => `  - ${t}`).join('\n')}`)
+      .join('\n\n');
+  }
+
+  const prompt = `You are a research paper analyst. Below are clusters of papers from a Related Work section, with the original text context showing how the author described them.
+
+Give each cluster a concise label (2-5 words) that summarizes the research theme as described by the author in the Related Work text.
 
 ${clusterList}
 
@@ -274,4 +300,59 @@ ${numberedSentences}
   }
 }
 
-module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences };
+/**
+ * 논문 본문 문장 + Related Work 문맥 → 논문 요약 생성
+ * @param {string} paragraph - Related Work 문단
+ * @param {string} marker - 논문 마커 (e.g., "[22]")
+ * @param {string} paperTitle - 논문 제목
+ * @param {string[]} sentences - 논문 본문 문장 목록
+ * @returns {{ summary: string }}
+ */
+async function summarizePaper(paragraph, marker, paperTitle, sentences) {
+  const bodyText = sentences.slice(0, 200).join(' ');
+
+  const prompt = `You are a scientific paper analyst. Summarize the following paper based on its body text and how it is described in the Related Work paragraph.
+
+## Related Work paragraph (from another paper, mentioning this paper as ${marker})
+${paragraph}
+
+## Paper: ${marker} "${paperTitle}"
+## Body text (excerpt)
+${bodyText}
+
+## Instructions
+1. Write a concise summary (2-4 sentences) of what this paper does and its key contribution
+2. Focus on aspects relevant to how it is cited in the Related Work paragraph
+3. Write in Korean (한국어)
+4. Return ONLY valid JSON, no markdown
+
+## Output Format
+{ "summary": "concise summary text here" }`;
+
+  const res = await axios.post(
+    `${GEMINI_URL}?key=${config.geminiApiKey}`,
+    {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        responseMimeType: 'application/json',
+      },
+    },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000,
+    },
+  );
+
+  const text = res.data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+  try {
+    const result = JSON.parse(text);
+    return { summary: result.summary || '' };
+  } catch {
+    console.error('[Gemini] Failed to parse summary response:', text);
+    return { summary: '' };
+  }
+}
+
+module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences, summarizePaper };
