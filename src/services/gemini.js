@@ -4,6 +4,30 @@ const config = require('../config');
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 /**
+ * 최대 maxLen자 이내에서 마지막 완전한 문장까지만 남기기
+ * 한국어 문장 종결 패턴: ~다. ~요. ~다, 또는 마침표/물음표/느낌표
+ */
+function truncateToSentence(text, maxLen) {
+  if (!text || text.length <= maxLen) return text;
+  const cut = text.slice(0, maxLen);
+  // 마지막 문장 종결 부호 위치 찾기
+  const lastDot = Math.max(
+    cut.lastIndexOf('. '),
+    cut.lastIndexOf('.'),
+    cut.lastIndexOf('다.'),
+    cut.lastIndexOf('요.'),
+    cut.lastIndexOf('니다.'),
+  );
+  if (lastDot > 0) {
+    // '.' 다음 문자까지 포함
+    const end = cut.indexOf('.', lastDot) + 1;
+    return cut.slice(0, end).trim();
+  }
+  // 종결 부호를 못 찾으면 그대로 반환 (프롬프트가 지켰을 것)
+  return cut.trim();
+}
+
+/**
  * 문단 텍스트 + 레퍼런스 목록 → 논문 간 관계 분석
  */
 async function analyzeRelations(paragraph, references) {
@@ -321,13 +345,15 @@ ${paragraph}
 ${bodyText}
 
 ## Instructions
-1. Write a concise summary (2-4 sentences) of what this paper does and its key contribution
-2. Focus on aspects relevant to how it is cited in the Related Work paragraph
-3. Write in Korean (한국어)
-4. Return ONLY valid JSON, no markdown
+이 논문에 대해 "배경", "기여", "한계"를 한글로 각각 요약해 주세요.
+공손한 존댓말(~합니다, ~됩니다)로 통일해 주세요.
+각 항목은 한글 공백 포함 최대 188자 이내로 작성해 주세요.
+반드시 완전한 문장(~합니다, ~됩니다, ~있습니다 등)으로 끝나야 합니다. 문장이 중간에 잘리면 안 됩니다.
+"[배경]", "[기여]", "[한계]" 태그 없이 내용만 작성해 주세요.
+Return ONLY valid JSON, no markdown.
 
 ## Output Format
-{ "summary": "concise summary text here" }`;
+{ "background": "배경 내용 (최대 188자, 완전한 문장)", "contribution": "기여 내용 (최대 188자, 완전한 문장)", "limitation": "한계 내용 (최대 188자, 완전한 문장)" }`;
 
   const res = await axios.post(
     `${GEMINI_URL}?key=${config.geminiApiKey}`,
@@ -348,11 +374,142 @@ ${bodyText}
 
   try {
     const result = JSON.parse(text);
-    return { summary: result.summary || '' };
+    return {
+      background: truncateToSentence(result.background || '', 188),
+      contribution: truncateToSentence(result.contribution || '', 188),
+      limitation: truncateToSentence(result.limitation || '', 188),
+    };
   } catch {
     console.error('[Gemini] Failed to parse summary response:', text);
-    return { summary: '' };
+    return { background: '', contribution: '', limitation: '' };
   }
 }
 
-module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences, summarizePaper };
+/**
+ * 여러 논문의 요약/링크 정보 → 연구 변천사 스토리텔링 생성
+ * @param {Object[]} papers - [{ title, year, summary }]
+ * @param {Object[]} links - [{ from, to, markerText, citance }]
+ * @returns {{ story: string }}
+ */
+async function storytelling(papers, links) {
+  const paperList = papers
+    .map((p, i) => `${i + 1}. "${p.title}" (${p.year || '연도 미상'})\n   요약: ${p.summary || '없음'}`)
+    .join('\n');
+
+  const linkList = links.length > 0
+    ? links.map((l) => `- "${l.from}" → "${l.to}" [${l.markerText || ''}]: ${l.citance || ''}`).join('\n')
+    : '(링크 정보 없음)';
+
+  const prompt = `You are a scientific paper analyst. Based on the following papers and their citation relationships, write a concise research evolution narrative in Korean.
+
+## Papers
+${paperList}
+
+## Citation relationships (from → to, with citation marker and citance sentence)
+${linkList}
+
+## Instructions
+1. 인용 관계 순서에 따라 연구의 변천사와 논문 간의 관계를 스토리텔링해 주세요.
+2. 정확히 6문장으로 작성해 주세요.
+3. 공손한 존댓말(~합니다, ~됩니다)로 통일해 주세요.
+4. 각 논문의 제목은 큰따옴표로 감싸서 언급해 주세요.
+5. 시간순(연도순)으로 연구가 어떻게 발전했는지 흐름을 설명해 주세요.
+6. Return ONLY valid JSON, no markdown.
+
+## Output Format
+{ "story": "6문장의 연구 변천사 스토리텔링 텍스트" }`;
+
+  const res = await axios.post(
+    `${GEMINI_URL}?key=${config.geminiApiKey}`,
+    {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        responseMimeType: 'application/json',
+      },
+    },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000,
+    },
+  );
+
+  const text = res.data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+  try {
+    const result = JSON.parse(text);
+    return { story: result.story || '' };
+  } catch {
+    console.error('[Gemini] Failed to parse storytelling response:', text);
+    return { story: '' };
+  }
+}
+
+/**
+ * 각 논문의 배치 이유를 설명하는 텍스트 생성
+ * @param {string} paragraph - Related Work 문단
+ * @param {Object[]} positions - [{ marker, title, year, cluster, clusterLabel }]
+ * @param {Object[]} relations - [{ from, to, label, type }]
+ * @returns {Object} - { "[3]": "이 논문은...", "[7]": "이 논문은..." }
+ */
+async function generatePlacementReasons(paragraph, positions, relations) {
+  const paperList = positions
+    .map((p) => `- ${p.marker} "${p.title}" (${p.year || '연도 미상'}) → 클러스터: "${p.clusterLabel || 'N/A'}"`)
+    .join('\n');
+
+  const relList = relations.length > 0
+    ? relations.map((r) => `- ${r.from} → ${r.to}: ${r.label} (${r.type})`).join('\n')
+    : '(관계 없음)';
+
+  const prompt = `You are a scientific paper analyst. Based on the Related Work paragraph and the layout clustering results, explain why each paper was placed in its position.
+
+## Related Work paragraph
+${paragraph}
+
+## Papers and their cluster assignments
+${paperList}
+
+## Relations between papers
+${relList}
+
+## Instructions
+1. 각 논문에 대해, 왜 해당 클러스터에 배치되었는지, 다른 논문과 어떤 관계가 있는지 한글로 설명해 주세요.
+2. 공손한 존댓말(~합니다, ~됩니다)로 통일해 주세요.
+3. 각 설명은 한글 공백 포함 최대 300자 이내, 반드시 완전한 문장으로 끝나야 합니다.
+4. Return ONLY valid JSON, no markdown.
+
+## Output Format
+{ "${positions[0]?.marker || '[1]'}": "배치 이유 설명 (최대 300자)", ... }`;
+
+  const res = await axios.post(
+    `${GEMINI_URL}?key=${config.geminiApiKey}`,
+    {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        responseMimeType: 'application/json',
+      },
+    },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000,
+    },
+  );
+
+  const text = res.data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+  try {
+    const result = JSON.parse(text);
+    // truncate each reason to complete sentence within 300 chars
+    const truncated = {};
+    for (const [key, val] of Object.entries(result)) {
+      truncated[key] = truncateToSentence(val || '', 300);
+    }
+    return truncated;
+  } catch {
+    console.error('[Gemini] Failed to parse placement reasons:', text);
+    return {};
+  }
+}
+
+module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences, summarizePaper, storytelling, generatePlacementReasons };

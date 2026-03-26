@@ -1,9 +1,9 @@
-const { analyzeRelations, analyzeRelationsForLayout, generateClusterLabels, findRelevantSentences, summarizePaper } = require('../services/gemini');
+const { analyzeRelations, generateClusterLabels, findRelevantSentences, summarizePaper, storytelling, generatePlacementReasons } = require('../services/gemini');
 const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
 const { getClient } = require('../services/mongo');
 
-// --- Co-citation 그래프 유틸리티 ---
+// --- Layout 유틸리티 ---
 
 /**
  * 텍스트에서 인용 마커 추출 (예: [1], [2,3], [4, 5] 등)
@@ -33,241 +33,177 @@ function splitIntoParagraphs(text) {
 }
 
 /**
- * Related Work 텍스트 구조로부터 co-citation 그래프 생성
- *
- * 가중치 규칙:
- *   같은 문장 내 co-citation → weight 1.0
- *   같은 문단 내 co-citation → weight 0.5 (문장 엣지가 없는 경우에만)
- *
- * 클러스터:
- *   여러 문단 → 각 문단이 하나의 클러스터
- *   단일 문단 → 문장 co-citation 연결 요소(union-find)로 하위 클러스터 생성
+ * 문장 기반 클러스터링 (union-find)
+ * 같은 문장에서 함께 인용된 마커 = 같은 클러스터
+ * 단독 마커는 하나의 기타 클러스터로 병합
  */
-function buildCoCitationGraph(paragraphs, validMarkers) {
-  const edgeMap = {}; // "a|b" → { from, to, weight }
+function buildSentenceClusters(paragraphs, validMarkers) {
+  const allMarkers = [...validMarkers];
+  const parent = {};
+  for (const m of allMarkers) parent[m] = m;
 
-  function edgeKey(a, b) {
-    return a < b ? `${a}|${b}` : `${b}|${a}`;
-  }
-
-  function addEdge(a, b, weight) {
-    if (a === b) return;
-    const key = edgeKey(a, b);
-    if (!edgeMap[key]) {
-      edgeMap[key] = { from: a < b ? a : b, to: a < b ? b : a, weight: 0 };
+  function find(x) {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
     }
-    edgeMap[key].weight = Math.max(edgeMap[key].weight, weight);
+    return x;
+  }
+  function union(a, b) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
   }
 
-  // 문단별 소속 마커 기록
-  const paraClusters = []; // [ Set<marker>, ... ]
-
+  // 같은 문장에서 함께 인용된 마커끼리 union
   for (const para of paragraphs) {
-    const paraMarkers = new Set(extractMarkers(para, validMarkers));
-    paraClusters.push(paraMarkers);
-
-    // 문장 단위 co-citation (weight 1.0)
     const sentences = para.split(/(?<=[.!?])\s+/);
+    console.log(`[Cluster] ${sentences.length} sentences in paragraph`);
     for (const sent of sentences) {
       const sentMarkers = [...new Set(extractMarkers(sent, validMarkers))];
-      for (let i = 0; i < sentMarkers.length; i++) {
-        for (let j = i + 1; j < sentMarkers.length; j++) {
-          addEdge(sentMarkers[i], sentMarkers[j], 1.0);
-        }
-      }
-    }
-
-    // 문단 단위 co-citation (weight 0.5)
-    const uniqueInPara = [...paraMarkers];
-    for (let i = 0; i < uniqueInPara.length; i++) {
-      for (let j = i + 1; j < uniqueInPara.length; j++) {
-        addEdge(uniqueInPara[i], uniqueInPara[j], 0.5);
-      }
-    }
-  }
-
-  const edges = Object.values(edgeMap);
-
-  // --- 클러스터 결정 ---
-  let clusterAssignment; // marker → clusterId
-
-  if (paragraphs.length > 1) {
-    // 여러 문단: 각 문단이 클러스터. 여러 문단에 등장하면 첫 등장 문단에 배정
-    clusterAssignment = {};
-    for (let pIdx = 0; pIdx < paraClusters.length; pIdx++) {
-      for (const marker of paraClusters[pIdx]) {
-        if (!(marker in clusterAssignment)) {
-          clusterAssignment[marker] = pIdx;
-        }
-      }
-    }
-    // 어떤 문단에도 없는 마커 → 별도 클러스터
-    for (const m of validMarkers) {
-      if (!(m in clusterAssignment)) {
-        clusterAssignment[m] = paraClusters.length;
-      }
-    }
-  } else {
-    // 단일 문단: union-find로 문장 co-citation 연결 요소 기반 하위 클러스터 생성
-    const allMarkers = [...validMarkers];
-    const parent = {};
-    for (const m of allMarkers) parent[m] = m;
-
-    function find(x) {
-      while (parent[x] !== x) {
-        parent[x] = parent[parent[x]];
-        x = parent[x];
-      }
-      return x;
-    }
-    function union(a, b) {
-      const ra = find(a);
-      const rb = find(b);
-      if (ra !== rb) parent[ra] = rb;
-    }
-
-    // 같은 문장에서 함께 인용된 마커끼리 union (가장 강한 관계만)
-    const sentences = paragraphs[0].split(/(?<=[.!?])\s+/);
-    for (const sent of sentences) {
-      const sentMarkers = [...new Set(extractMarkers(sent, validMarkers))];
+      console.log(`[Cluster] Sentence markers: ${JSON.stringify(sentMarkers)}`);
       for (let i = 1; i < sentMarkers.length; i++) {
         union(sentMarkers[0], sentMarkers[i]);
       }
     }
+  }
 
-    // 연결 요소 → 클러스터 ID
-    const rootToCluster = {};
-    let nextId = 0;
-    clusterAssignment = {};
-    for (const m of allMarkers) {
-      const root = find(m);
-      if (!(root in rootToCluster)) {
-        rootToCluster[root] = nextId++;
+  // 연결 요소 → 클러스터 ID
+  const rootToMembers = {};
+  for (const m of allMarkers) {
+    const root = find(m);
+    if (!rootToMembers[root]) rootToMembers[root] = [];
+    rootToMembers[root].push(m);
+  }
+
+  let nextId = 0;
+  const rootToCluster = {};
+  let singletonClusterId = null;
+  const clusterAssignment = {};
+
+  for (const [root, members] of Object.entries(rootToMembers)) {
+    if (members.length === 1) {
+      // 단독 마커 → 하나의 기타 클러스터로 병합
+      if (singletonClusterId === null) {
+        singletonClusterId = nextId++;
       }
-      clusterAssignment[m] = rootToCluster[root];
+      rootToCluster[root] = singletonClusterId;
+    } else {
+      rootToCluster[root] = nextId++;
     }
   }
 
-  return { edges, clusterAssignment };
+  for (const m of allMarkers) {
+    const root = find(m);
+    clusterAssignment[m] = rootToCluster[root];
+  }
+
+  console.log(`[Cluster] Final assignment:`, JSON.stringify(clusterAssignment));
+  return clusterAssignment;
 }
 
 /**
- * Y축 1D force-directed layout
- * 클러스터별 Y 밴드 중심에 중력 + co-citation 엣지 인력 + 노드 간 척력
- *
- * @param {string[]} markers - 마커 목록
- * @param {Object[]} edges - co-citation 엣지 ({ from, to, weight })
- * @param {Object} clusterAssignment - marker → clusterId
- * @param {number} numClusters - 총 클러스터 수
- * @returns {number[]} - 각 마커의 y좌표 (0~1 정규화)
+ * 마커의 본문 내 첫 등장 위치 맵 생성
+ * [1], [1,3], [2, 1, 5] 등 묶음 인용도 매칭
  */
-function computeClusterY(markers, edges, clusterAssignment, numClusters, iterations = 200) {
+function computeFirstMentionPos(markers, fullText) {
+  const firstPos = {};
+  for (const m of markers) {
+    const num = m.replace(/[[\]]/g, '');
+    const regex = new RegExp(
+      `\\[(?:\\d+[,\\s]+)*${num}(?:[,\\s]+\\d+)*\\]`
+    );
+    const match = regex.exec(fullText);
+    firstPos[m] = match ? match.index : Infinity;
+  }
+  return firstPos;
+}
+
+/**
+ * Y축: 클러스터별 동일 Y, 클러스터 간 큰 간격
+ * 클러스터 순서 = 본문 내 첫 언급 순서
+ */
+function computeClusterY(markers, clusterAssignment, firstPos) {
   const n = markers.length;
   if (n === 0) return [];
   if (n === 1) return [0.5];
 
-  const markerIdx = {};
-  markers.forEach((m, i) => { markerIdx[m] = i; });
-
-  // 클러스터별 Y 밴드 중심 (균등 분배)
-  const clusterCenter = {};
-  for (let c = 0; c < numClusters; c++) {
-    clusterCenter[c] = (c + 0.5) / numClusters;
+  // 클러스터별 그룹화
+  const clusterGroups = {};
+  for (const m of markers) {
+    const cId = clusterAssignment[m] ?? 0;
+    if (!clusterGroups[cId]) clusterGroups[cId] = [];
+    clusterGroups[cId].push(m);
   }
 
-  const k = 1.0 / n; // 이상적 노드 간 거리
-
-  // 초기 Y: 클러스터 중심 + 약간의 오프셋
-  const y = markers.map((m, i) => {
-    const cId = clusterAssignment[m] ?? 0;
-    const center = clusterCenter[cId] ?? 0.5;
-    const membersInCluster = markers.filter((mm) => (clusterAssignment[mm] ?? 0) === cId).length;
-    const idxInCluster = markers.slice(0, i + 1).filter((mm) => (clusterAssignment[mm] ?? 0) === cId).length - 1;
-    const spread = membersInCluster > 1 ? (0.5 / numClusters) : 0;
-    return center + (idxInCluster / Math.max(membersInCluster - 1, 1) - 0.5) * spread;
+  // 클러스터를 첫 멤버의 언급 순서로 정렬
+  const sortedClusterIds = Object.keys(clusterGroups).sort((a, b) => {
+    const minA = Math.min(...clusterGroups[a].map((m) => firstPos[m] ?? Infinity));
+    const minB = Math.min(...clusterGroups[b].map((m) => firstPos[m] ?? Infinity));
+    return minA - minB;
   });
 
-  let temp = 0.05;
+  // 클러스터별 동일 Y, 클러스터 간 균등 배분
+  const yMap = {};
+  const numClusters = sortedClusterIds.length;
 
-  for (let iter = 0; iter < iterations; iter++) {
-    const disp = new Array(n).fill(0);
-
-    // 척력 (모든 노드 쌍, Y축만)
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const dy = y[i] - y[j];
-        const dist = Math.abs(dy) || 0.001;
-        const force = (k * k) / dist;
-        const fy = Math.sign(dy) * force;
-        disp[i] += fy;
-        disp[j] -= fy;
-      }
+  sortedClusterIds.forEach((cId, ci) => {
+    const y = numClusters > 1 ? ci / (numClusters - 1) : 0.5;
+    for (const m of clusterGroups[cId]) {
+      yMap[m] = y;
     }
+  });
 
-    // 인력: co-citation 엣지 (Y축만)
-    for (const edge of edges) {
-      const i = markerIdx[edge.from];
-      const j = markerIdx[edge.to];
-      if (i === undefined || j === undefined) continue;
-      const dy = y[i] - y[j];
-      const dist = Math.abs(dy) || 0.001;
-      const force = (dist * dist / k) * edge.weight;
-      const fy = Math.sign(dy) * force;
-      disp[i] -= fy;
-      disp[j] += fy;
-    }
-
-    // 클러스터 중심 중력 (같은 클러스터끼리 모이게)
-    for (let i = 0; i < n; i++) {
-      const cId = clusterAssignment[markers[i]] ?? 0;
-      const center = clusterCenter[cId] ?? 0.5;
-      const dy = y[i] - center;
-      disp[i] -= dy * 0.3; // 중력 강도
-    }
-
-    // 변위 적용
-    for (let i = 0; i < n; i++) {
-      const absd = Math.abs(disp[i]) || 0.001;
-      y[i] += disp[i] * Math.min(absd, temp) / absd;
-    }
-
-    temp *= 0.97;
-  }
-
-  // 0~1 정규화
-  let minY = Infinity, maxY = -Infinity;
-  for (const v of y) {
-    if (v < minY) minY = v;
-    if (v > maxY) maxY = v;
-  }
-  const range = maxY - minY || 1;
-  return y.map((v) => (v - minY) / range);
+  return markers.map((m) => yMap[m]);
 }
 
 /**
- * 연도 → X좌표 정규화 (0~1)
- * 연도가 없는 논문은 주변 논문 기준으로 보간
+ * X축: 클러스터 내 연도순 배치, 모든 클러스터의 중점 X = 0.5
+ * 클러스터 폭은 멤버 수에 비례
  */
-function computeYearX(papers) {
-  const years = papers.map((p) => p.year ? parseInt(p.year) : null);
-  const validYears = years.filter((y) => y !== null && !isNaN(y));
+function computeYearX(papers, clusterAssignment) {
+  const xResult = new Array(papers.length).fill(0.5);
+  if (papers.length === 0) return xResult;
 
-  if (validYears.length === 0) {
-    // 연도 정보가 전혀 없으면 균등 배치
-    return papers.map((_, i) => i / Math.max(papers.length - 1, 1));
+  // 클러스터별 그룹화
+  const clusterGroups = {};
+  papers.forEach((p, i) => {
+    const cId = clusterAssignment[p.marker] ?? 0;
+    if (!clusterGroups[cId]) clusterGroups[cId] = [];
+    clusterGroups[cId].push(i);
+  });
+
+  // 각 클러스터: 중점 0.5 기준으로 연도순 펼침
+  // 폭은 (멤버수 / 전체수)로 비례
+  const totalPapers = papers.length;
+
+  for (const cId of Object.keys(clusterGroups)) {
+    const members = clusterGroups[cId];
+
+    if (members.length === 1) {
+      xResult[members[0]] = 0.5;
+      continue;
+    }
+
+    // 클러스터 폭: 멤버 수에 비례, 최대 1.0
+    const clusterWidth = Math.min(
+      members.length / totalPapers, 1.0);
+
+    // 연도순 정렬
+    const sorted = [...members].sort((a, b) => {
+      const ya = papers[a].year ? parseInt(papers[a].year) : Infinity;
+      const yb = papers[b].year ? parseInt(papers[b].year) : Infinity;
+      return ya - yb;
+    });
+
+    // 중점 0.5 기준으로 좌우 대칭 배치
+    sorted.forEach((paperIdx, rank) => {
+      const localX = rank / (sorted.length - 1); // 0~1
+      xResult[paperIdx] = 0.5 + (localX - 0.5) * clusterWidth;
+    });
   }
 
-  const minYear = Math.min(...validYears);
-  const maxYear = Math.max(...validYears);
-  const yearRange = maxYear - minYear || 1;
-
-  return years.map((y) => {
-    if (y !== null && !isNaN(y)) {
-      return (y - minYear) / yearRange;
-    }
-    // 연도 없는 논문 → 중앙 배치
-    return 0.5;
-  });
+  return xResult;
 }
 
 // POST /analyze/relations
@@ -346,13 +282,13 @@ exports.relations = async (req, res) => {
 };
 
 // POST /analyze/layout
-// Related Work 텍스트의 co-citation 구조 기반 2D 배치 + 관계 분석
+// Related Work 텍스트의 문장 co-citation 기반 클러스터링 + 2D 배치
 exports.layout = async (req, res) => {
-  const { projectName, paragraph, paragraphs: inputParagraphs, papers: inputPapers } = req.body;
+  const { projectName, paragraph, papers: inputPapers } = req.body;
 
-  if (!projectName || (!paragraph && !inputParagraphs) || !inputPapers || !Array.isArray(inputPapers) || inputPapers.length < 2) {
+  if (!projectName || !paragraph || !inputPapers || !Array.isArray(inputPapers) || inputPapers.length < 2) {
     return res.status(400).json({
-      error: 'projectName, paragraph (or paragraphs[]), and papers[] (min 2, with marker/fileId) required',
+      error: 'projectName, paragraph, and papers[] (min 2, with marker/fileId) required',
     });
   }
 
@@ -360,14 +296,23 @@ exports.layout = async (req, res) => {
     const db = getClient().db(projectName);
     const { ObjectId } = require('mongodb');
 
-    // paragraphs 배열 또는 단일 paragraph를 문단 단위로 분할
-    const paragraphs = inputParagraphs || splitIntoParagraphs(paragraph);
+    const paragraphs = splitIntoParagraphs(paragraph);
     const fullText = paragraphs.join('\n\n');
+
+    // 마커 정규화: "[42," → "[42]", "54]" → "[54]" 등
+    function normalizeMarker(m) {
+      const num = m.replace(/[^0-9]/g, '');
+      return `[${num}]`;
+    }
+    for (const p of inputPapers) {
+      p.marker = normalizeMarker(p.marker);
+    }
+
     const validMarkers = new Set(inputPapers.map((p) => p.marker));
 
-    console.log(`[Layout] Processing ${inputPapers.length} papers across ${paragraphs.length} paragraph(s)...`);
+    console.log(`[Layout] Processing ${inputPapers.length} papers, markers: ${[...validMarkers].join(', ')}...`);
 
-    // 1. MongoDB에서 논문 정보 조회 (연도 포함)
+    // 1. MongoDB에서 논문 정보 조회 (연도/제목)
     const paperDocs = [];
     for (const p of inputPapers) {
       let query;
@@ -377,85 +322,42 @@ exports.layout = async (req, res) => {
         query = { _id: p.fileId };
       }
       const doc = await db.collection('SaveFile').findOne(query);
-
-      // 연도: 클라이언트 전달값 > MongoDB 문서의 year 필드 > null
-      let year = p.year || doc?.year || null;
-
       paperDocs.push({
         fileId: p.fileId,
         marker: p.marker,
         title: doc?.paperName || 'Untitled',
-        year: year,
+        year: p.year || doc?.year || null,
       });
     }
 
-    // 2. Co-citation 그래프 생성 (저자의 문단/문장 구조 그대로 활용)
-    console.log(`[Layout] Building co-citation graph from text structure...`);
-    const { edges, clusterAssignment } = buildCoCitationGraph(paragraphs, validMarkers);
-    console.log(`[Layout] Graph: ${edges.length} co-citation edges`);
+    // 2. 문장 기반 클러스터링
+    console.log(`[Layout] Building sentence clusters...`);
+    const clusterAssignment = buildSentenceClusters(paragraphs, validMarkers);
+    const numClusters = new Set(Object.values(clusterAssignment)).size;
+    console.log(`[Layout] ${numClusters} clusters found`);
 
-    // 3. LLM 관계 분석 (엣지 라벨링용)
-    console.log(`[Layout] Analyzing relations with LLM...`);
-    const references = paperDocs.map((p) => ({
-      refId: p.marker,
-      title: p.title,
-    }));
-    let llmRelations = [];
-    try {
-      const result = await analyzeRelationsForLayout(fullText, references);
-      llmRelations = result.relations || [];
-    } catch (err) {
-      console.warn(`[Layout] LLM relation analysis failed: ${err.message}`);
-    }
-
-    // 4. LLM 관계를 co-citation 엣지에 병합 (라벨/타입 보강)
-    const llmEdgeMap = {};
-    for (const rel of llmRelations) {
-      const a = rel.from < rel.to ? rel.from : rel.to;
-      const b = rel.from < rel.to ? rel.to : rel.from;
-      llmEdgeMap[`${a}|${b}`] = rel;
-    }
-    for (const edge of edges) {
-      const key = `${edge.from}|${edge.to}`;
-      if (llmEdgeMap[key]) {
-        edge.label = llmEdgeMap[key].label;
-        edge.type = llmEdgeMap[key].type;
-      }
-    }
-    // LLM이 발견했지만 co-citation에 없는 관계도 약한 엣지로 추가
-    for (const rel of llmRelations) {
-      const a = rel.from < rel.to ? rel.from : rel.to;
-      const b = rel.from < rel.to ? rel.to : rel.from;
-      const key = `${a}|${b}`;
-      const exists = edges.some((e) => `${e.from}|${e.to}` === key);
-      if (!exists && validMarkers.has(rel.from) && validMarkers.has(rel.to)) {
-        edges.push({ from: a, to: b, weight: 0.3, label: rel.label, type: rel.type });
-      }
-    }
-
-    // 5. X축 = 연도순, Y축 = 클러스터 기반 force-directed
-    console.log(`[Layout] Computing layout (x=year, y=cluster)...`);
+    // 3. 좌표 계산: X=연도순 균등, Y=클러스터별 동일값+큰 간격
     const markerList = paperDocs.map((p) => p.marker);
-    const xCoords = computeYearX(paperDocs);
+    const firstPos = computeFirstMentionPos(markerList, fullText);
+    const xCoords = computeYearX(paperDocs, clusterAssignment);
+    const yCoords = computeClusterY(markerList, clusterAssignment, firstPos);
 
-    const numClusters = Math.max(...Object.values(clusterAssignment), 0) + 1;
-    const yCoords = computeClusterY(markerList, edges, clusterAssignment, numClusters);
-
-    // 6. 클러스터별 논문 제목 + 마커 수집 → Gemini 라벨 생성
+    // 4. 클러스터 라벨 생성 (Gemini)
     const clusterTitles = {};
-    const clusterMarkers = {};
+    const clusterMarkerMap = {};
     for (const p of paperDocs) {
       const cId = clusterAssignment[p.marker] ?? 0;
       if (!clusterTitles[cId]) clusterTitles[cId] = [];
-      if (!clusterMarkers[cId]) clusterMarkers[cId] = [];
+      if (!clusterMarkerMap[cId]) clusterMarkerMap[cId] = [];
       clusterTitles[cId].push(p.title);
-      clusterMarkers[cId].push(p.marker);
+      clusterMarkerMap[cId].push(p.marker);
     }
 
-    console.log(`[Layout] Generating labels for ${Object.keys(clusterTitles).length} clusters...`);
-    const clusterLabels = await generateClusterLabels(clusterTitles, fullText, clusterMarkers);
+    console.log(`[Layout] Generating cluster labels...`);
+    const clusterLabels = await generateClusterLabels(
+      clusterTitles, fullText, clusterMarkerMap);
 
-    // 7. 응답 조립 (기존 응답 형식 유지)
+    // 5. 배치 이유 생성 (Gemini)
     const positions = paperDocs.map((p, i) => ({
       fileId: p.fileId,
       marker: p.marker,
@@ -466,34 +368,31 @@ exports.layout = async (req, res) => {
       cluster: clusterAssignment[p.marker] ?? 0,
     }));
 
-    const clusters = Object.keys(clusterTitles).map((cId) => {
-      const members = positions.filter((p) => p.cluster === parseInt(cId));
-      const centerX = members.reduce((s, p) => s + p.x, 0) / members.length;
-      const centerY = members.reduce((s, p) => s + p.y, 0) / members.length;
-      return {
-        id: parseInt(cId),
-        label: clusterLabels[cId] || `Cluster ${cId}`,
-        centerX,
-        centerY,
-        count: members.length,
-      };
-    });
-
-    const markerToFileId = {};
-    for (const p of inputPapers) {
-      markerToFileId[p.marker] = p.fileId;
+    console.log(`[Layout] Generating placement reasons...`);
+    const positionsWithClusterLabel = positions.map((p) => ({
+      ...p,
+      clusterLabel: clusterLabels[p.cluster] || `Cluster ${p.cluster}`,
+    }));
+    let placementReasons = {};
+    try {
+      placementReasons = await generatePlacementReasons(
+        fullText, positionsWithClusterLabel, []);
+    } catch (err) {
+      console.warn(`[Layout] Placement reasons failed: ${err.message}`);
     }
-    const relations = edges
-      .filter((e) => e.label && markerToFileId[e.from] && markerToFileId[e.to])
-      .map((e) => ({
-        from: markerToFileId[e.from],
-        to: markerToFileId[e.to],
-        label: e.label,
-        type: e.type || 'similar',
-      }));
+    for (const pos of positions) {
+      pos.reason = placementReasons[pos.marker] || '';
+    }
 
-    console.log(`[Layout] Done. ${positions.length} positions, ${clusters.length} clusters, ${relations.length} relations, ${edges.length} edges.`);
-    res.json({ positions, clusters, relations });
+    // 6. 응답 조립
+    const clusters = Object.keys(clusterTitles).map((cId) => ({
+      id: parseInt(cId),
+      label: clusterLabels[cId] || `Cluster ${cId}`,
+      count: clusterTitles[cId].length,
+    }));
+
+    console.log(`[Layout] Done. ${positions.length} positions, ${clusters.length} clusters.`);
+    res.json({ positions, clusters, relations: [] });
   } catch (err) {
     console.error('[Layout] Error:', err.message);
     res.status(500).json({ error: err.message });
@@ -573,14 +472,15 @@ exports.highlights = async (req, res) => {
 
         // 3. Gemini로 관련 문장 인덱스 찾기 + 요약 병렬 호출
         console.log(`[Highlights] ${marker}: Finding relevant sentences (${sentences.length} total)...`);
-        const [{ indices }, { summary }] = await Promise.all([
+        const [{ indices }, sumResult] = await Promise.all([
           findRelevantSentences(paragraph, marker, paperTitle, sentences),
           summarizePaper(paragraph, marker, paperTitle, sentences),
         ]);
 
         // 4. 인덱스 → 원본 문장 추출
         const quotes = indices.map((i) => sentences[i]);
-        console.log(`[Highlights] ${marker}: Found ${quotes.length} relevant quotes, summary: ${summary.slice(0, 60)}...`);
+        const summary = `[배경] ${sumResult.background}\n\n[기여] ${sumResult.contribution}\n\n[한계] ${sumResult.limitation}`;
+        console.log(`[Highlights] ${marker}: Found ${quotes.length} relevant quotes, bg: ${sumResult.background.slice(0, 40)}...`);
 
         highlights.push({
           fileId,
@@ -588,6 +488,9 @@ exports.highlights = async (req, res) => {
           title: paperTitle,
           quotes,
           summary,
+          background: sumResult.background,
+          contribution: sumResult.contribution,
+          limitation: sumResult.limitation,
         });
       } catch (paperErr) {
         console.error(`[Highlights] ${marker} (${fileId}): ERROR - ${paperErr.message}`);
@@ -599,6 +502,88 @@ exports.highlights = async (req, res) => {
     res.json({ highlights });
   } catch (err) {
     console.error('[Highlights] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /analyze/summarize
+// 키워드 검색으로 수집한 논문의 독립 요약 (citation context 불필요)
+exports.summarize = async (req, res) => {
+  const { projectName, fileId, paperTitle } = req.body;
+
+  if (!projectName || !fileId) {
+    return res.status(400).json({
+      error: 'projectName and fileId required',
+    });
+  }
+
+  try {
+    console.log(`[Summarize] Processing ${fileId}...`);
+
+    // 1. S3에서 TEI XML 가져와서 문장 추출
+    let sentences = [];
+    const teiKey = `tei/${projectName}/${fileId}.xml`;
+    try {
+      const teiXml = await s3Service.downloadTeiXml(teiKey);
+      sentences = extractSentences(teiXml);
+      console.log(`[Summarize] ${sentences.length} sentences from cached TEI`);
+    } catch {
+      console.log(`[Summarize] No cached TEI, extracting from PDF...`);
+      const { processFulltext } = require('../services/grobid');
+      const s3Key = `papers/${projectName}/${fileId}.pdf`;
+      const s3Res = await s3Service.downloadPdf(s3Key);
+      const chunks = [];
+      for await (const chunk of s3Res.Body) chunks.push(chunk);
+      const pdfBuffer = Buffer.concat(chunks);
+
+      const teiXml = await processFulltext(pdfBuffer);
+      sentences = extractSentences(teiXml);
+      console.log(`[Summarize] GROBID extracted ${sentences.length} sentences`);
+
+      await s3Service.uploadTeiXml(teiKey, teiXml);
+    }
+
+    if (sentences.length === 0) {
+      return res.json({ summary: '' });
+    }
+
+    // 2. 요약 생성 (citation context 없이)
+    const title = paperTitle || 'Untitled';
+    const sumResult = await summarizePaper(
+      '', '', title, sentences);
+    const summary = `[배경] ${sumResult.background}\n\n[기여] ${sumResult.contribution}\n\n[한계] ${sumResult.limitation}`;
+    console.log(`[Summarize] Done: bg=${sumResult.background.slice(0, 40)}...`);
+
+    res.json({
+      summary,
+      background: sumResult.background,
+      contribution: sumResult.contribution,
+      limitation: sumResult.limitation,
+    });
+  } catch (err) {
+    console.error('[Summarize] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /analyze/storytelling
+// 여러 논문 선택 → 연구 변천사 스토리텔링 생성
+exports.storytelling = async (req, res) => {
+  const { papers, links } = req.body;
+
+  if (!papers || !Array.isArray(papers) || papers.length < 2) {
+    return res.status(400).json({
+      error: 'papers[] (min 2, with title/year/summary) required',
+    });
+  }
+
+  try {
+    console.log(`[Storytelling] Processing ${papers.length} papers, ${(links || []).length} links...`);
+    const result = await storytelling(papers, links || []);
+    console.log(`[Storytelling] Done: ${result.story.slice(0, 80)}...`);
+    res.json(result);
+  } catch (err) {
+    console.error('[Storytelling] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 };

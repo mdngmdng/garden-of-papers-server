@@ -87,6 +87,9 @@ exports.updateData = async (req, res) => {
     lastPageNavigationTime, paperIndex, parentPaperId, color, noteType,
     textAlignmentIndex, fontSizeIndex, startPaperId, endPaperId, labelPosIndex,
     scaleFactor, ptCurveIds, ptArray, parentPageIndex,
+    citationContextParagraph, citationSentenceRangePageIndex,
+    citationSentenceRangeStartChar, citationSentenceRangeLength,
+    relationshipInfo, referenceText, linkHighlightTexts, summaryNoteId,
   } = req.body;
 
   try {
@@ -129,6 +132,14 @@ exports.updateData = async (req, res) => {
     if (ptCurveIds !== null && ptCurveIds.length !== 0) update.ptCurveIds = ptCurveIds;
     if (ptArray !== null && ptArray.length !== 0) update.ptArray = ptArray;
     update.parentPageIndex = parentPageIndex;
+    if (citationContextParagraph && citationContextParagraph !== '') update.citationContextParagraph = citationContextParagraph;
+    if (citationSentenceRangePageIndex !== undefined) update.citationSentenceRangePageIndex = citationSentenceRangePageIndex;
+    if (citationSentenceRangeStartChar !== undefined) update.citationSentenceRangeStartChar = citationSentenceRangeStartChar;
+    if (citationSentenceRangeLength !== undefined) update.citationSentenceRangeLength = citationSentenceRangeLength;
+    if (relationshipInfo && relationshipInfo !== '') update.relationshipInfo = relationshipInfo;
+    if (referenceText && referenceText !== '') update.referenceText = referenceText;
+    if (linkHighlightTexts !== null && linkHighlightTexts !== undefined && linkHighlightTexts.length !== 0) update.linkHighlightTexts = linkHighlightTexts;
+    if (summaryNoteId && summaryNoteId !== '') update.summaryNoteId = summaryNoteId;
 
     try {
       const updatedData = await collection.findOneAndUpdate(
