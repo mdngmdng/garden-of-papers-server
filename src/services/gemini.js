@@ -512,4 +512,30 @@ ${relList}
   }
 }
 
-module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences, summarizePaper, storytelling, generatePlacementReasons };
+/**
+ * 영어 텍스트 → 한글 번역
+ * @param {string} englishText
+ * @returns {string} translated text
+ */
+async function translateToKorean(englishText) {
+  if (!englishText) return '';
+
+  const prompt = `Translate the following English text to Korean. Keep the translated text length similar to the original text. Output only the translated text without any other words or formatting: "${englishText}"`;
+
+  const res = await axios.post(
+    `${GEMINI_URL}?key=${config.geminiApiKey}`,
+    {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.2 },
+    },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000,
+    },
+  );
+
+  const text = res.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return text.trim();
+}
+
+module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences, summarizePaper, storytelling, generatePlacementReasons, translateToKorean };

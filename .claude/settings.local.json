@@ -7,7 +7,8 @@
       "Bash(xargs grep:*)",
       "Bash(grep -n \"downloadPDFOnPaper\" /c/Users/SketchLab/Desktop/2026_0107_desktop/GX/gx-desktop/Assets/Scripts/jwi-unity/Util/GXUtil*.cs)",
       "Bash(node -e \":*)",
-      "Bash(findstr /i \"Cluster Layout\")"
+      "Bash(findstr /i \"Cluster Layout\")",
+      "Bash(findstr /i \"Citance\\\\|Collect\")"
     ]
   }
 }

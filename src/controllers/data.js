@@ -90,6 +90,7 @@ exports.updateData = async (req, res) => {
     citationContextParagraph, citationSentenceRangePageIndex,
     citationSentenceRangeStartChar, citationSentenceRangeLength,
     relationshipInfo, referenceText, linkHighlightTexts, summaryNoteId,
+    translations,
   } = req.body;
 
   try {
@@ -140,6 +141,7 @@ exports.updateData = async (req, res) => {
     if (referenceText && referenceText !== '') update.referenceText = referenceText;
     if (linkHighlightTexts !== null && linkHighlightTexts !== undefined && linkHighlightTexts.length !== 0) update.linkHighlightTexts = linkHighlightTexts;
     if (summaryNoteId && summaryNoteId !== '') update.summaryNoteId = summaryNoteId;
+    if (translations !== null && translations !== undefined) update.translations = translations;
 
     try {
       const updatedData = await collection.findOneAndUpdate(

@@ -26,11 +26,17 @@ exports.fetchCitedBy = async (req, res) => {
     return res.status(400).json({ error: 'fileId and citesId are required' });
   }
 
-  // 즉시 응답 (백그라운드에서 처리)
-  res.json({ message: 'Citation fetch started', fileId, citesId });
-
-  // 백그라운드 실행
-  fetchAndSaveCitedBy(projectName, fileId, citesId);
+  try {
+    const result = await fetchAndSaveCitedBy(projectName, fileId, citesId);
+    res.json({
+      fileId,
+      citationCountWhenSearch: result.totalResults,
+      citationTitleList: result.citationTitleList,
+    });
+  } catch (err) {
+    console.error(`[SerpAPI] Failed for ${fileId}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 /**
@@ -60,43 +66,39 @@ exports.getCitedBy = async (req, res) => {
   }
 };
 
-// 백그라운드: SerpAPI 호출 → MongoDB 저장 → WebSocket 알림
-async function fetchAndSaveCitedBy(projectName, fileId, citesId) {
-  try {
-    console.log(`[SerpAPI] Fetching citedBy for ${fileId} (citesId: ${citesId})...`);
-
-    const { totalResults, citationTitleList } = await fetchCitedBy(citesId);
-    console.log(`[SerpAPI] Found ${totalResults} citations, ${Object.keys(citationTitleList).length} unique entries for ${fileId}`);
-
-    // SaveFile 내 해당 논문 문서에 저장
-    const db = getClient().db(projectName);
-    await db.collection('SaveFile').updateOne(
-      getQuery(fileId),
-      {
-        $set: {
-          citationCountWhenSearch: totalResults,
-          citationTitleList,
-          citedByFetchedAt: new Date(),
-        },
-      },
-    );
-    console.log(`[SerpAPI] Saved citedBy into SaveFile for ${fileId}`);
-
-    // WebSocket으로 클라이언트에게 알림
-    syncKeys.broadcastToProject(projectName, {
-      type: 'cited_by_ready',
-      fileId,
-      citationCountWhenSearch: totalResults,
-      citationTitleList,
-    });
-    console.log(`[SerpAPI] Notified clients for ${fileId}`);
-  } catch (err) {
-    console.error(`[SerpAPI] Failed for ${fileId}:`, err.message);
-
-    syncKeys.broadcastToProject(projectName, {
-      type: 'cited_by_failed',
-      fileId,
-      error: err.message,
-    });
+// { resultId: [title, authors] } → GXSerialDicStrStr 형식 변환
+function toSerialDicStrStr(dict) {
+  const keys = [];
+  const values = [];
+  for (const [k, v] of Object.entries(dict)) {
+    keys.push(k);
+    values.push({ array: Array.isArray(v) ? v : [v] });
   }
+  return { key: keys, value: values };
+}
+
+// SerpAPI 호출 → MongoDB 저장 → 결과 반환
+async function fetchAndSaveCitedBy(projectName, fileId, citesId) {
+  console.log(`[SerpAPI] Fetching citedBy for ${fileId} (citesId: ${citesId})...`);
+
+  const { totalResults, citationTitleList } = await fetchCitedBy(citesId);
+  console.log(`[SerpAPI] Found ${totalResults} citations, ${Object.keys(citationTitleList).length} unique entries for ${fileId}`);
+
+  // Unity의 GXSerialDicStrStr 형식으로 변환하여 저장
+  const serialized = toSerialDicStrStr(citationTitleList);
+
+  const db = getClient().db(projectName);
+  await db.collection('SaveFile').updateOne(
+    getQuery(fileId),
+    {
+      $set: {
+        citationCountWhenSearch: totalResults,
+        citationTitleList: serialized,
+        citedByFetchedAt: new Date(),
+      },
+    },
+  );
+  console.log(`[SerpAPI] Saved citedBy into SaveFile for ${fileId}`);
+
+  return { totalResults, citationTitleList };
 }

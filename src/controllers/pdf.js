@@ -62,10 +62,15 @@ exports.uploadPdf = async (req, res) => {
       { upsert: true },
     );
 
-    // 3. GROBID로 인용 추출 (백그라운드 - 응답 차단 안 함)
-    extractAndSaveCitations(projectName, fileId, pdfData);
+    // 3. GROBID로 인용 추출 + referenceTitleList 생성
+    const grobidResult = await extractAndSaveCitations(
+      projectName, fileId, pdfData);
 
-    res.json({ message: 'PDF uploaded successfully to S3' });
+    res.json({
+      message: 'PDF uploaded successfully to S3',
+      referenceTitleList: grobidResult
+        ? grobidResult.referenceTitleList : null,
+    });
   } catch (error) {
     console.error('Error during upload:', error);
     res.status(500).json({ error: 'An error occurred during the upload process' });
@@ -93,6 +98,17 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
       ...info,
     }));
 
+    // referenceTitleList: xml:id → [title, authors]
+    // GXSerialDicStrStr 형식으로 변환
+    const refKeys = [];
+    const refValues = [];
+    for (const [xmlId, info] of Object.entries(refInfo)) {
+      refKeys.push(xmlId);
+      const authorsStr = (info.authors || []).join(', ');
+      refValues.push({ array: [info.title || '', authorsStr] });
+    }
+    const referenceTitleList = { key: refKeys, value: refValues };
+
     // SaveFile 내 해당 논문 문서에 citation 데이터 저장
     const db = getClient().db(projectName);
     const { ObjectId } = require('mongodb');
@@ -109,11 +125,12 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           citationHits,
           pageSizeList,
           referenceList,
+          referenceTitleList,
           citationsExtractedAt: new Date(),
         },
       },
     );
-    console.log(`[GROBID] Saved citations into SaveFile for ${fileId}`);
+    console.log(`[GROBID] Saved citations + referenceTitleList into SaveFile for ${fileId}`);
 
     // TEI XML을 S3에 저장 (highlights에서 재사용)
     const teiKey = `tei/${projectName}/${fileId}.xml`;
@@ -129,6 +146,8 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
       referenceList,
     });
     console.log(`[GROBID] Notified clients for ${fileId}`);
+
+    return { referenceTitleList };
   } catch (err) {
     console.error(`[GROBID] Failed to extract citations for ${fileId}:`, err.message);
 
@@ -138,6 +157,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
       fileId,
       error: err.message,
     });
+    return null;
   }
 }
 
