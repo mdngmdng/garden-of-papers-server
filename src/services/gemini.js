@@ -391,33 +391,42 @@ Return ONLY valid JSON, no markdown.
  * @param {Object[]} links - [{ from, to, markerText, citance }]
  * @returns {{ story: string }}
  */
-async function storytelling(papers, links) {
+async function storytelling(papers, links, myResearch = '') {
   const paperList = papers
-    .map((p, i) => `${i + 1}. "${p.title}" (${p.year || '연도 미상'})\n   요약: ${p.summary || '없음'}`)
+    .map((p, i) => `[${i + 1}] "${p.title}" (${p.year || '연도 미상'})\n   요약: ${p.summary || '없음'}`)
     .join('\n');
 
   const linkList = links.length > 0
     ? links.map((l) => `- "${l.from}" → "${l.to}" [${l.markerText || ''}]: ${l.citance || ''}`).join('\n')
-    : '(링크 정보 없음)';
+    : '(인용 관계 정보 없음)';
 
-  const prompt = `You are a scientific paper analyst. Based on the following papers and their citation relationships, write a concise research evolution narrative in Korean.
+  const myResearchSection = myResearch
+    ? `\n## 저자의 연구 (참고만 하세요 — 본문에 직접 서술하지 마세요)\n${myResearch}\n`
+    : '';
 
-## Papers
+  const prompt = `You are an academic writing assistant. Write a "Related Work" section in Korean based on the following papers and their citation relationships.
+${myResearchSection}
+## 선행 연구 목록 (관련 연구 단원에서 서술할 대상)
 ${paperList}
 
-## Citation relationships (from → to, with citation marker and citance sentence)
+## Citation relationships (from → to, with citation context)
 ${linkList}
 
 ## Instructions
-1. 인용 관계 순서에 따라 연구의 변천사와 논문 간의 관계를 스토리텔링해 주세요.
-2. 정확히 6문장으로 작성해 주세요.
-3. 공손한 존댓말(~합니다, ~됩니다)로 통일해 주세요.
-4. 각 논문의 제목은 큰따옴표로 감싸서 언급해 주세요.
-5. 시간순(연도순)으로 연구가 어떻게 발전했는지 흐름을 설명해 주세요.
-6. Return ONLY valid JSON, no markdown.
+1. **"선행 연구 목록"의 모든 논문은 타 연구자들의 선행 연구입니다.** 이 논문들을 절대 "본 연구", "본 논문", "우리는" 등의 표현으로 서술하지 마세요. 각 논문은 반드시 해당 논문의 저자들이 수행한 연구로 3인칭 서술해야 합니다.
+2. "본 연구", "본 논문", "우리" 같은 1인칭·자기 연구 표현은 오직 마지막 문단에서 저자의 연구를 소개할 때만 한 문장으로 사용하세요.
+3. 논문을 인용할 때는 반드시 목록의 번호를 [1], [2] 형식으로 본문에 표기하세요 (예: "○○ 연구[1]에서는...").
+4. 논문들을 주제나 방법론에 따라 자연스럽게 묶어서 서술하세요. 시간순 나열이 아닌 지적 흐름 중심으로 작성하세요.
+5. 각 논문을 하나씩 따로 소개하지 마세요. 논문들을 종합하여 흐름 있는 서사로 연결하세요.
+6. 인용 관계(citance)가 있으면 적극 활용하여 "A는 B의 방법론을 확장하여..." 같은 구체적인 관계를 서술하세요.
+7. 마지막 문단에서는 기존 연구들이 남긴 공백을 짚고, 저자의 연구가 이를 어떻게 메우는지 자연스럽게 연결하세요 ("본 연구는..." 형태로 한 문장만).
+8. 학술 논문 스타일(3인칭, 과거형 서술)로 작성하세요. 존댓말(~하였다, ~되었다)을 사용하세요.
+9. 각 논문 제목은 큰따옴표로 감싸세요.
+10. 3~5개 문단으로 구성하세요.
+11. Return ONLY valid JSON, no markdown.
 
 ## Output Format
-{ "story": "6문장의 연구 변천사 스토리텔링 텍스트" }`;
+{ "story": "관련 연구 단원 전체 텍스트 (문단 구분은 \\n\\n 사용)" }`;
 
   const res = await axios.post(
     `${GEMINI_URL}?key=${config.geminiApiKey}`,

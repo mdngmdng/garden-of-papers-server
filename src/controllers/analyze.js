@@ -569,17 +569,17 @@ exports.summarize = async (req, res) => {
 // POST /analyze/storytelling
 // 여러 논문 선택 → 연구 변천사 스토리텔링 생성
 exports.storytelling = async (req, res) => {
-  const { papers, links } = req.body;
+  const { papers, links, myResearch } = req.body;
 
-  if (!papers || !Array.isArray(papers) || papers.length < 2) {
+  if (!papers || !Array.isArray(papers) || papers.length < 1) {
     return res.status(400).json({
-      error: 'papers[] (min 2, with title/year/summary) required',
+      error: 'papers[] (min 1, with title/year/summary) required',
     });
   }
 
   try {
     console.log(`[Storytelling] Processing ${papers.length} papers, ${(links || []).length} links...`);
-    const result = await storytelling(papers, links || []);
+    const result = await storytelling(papers, links || [], myResearch || '');
     console.log(`[Storytelling] Done: ${result.story.slice(0, 80)}...`);
     res.json(result);
   } catch (err) {
