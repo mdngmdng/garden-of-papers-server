@@ -16,4 +16,7 @@ router.get('/citations/:projectName/:fileid', pdfController.getCitations);
 router.post('/fetch_citations/:projectName', scholarController.fetchCitedBy);
 router.get('/cited_by/:projectName/:fileid', scholarController.getCitedBy);
 
+// Reference enrichment (GROBID key → SerpAPI result_id)
+router.post('/resolve_paper_references/:projectName', pdfController.resolvePaperReferences);
+
 module.exports = router;
