@@ -2,7 +2,6 @@ require('dotenv').config();
 
 module.exports = {
   port: process.env.PORT || 5002,
-  wsPort: process.env.WS_PORT || 751,
   origin: process.env.ORIGIN || 'http://34.64.85.65:3000',
   mongoUrl: process.env.MONGODB_URI || 'mongodb+srv://admin:0423504564@gx-mongo.eau3o.mongodb.net',
   aws: {

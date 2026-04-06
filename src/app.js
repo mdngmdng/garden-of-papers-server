@@ -1,6 +1,7 @@
 const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const config = require('./config');
@@ -40,13 +41,15 @@ app.use('/papers', papersRouter);
 // LLM 분석 API
 app.use('/analyze', analyzeRouter);
 
+const server = http.createServer(app);
+
 // Start
 connect()
   .then(() => {
-    app.listen(config.port, () => {
-      console.log(`Express server running on port ${config.port}`);
+    server.listen(config.port, () => {
+      console.log(`HTTP + WebSocket server running on port ${config.port}`);
     });
-    createWebSocketServer(config.wsPort);
+    createWebSocketServer(server);
     spawnUdpRelay();
   })
   .catch((err) => {
