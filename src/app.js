@@ -43,10 +43,10 @@ app.use('/analyze', analyzeRouter);
 // Start
 connect()
   .then(() => {
-    app.listen(config.port, () => {
+    const server = app.listen(config.port, () => {
       console.log(`Express server running on port ${config.port}`);
     });
-    createWebSocketServer(config.wsPort);
+    createWebSocketServer(server);
     spawnUdpRelay();
   })
   .catch((err) => {
