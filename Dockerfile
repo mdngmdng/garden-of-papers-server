@@ -9,6 +9,6 @@ RUN npm ci --omit=dev
 
 COPY . .
 
-EXPOSE 5002 751
+EXPOSE 5002
 
 CMD ["node", "src/app.js"]

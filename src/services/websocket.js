@@ -2,8 +2,8 @@ const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const syncKeys = require('./syncKeys');
 
-function createWebSocketServer(wsPort) {
-  const wss = new WebSocket.Server({ port: wsPort });
+function createWebSocketServer(httpServer) {
+  const wss = new WebSocket.Server({ server: httpServer });
 
   wss.on('connection', (ws) => {
     const id = uuidv4();
@@ -28,7 +28,7 @@ function createWebSocketServer(wsPort) {
     ws.send(id);
   });
 
-  console.log(`WebSocket server running on port ${wsPort}`);
+  console.log('WebSocket server attached to HTTP server');
   return wss;
 }
 
