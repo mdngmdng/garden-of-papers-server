@@ -138,11 +138,12 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
 
     // WebSocket으로 해당 프로젝트의 모든 클라이언트에게 알림
     syncKeys.broadcastToProject(projectName, {
-      type: 'citations_ready',
+      type: 'references_extraction',
       fileId,
       citationHits,
       pageSizeList,
       referenceList,
+      referenceTitleList,
     });
     console.log(`[GROBID] Notified clients for ${fileId}`);
 

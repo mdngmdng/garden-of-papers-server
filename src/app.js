@@ -15,12 +15,13 @@ const dataRouter = require('./routes/data');
 const pdfRouter = require('./routes/pdf');
 const papersRouter = require('./routes/papers');
 const analyzeRouter = require('./routes/analyze');
+const extensionBridgeRouter = require('./routes/extensionBridge');
 
 const app = express();
 
 // Middleware
 app.use(cors({
-  origin: config.origin,
+  origin: true, // allow all origins (Chrome extension + Unity)
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -40,6 +41,9 @@ app.use('/papers', papersRouter);
 
 // LLM 분석 API
 app.use('/analyze', analyzeRouter);
+
+// Chrome 확장 프로그램 브릿지
+app.use('/extension', extensionBridgeRouter);
 
 const server = http.createServer(app);
 
