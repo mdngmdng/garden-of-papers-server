@@ -94,7 +94,7 @@ exports.uploadLog = async (req, res) => {
 exports.updateData = async (req, res) => {
   const {
     WebSocketID, _projectName, _id,
-    type, pos, textValue, paperName, year, resourceLink, fileId, publicationVenue,
+    type, pos, textValue, paperName, year, resourceLink, fileId, pdfSourceUrl, publicationVenue,
     resultId, citesId, citationCount, referenceTitleList, citationTitleList,
     abovePageIndex, referenceTextArray, highlightTexts, copiedOrigianlPaperId,
     lastPageNavigationTime, paperIndex, parentPaperId, color, noteType,
@@ -123,6 +123,7 @@ exports.updateData = async (req, res) => {
     if (year !== '') update.year = year;
     if (resourceLink !== '') update.resourceLink = resourceLink;
     if (fileId !== undefined && fileId !== '') update.fileId = fileId;
+    if (pdfSourceUrl !== undefined && pdfSourceUrl !== '') update.pdfSourceUrl = pdfSourceUrl;
     if (publicationVenue !== '') update.publicationVenue = publicationVenue;
     if (resultId !== '') update.resultId = resultId;
     if (citesId !== '') update.citesId = citesId;
