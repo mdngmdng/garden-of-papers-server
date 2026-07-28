@@ -6,6 +6,7 @@ const {
   DeleteObjectCommand,
   ListObjectsV2Command,
 } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const config = require('../config');
 
 const s3 = new S3Client({
@@ -28,11 +29,30 @@ async function uploadPdf(key, buffer) {
   return key;
 }
 
+async function createPdfUploadUrl(key, contentType = 'application/pdf') {
+  return getSignedUrl(
+    s3,
+    new PutObjectCommand({
+      Bucket,
+      Key: key,
+      ContentType: contentType,
+    }),
+    { expiresIn: 15 * 60 },
+  );
+}
+
 async function downloadPdf(key, range) {
   const input = { Bucket, Key: key };
   if (range) input.Range = range;
   const res = await s3.send(new GetObjectCommand(input));
   return res;
+}
+
+async function downloadPdfBuffer(key) {
+  const res = await downloadPdf(key);
+  const chunks = [];
+  for await (const chunk of res.Body) chunks.push(chunk);
+  return Buffer.concat(chunks);
 }
 
 async function deletePdf(key) {
@@ -66,4 +86,14 @@ async function downloadTeiXml(key) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
-module.exports = { uploadPdf, downloadPdf, deletePdf, listPdfs, headPdf, uploadTeiXml, downloadTeiXml };
+module.exports = {
+  uploadPdf,
+  createPdfUploadUrl,
+  downloadPdf,
+  downloadPdfBuffer,
+  deletePdf,
+  listPdfs,
+  headPdf,
+  uploadTeiXml,
+  downloadTeiXml,
+};

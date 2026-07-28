@@ -3,12 +3,59 @@ const s3Service = require('../services/s3');
 const grobidService = require('../services/grobid');
 const syncKeys = require('../services/syncKeys');
 
+const MAX_PDF_BYTES = 250 * 1024 * 1024;
+const citationJobs = new Map();
+
 function s3Key(projectName, fileId) {
   return `papers/${projectName}/${fileId}.pdf`;
 }
 
+function isValidFileId(value) {
+  return typeof value === 'string' && /^[a-zA-Z0-9._-]{1,200}$/.test(value);
+}
+
 function getPdfMetaCollection(projectName) {
   return getClient().db(projectName).collection('PdfMeta');
+}
+
+async function markCitationFailure(projectName, fileId, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[GROBID] Failed to extract citations for ${fileId}:`, message);
+  await getPdfMetaCollection(projectName).updateOne(
+    { fileId },
+    {
+      $set: {
+        citationStatus: 'failed',
+        citationError: message,
+        citationsFailedAt: new Date(),
+      },
+    },
+    { upsert: true },
+  ).catch((metadataError) => {
+    console.error(`[GROBID] Failed to save failure state for ${fileId}:`, metadataError.message);
+  });
+  syncKeys.broadcastToProject(projectName, {
+    type: 'citations_failed',
+    fileId,
+    error: message,
+  });
+}
+
+function queueCitationExtraction(projectName, fileId, pdfBuffer) {
+  const jobKey = `${projectName}/${fileId}`;
+  if (citationJobs.has(jobKey)) return;
+
+  const job = new Promise((resolve) => setImmediate(resolve))
+    .then(async () => {
+      const data = pdfBuffer
+        ?? await s3Service.downloadPdfBuffer(s3Key(projectName, fileId));
+      await extractAndSaveCitations(projectName, fileId, data);
+    })
+    .catch((error) => markCitationFailure(projectName, fileId, error))
+    .finally(() => {
+      citationJobs.delete(jobKey);
+    });
+  citationJobs.set(jobKey, job);
 }
 
 // GET /pdf_metadata/:projectName/:fileid
@@ -74,12 +121,93 @@ exports.uploadPdf = async (req, res) => {
       citationStatus: 'processing',
     });
 
-    setImmediate(() => {
-      void extractAndSaveCitations(projectName, fileId, pdfData);
-    });
+    queueCitationExtraction(projectName, fileId, pdfData);
   } catch (error) {
     console.error('Error during upload:', error);
     res.status(500).json({ error: 'An error occurred during the upload process' });
+  }
+};
+
+// POST /pdf_upload_url/:projectName
+// 브라우저가 ngrok 서버를 경유하지 않고 S3에 직접 업로드할 수 있는 일회성 URL.
+exports.createUploadUrl = async (req, res) => {
+  const { projectName } = req.params;
+  const { fileId, contentType, size } = req.body ?? {};
+  const fileSize = Number(size);
+
+  if (
+    !isValidFileId(fileId) ||
+    !Number.isFinite(fileSize) ||
+    fileSize <= 0 ||
+    fileSize > MAX_PDF_BYTES
+  ) {
+    return res.status(400).json({ error: 'Invalid PDF upload request' });
+  }
+
+  try {
+    const normalizedContentType = contentType === 'application/pdf'
+      ? contentType
+      : 'application/pdf';
+    const uploadUrl = await s3Service.createPdfUploadUrl(
+      s3Key(projectName, fileId),
+      normalizedContentType,
+    );
+    res.json({
+      uploadUrl,
+      method: 'PUT',
+      headers: { 'Content-Type': normalizedContentType },
+      expiresIn: 900,
+    });
+  } catch (error) {
+    console.error('Error creating PDF upload URL:', error);
+    res.status(500).json({ error: 'Could not prepare the PDF upload' });
+  }
+};
+
+// POST /complete_pdf_upload/:projectName
+// 직접 업로드된 S3 객체를 확인한 뒤 즉시 사용 가능하게 하고 인용 추출은 백그라운드 처리.
+exports.completePdfUpload = async (req, res) => {
+  const { projectName } = req.params;
+  const { fileId, size } = req.body ?? {};
+  const expectedSize = Number(size);
+
+  if (
+    !isValidFileId(fileId) ||
+    !Number.isFinite(expectedSize) ||
+    expectedSize <= 0 ||
+    expectedSize > MAX_PDF_BYTES
+  ) {
+    return res.status(400).json({ error: 'Invalid PDF completion request' });
+  }
+
+  try {
+    const metadata = await s3Service.headPdf(s3Key(projectName, fileId));
+    if (metadata.size !== expectedSize) {
+      return res.status(409).json({ error: 'Uploaded PDF size does not match' });
+    }
+    await getPdfMetaCollection(projectName).updateOne(
+      { fileId },
+      {
+        $set: {
+          fileId,
+          size: metadata.size,
+          citationStatus: 'processing',
+          uploadedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+    res.status(201).json({
+      message: 'PDF uploaded successfully to S3',
+      citationStatus: 'processing',
+    });
+    queueCitationExtraction(projectName, fileId);
+  } catch (error) {
+    if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+      return res.status(404).json({ error: 'Uploaded PDF was not found' });
+    }
+    console.error('Error completing PDF upload:', error);
+    res.status(500).json({ error: 'Could not complete the PDF upload' });
   }
 };
 
@@ -170,27 +298,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
 
     return { referenceTitleList };
   } catch (err) {
-    console.error(`[GROBID] Failed to extract citations for ${fileId}:`, err.message);
-    await getPdfMetaCollection(projectName).updateOne(
-      { fileId },
-      {
-        $set: {
-          citationStatus: 'failed',
-          citationError: err.message,
-          citationsFailedAt: new Date(),
-        },
-      },
-      { upsert: true },
-    ).catch((metadataError) => {
-      console.error(`[GROBID] Failed to save failure state for ${fileId}:`, metadataError.message);
-    });
-
-    // 실패도 알림 (Unity에서 fallback 처리 가능)
-    syncKeys.broadcastToProject(projectName, {
-      type: 'citations_failed',
-      fileId,
-      error: err.message,
-    });
+    await markCitationFailure(projectName, fileId, err);
     return null;
   }
 }
