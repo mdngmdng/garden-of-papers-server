@@ -1,4 +1,11 @@
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  DeleteObjectCommand,
+  ListObjectsV2Command,
+} = require('@aws-sdk/client-s3');
 const config = require('../config');
 
 const s3 = new S3Client({
@@ -21,8 +28,10 @@ async function uploadPdf(key, buffer) {
   return key;
 }
 
-async function downloadPdf(key) {
-  const res = await s3.send(new GetObjectCommand({ Bucket, Key: key }));
+async function downloadPdf(key, range) {
+  const input = { Bucket, Key: key };
+  if (range) input.Range = range;
+  const res = await s3.send(new GetObjectCommand(input));
   return res;
 }
 
@@ -36,7 +45,7 @@ async function listPdfs(prefix) {
 }
 
 async function headPdf(key) {
-  const res = await s3.send(new GetObjectCommand({ Bucket, Key: key }));
+  const res = await s3.send(new HeadObjectCommand({ Bucket, Key: key }));
   return { size: res.ContentLength };
 }
 

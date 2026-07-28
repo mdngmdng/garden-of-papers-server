@@ -23,7 +23,15 @@ const app = express();
 app.use(cors({
   origin: true, // allow all origins (Chrome extension + Unity)
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
+  exposedHeaders: [
+    'Accept-Ranges',
+    'Content-Range',
+    'Content-Length',
+    'ETag',
+    'Last-Modified',
+    'Retry-After',
+  ],
   credentials: true,
 }));
 app.use(express.json({ limit: '50mb' }));

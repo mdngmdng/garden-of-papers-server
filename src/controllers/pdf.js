@@ -57,18 +57,25 @@ exports.uploadPdf = async (req, res) => {
     // 2. 크기를 MongoDB에 캐싱
     await getPdfMetaCollection(projectName).updateOne(
       { fileId },
-      { $set: { fileId, size: pdfData.length } },
+      {
+        $set: {
+          fileId,
+          size: pdfData.length,
+          citationStatus: 'processing',
+          uploadedAt: new Date(),
+        },
+      },
       { upsert: true },
     );
 
-    // 3. GROBID로 인용 추출 + referenceTitleList 생성
-    const grobidResult = await extractAndSaveCitations(
-      projectName, fileId, pdfData);
-
-    res.json({
+    // PDF는 바로 사용할 수 있게 응답하고, 무거운 GROBID 처리는 백그라운드에서 실행한다.
+    res.status(201).json({
       message: 'PDF uploaded successfully to S3',
-      referenceTitleList: grobidResult
-        ? grobidResult.referenceTitleList : null,
+      citationStatus: 'processing',
+    });
+
+    setImmediate(() => {
+      void extractAndSaveCitations(projectName, fileId, pdfData);
     });
   } catch (error) {
     console.error('Error during upload:', error);
@@ -129,6 +136,20 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
         },
       },
     );
+    await getPdfMetaCollection(projectName).updateOne(
+      { fileId },
+      {
+        $set: {
+          citationHits,
+          pageSizeList,
+          referenceList,
+          referenceTitleList,
+          citationStatus: 'ready',
+          citationsExtractedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
     console.log(`[GROBID] Saved citations + referenceTitleList into SaveFile for ${fileId}`);
 
     // TEI XML을 S3에 저장 (highlights에서 재사용)
@@ -150,6 +171,19 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
     return { referenceTitleList };
   } catch (err) {
     console.error(`[GROBID] Failed to extract citations for ${fileId}:`, err.message);
+    await getPdfMetaCollection(projectName).updateOne(
+      { fileId },
+      {
+        $set: {
+          citationStatus: 'failed',
+          citationError: err.message,
+          citationsFailedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    ).catch((metadataError) => {
+      console.error(`[GROBID] Failed to save failure state for ${fileId}:`, metadataError.message);
+    });
 
     // 실패도 알림 (Unity에서 fallback 처리 가능)
     syncKeys.broadcastToProject(projectName, {
@@ -175,17 +209,21 @@ exports.getCitations = async (req, res) => {
     } catch {
       query = { _id: fileid };
     }
-    const doc = await db.collection('SaveFile').findOne(query);
+    const savedPaper = await db.collection('SaveFile').findOne(query);
+    const metadata = await getPdfMetaCollection(projectName).findOne({ fileId: fileid });
+    const doc = savedPaper?.citationHits ? savedPaper : metadata;
 
     if (!doc || !doc.citationHits) {
+      res.setHeader('Retry-After', '2');
       return res.status(404).json({ error: 'Citations not yet extracted', status: 'processing' });
     }
 
     res.json({
       fileId: fileid,
       citationHits: doc.citationHits,
-      pageSizes: doc.pageSizes,
-      references: doc.references,
+      pageSizes: doc.pageSizeList ?? doc.pageSizes,
+      references: doc.referenceList ?? doc.references,
+      referenceTitleList: doc.referenceTitleList,
       extractedAt: doc.citationsExtractedAt,
     });
   } catch (err) {
@@ -235,12 +273,51 @@ exports.downloadPdf = async (req, res) => {
 
   try {
     const key = s3Key(projectName, fileid);
-    const s3Response = await s3Service.downloadPdf(key);
+    const range = typeof req.headers.range === 'string'
+      ? req.headers.range
+      : undefined;
+    const s3Response = await s3Service.downloadPdf(key, range);
+    const safeFileId = fileid.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=${fileid}.pdf`);
+    res.status(s3Response.ContentRange ? 206 : 200);
+    res.setHeader('Content-Type', s3Response.ContentType || 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${safeFileId}.pdf"`);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    if (s3Response.ContentLength !== undefined) {
+      res.setHeader('Content-Length', String(s3Response.ContentLength));
+    }
+    if (s3Response.ContentRange) {
+      res.setHeader('Content-Range', s3Response.ContentRange);
+    }
+    if (s3Response.ETag) {
+      res.setHeader('ETag', s3Response.ETag);
+    }
+    if (s3Response.LastModified) {
+      res.setHeader('Last-Modified', s3Response.LastModified.toUTCString());
+    }
+    res.on('close', () => {
+      if (!res.writableEnded && typeof s3Response.Body.destroy === 'function') {
+        s3Response.Body.destroy();
+      }
+    });
+    s3Response.Body.on('error', (streamError) => {
+      console.error('Error while streaming PDF:', streamError);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'An error occurred during the download process' });
+      } else {
+        res.destroy(streamError);
+      }
+    });
     s3Response.Body.pipe(res);
   } catch (err) {
+    if (
+      err.name === 'InvalidRange' ||
+      err.Code === 'InvalidRange' ||
+      err.$metadata?.httpStatusCode === 416
+    ) {
+      return res.status(416).end();
+    }
     if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
       return res.status(404).json({ error: 'File not found' });
     }
