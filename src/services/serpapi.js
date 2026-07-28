@@ -54,7 +54,7 @@ async function searchScholar(query, offset = 0, limit = 10) {
   if (!config.serpApiKey) throw new Error('SERPAPI_KEY not configured');
 
   const safeOffset = Math.max(0, Number(offset) || 0);
-  const safeLimit = Math.max(1, Math.min(20, Number(limit) || 10));
+  const safeLimit = Math.max(1, Math.min(10, Number(limit) || 10));
   const response = await axios.get(BASE_URL, {
     params: {
       engine: 'google_scholar',

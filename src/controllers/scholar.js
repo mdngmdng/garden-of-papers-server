@@ -18,7 +18,7 @@ function getQuery(fileId) {
 exports.searchScholar = async (req, res) => {
   const query = String(req.query.query || '').trim();
   const offset = Math.max(0, Number(req.query.offset) || 0);
-  const limit = Math.max(1, Math.min(20, Number(req.query.limit) || 10));
+  const limit = Math.max(1, Math.min(10, Number(req.query.limit) || 10));
 
   if (query.length < 2) {
     return res.status(400).json({ error: 'Enter at least two characters.' });
