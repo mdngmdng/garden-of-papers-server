@@ -2,6 +2,19 @@ const mongoose = require('mongoose');
 const { getClient } = require('../services/mongo');
 const syncKeys = require('../services/syncKeys');
 
+function getIdQuery(id) {
+  const value = String(id ?? '');
+  if (mongoose.Types.ObjectId.isValid(value)) {
+    return {
+      $or: [
+        { _id: new mongoose.Types.ObjectId(value) },
+        { _id: value },
+      ],
+    };
+  }
+  return { _id: value };
+}
+
 // POST /load-data
 exports.loadData = async (req, res) => {
   try {
@@ -81,7 +94,7 @@ exports.uploadLog = async (req, res) => {
 exports.updateData = async (req, res) => {
   const {
     WebSocketID, _projectName, _id,
-    type, pos, textValue, paperName, year, resourceLink, publicationVenue,
+    type, pos, textValue, paperName, year, resourceLink, fileId, publicationVenue,
     resultId, citesId, citationCount, referenceTitleList, citationTitleList,
     abovePageIndex, referenceTextArray, highlightTexts, copiedOrigianlPaperId,
     lastPageNavigationTime, paperIndex, parentPaperId, color, noteType,
@@ -109,6 +122,7 @@ exports.updateData = async (req, res) => {
     if (paperName !== '') update.paperName = paperName;
     if (year !== '') update.year = year;
     if (resourceLink !== '') update.resourceLink = resourceLink;
+    if (fileId !== undefined && fileId !== '') update.fileId = fileId;
     if (publicationVenue !== '') update.publicationVenue = publicationVenue;
     if (resultId !== '') update.resultId = resultId;
     if (citesId !== '') update.citesId = citesId;
@@ -145,7 +159,7 @@ exports.updateData = async (req, res) => {
 
     try {
       const updatedData = await collection.findOneAndUpdate(
-        { _id: new mongoose.Types.ObjectId(_id) },
+        getIdQuery(_id),
         { $set: update },
         { returnDocument: 'after' },
       );
@@ -179,14 +193,9 @@ exports.deleteData = async (req, res) => {
       return res.status(202).json();
     }
 
-    if (!mongoose.Types.ObjectId.isValid(__id)) {
-      return res.status(400).json({ status: 'error', message: 'Invalid ID format' });
-    }
+    const deletedData = await collection.deleteOne(getIdQuery(__id));
 
-    const objectId = new mongoose.Types.ObjectId(__id);
-    const deletedData = await collection.deleteOne({ _id: objectId });
-
-    if (!deletedData) {
+    if (!deletedData.deletedCount) {
       return res.status(404).json({ status: 'error', message: 'Data not found' });
     }
 

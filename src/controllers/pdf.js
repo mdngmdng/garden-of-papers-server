@@ -317,13 +317,23 @@ exports.getCitations = async (req, res) => {
     } catch {
       query = { _id: fileid };
     }
-    const savedPaper = await db.collection('SaveFile').findOne(query);
+    const savedPaper = await db.collection('SaveFile').findOne({
+      $or: [query, { fileId: fileid }],
+    });
     const metadata = await getPdfMetaCollection(projectName).findOne({ fileId: fileid });
     const doc = savedPaper?.citationHits ? savedPaper : metadata;
 
     if (!doc || !doc.citationHits) {
+      const status = metadata?.citationStatus === 'failed'
+        ? 'failed'
+        : 'processing';
       res.setHeader('Retry-After', '2');
-      return res.status(404).json({ error: 'Citations not yet extracted', status: 'processing' });
+      return res.status(404).json({
+        error: status === 'failed'
+          ? 'Citation extraction failed'
+          : 'Citations not yet extracted',
+        status,
+      });
     }
 
     res.json({
@@ -353,7 +363,7 @@ exports.listPdfs = async (req, res) => {
     // SaveFile에서 논문 타입인 항목의 _id를 fileId 목록으로 반환
     const validFileIds = data
       .filter((item) => item.type === 'GX.MAROScientificPaper' && item._id)
-      .map((item) => item._id.toString());
+      .map((item) => String(item.fileId || item._id));
 
     res.json({ fileids: validFileIds });
 

@@ -32,23 +32,40 @@ function removeClient(wsId) {
 
 function onLoadData(wsId, projectName) {
   if (!projectUploadKeys.has(projectName)) {
-    const key = 'start';
-    projectUploadKeys.set(projectName, key);
-    clientUploadKeys.set(wsId, key);
-  } else {
-    clientUploadKeys.set(wsId, projectUploadKeys.get(projectName));
+    projectUploadKeys.set(projectName, 'start');
   }
+  clientUploadKeys.set(wsId, projectUploadKeys.get(projectName));
   clientProjects.set(wsId, projectName);
 }
 
 function checkKey(wsId, projectName) {
+  if (!clientUploadKeys.has(wsId)) {
+    return false;
+  }
+
+  // A server restart drops the in-memory project association while browsers
+  // reconnect their WebSocket automatically. Rebind that live socket on its
+  // first write instead of leaving the client in a permanent 202 loop.
+  if (!clientProjects.has(wsId)) {
+    onLoadData(wsId, projectName);
+    return true;
+  }
+
+  if (clientProjects.get(wsId) !== projectName) {
+    return false;
+  }
+
   return clientUploadKeys.get(wsId) === projectUploadKeys.get(projectName);
 }
 
 function rotateKey(wsId, projectName) {
   const newKey = uuidv4();
-  clientUploadKeys.set(wsId, newKey);
   projectUploadKeys.set(projectName, newKey);
+  clientProjects.forEach((clientProject, clientId) => {
+    if (clientProject === projectName) {
+      clientUploadKeys.set(clientId, newKey);
+    }
+  });
 }
 
 // 프로젝트에 연결된 모든 클라이언트에게 메시지 전송
