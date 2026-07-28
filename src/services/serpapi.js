@@ -84,6 +84,55 @@ async function searchScholar(query, offset = 0, limit = 10) {
 }
 
 /**
+ * Google Scholar cited-by search with optional keyword filtering.
+ * Results stay paged in groups of at most ten so a canvas search never
+ * expands into the eager, token-heavy full citation crawl.
+ */
+async function searchScholarCitations(
+  citesId,
+  query = '',
+  offset = 0,
+  limit = 10,
+) {
+  if (!citesId) throw new Error('citesId is required');
+  if (!config.serpApiKey) throw new Error('SERPAPI_KEY not configured');
+
+  const safeOffset = Math.max(0, Number(offset) || 0);
+  const safeLimit = Math.max(1, Math.min(10, Number(limit) || 10));
+  const params = {
+    engine: 'google_scholar',
+    api_key: config.serpApiKey,
+    cites: String(citesId),
+    start: safeOffset,
+    num: safeLimit,
+    hl: 'en',
+  };
+  const normalizedQuery = String(query || '').trim();
+  if (normalizedQuery) params.q = normalizedQuery;
+
+  const response = await axios.get(BASE_URL, {
+    params,
+    timeout: 30000,
+  });
+  if (response.data?.error) {
+    throw new Error(response.data.error);
+  }
+
+  const results = (response.data?.organic_results || [])
+    .map(normalizeScholarResult)
+    .filter((result) => result.paperId && result.title)
+    .slice(0, safeLimit);
+
+  return {
+    total: Number(response.data?.search_information?.total_results || results.length),
+    offset: safeOffset,
+    results,
+    provider: 'serpapi-google-scholar',
+    relation: 'citations',
+  };
+}
+
+/**
  * Google Scholar citedBy 검색
  * Unity의 searchCitationsAboutScientificPaper()와 동일한 로직
  *
@@ -206,4 +255,5 @@ module.exports = {
   fetchScholarIdByTitle,
   normalizeScholarResult,
   searchScholar,
+  searchScholarCitations,
 };

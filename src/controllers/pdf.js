@@ -1,6 +1,7 @@
 const { getClient } = require('../services/mongo');
 const s3Service = require('../services/s3');
 const grobidService = require('../services/grobid');
+const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
 
 const MAX_PDF_BYTES = 250 * 1024 * 1024;
@@ -56,6 +57,27 @@ function queueCitationExtraction(projectName, fileId, pdfBuffer) {
       citationJobs.delete(jobKey);
     });
   citationJobs.set(jobKey, job);
+}
+
+async function retryCitationExtractionIfDue(projectName, fileId, metadata) {
+  if (metadata?.citationStatus !== 'failed') return false;
+  const failedAt = metadata.citationsFailedAt
+    ? new Date(metadata.citationsFailedAt).getTime()
+    : 0;
+  if (Date.now() - failedAt < 60_000) return false;
+
+  await getPdfMetaCollection(projectName).updateOne(
+    { fileId },
+    {
+      $set: {
+        citationStatus: 'processing',
+        citationRetryQueuedAt: new Date(),
+      },
+      $unset: { citationError: '' },
+    },
+  );
+  queueCitationExtraction(projectName, fileId);
+  return true;
 }
 
 // GET /pdf_metadata/:projectName/:fileid
@@ -218,9 +240,6 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
     const { citationHits, pageSizes, refInfo, teiXml } = await grobidService.extractCitations(pdfBuffer);
     console.log(`[GROBID] Found ${citationHits.length} citation hits, ${Object.keys(refInfo).length} references for ${fileId}`);
 
-    // TODO: 레퍼런스 enrichment (S2 → SerpAPI fallback) — S2 API 키 활성화 후 복원
-    // const enrichedRefs = await enrichReferences(refInfo);
-
     // Dictionary → 배열 변환 (Unity JsonUtility 호환)
     const pageSizeList = Object.entries(pageSizes).map(([page, size]) => ({
       page: parseInt(page, 10),
@@ -296,6 +315,32 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
     });
     console.log(`[GROBID] Notified clients for ${fileId}`);
 
+    // Mark extraction ready before paid metadata enrichment. Reference counts
+    // and citation overlays therefore appear as soon as GROBID completes.
+    // Scholar IDs continue in the same background job and are cached in Mongo.
+    const enrichedRefs = await enrichReferences(refInfo);
+    const enrichedReferenceList = Object.entries(enrichedRefs).map(
+      ([refId, info]) => ({ refId, ...info }),
+    );
+    await db.collection('SaveFile').updateOne(
+      query,
+      { $set: { referenceList: enrichedReferenceList, referencesEnrichedAt: new Date() } },
+    );
+    await getPdfMetaCollection(projectName).updateOne(
+      { fileId },
+      {
+        $set: {
+          referenceList: enrichedReferenceList,
+          referencesEnrichedAt: new Date(),
+        },
+      },
+    );
+    syncKeys.broadcastToProject(projectName, {
+      type: 'references_enriched',
+      fileId,
+      referenceList: enrichedReferenceList,
+    });
+
     return { referenceTitleList };
   } catch (err) {
     await markCitationFailure(projectName, fileId, err);
@@ -324,9 +369,15 @@ exports.getCitations = async (req, res) => {
     const doc = savedPaper?.citationHits ? savedPaper : metadata;
 
     if (!doc || !doc.citationHits) {
-      const status = metadata?.citationStatus === 'failed'
-        ? 'failed'
-        : 'processing';
+      const retryQueued = await retryCitationExtractionIfDue(
+        projectName,
+        fileid,
+        metadata,
+      );
+      const status =
+        metadata?.citationStatus === 'failed' && !retryQueued
+          ? 'failed'
+          : 'processing';
       res.setHeader('Retry-After', '2');
       return res.status(404).json({
         error: status === 'failed'

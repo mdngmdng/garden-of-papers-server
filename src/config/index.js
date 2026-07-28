@@ -1,4 +1,21 @@
 require('dotenv').config();
+const fs = require('fs');
+
+function resolveGrobidUrl(value) {
+  const configured = value || 'http://localhost:8070';
+  try {
+    const url = new URL(configured);
+    // docker-compose service names only resolve from inside the container
+    // network. The development server is commonly run directly on macOS.
+    if (url.hostname === 'grobid' && !fs.existsSync('/.dockerenv')) {
+      url.hostname = '127.0.0.1';
+      return url.toString().replace(/\/$/, '');
+    }
+  } catch {
+    return configured;
+  }
+  return configured.replace(/\/$/, '');
+}
 
 module.exports = {
   port: process.env.PORT || 5002,
@@ -10,7 +27,7 @@ module.exports = {
     region: process.env.AWS_REGION || 'ap-northeast-2',
     s3Bucket: process.env.AWS_S3_BUCKET || 'garden-of-papers',
   },
-  grobidUrl: process.env.GROBID_URL || 'http://localhost:8070',
+  grobidUrl: resolveGrobidUrl(process.env.GROBID_URL),
   s2ApiKey: process.env.S2_API_KEY || '',
   serpApiKey: process.env.SERPAPI_KEY || '',
   geminiApiKey: process.env.GEMINI_API_KEY || '',

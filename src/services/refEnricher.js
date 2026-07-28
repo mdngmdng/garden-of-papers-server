@@ -19,14 +19,14 @@ async function enrichReferences(refInfo) {
   const refs = Object.entries(refInfo);
   const results = {};
 
-  for (const [refId, ref] of refs) {
+  const enrichOne = async ([refId, ref]) => {
     const enriched = { ...ref };
 
     try {
       if (!ref.title) {
         enriched.source = 'grobid_only';
         results[refId] = enriched;
-        continue;
+        return;
       }
 
       // 캐시 먼저 확인 (유료 API 재호출 방지)
@@ -38,7 +38,7 @@ async function enrichReferences(refInfo) {
           source: 'google_scholar',
         });
         results[refId] = enriched;
-        continue;
+        return;
       }
 
       // 캐시 미스 → SerpAPI 호출
@@ -51,7 +51,7 @@ async function enrichReferences(refInfo) {
         });
         await saveSerpCache(ref.title, scholarResult);
         results[refId] = enriched;
-        continue;
+        return;
       }
 
       // SerpAPI에서도 못 찾음
@@ -62,6 +62,13 @@ async function enrichReferences(refInfo) {
       enriched.source = 'grobid_only';
       results[refId] = enriched;
     }
+  };
+
+  // Keep a small concurrency window: substantially faster than Unity's
+  // sequential loop, while avoiding a burst of SerpAPI requests.
+  const concurrency = 3;
+  for (let index = 0; index < refs.length; index += concurrency) {
+    await Promise.all(refs.slice(index, index + concurrency).map(enrichOne));
   }
 
   return results;

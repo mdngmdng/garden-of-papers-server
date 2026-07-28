@@ -1,5 +1,9 @@
 const { getClient } = require('../services/mongo');
-const { fetchCitedBy, searchScholar } = require('../services/serpapi');
+const {
+  fetchCitedBy,
+  searchScholar,
+  searchScholarCitations,
+} = require('../services/serpapi');
 const syncKeys = require('../services/syncKeys');
 const { ObjectId } = require('mongodb');
 
@@ -17,15 +21,18 @@ function getQuery(fileId) {
  */
 exports.searchScholar = async (req, res) => {
   const query = String(req.query.query || '').trim();
+  const citesId = String(req.query.cites || '').trim();
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const limit = Math.max(1, Math.min(10, Number(req.query.limit) || 10));
 
-  if (query.length < 2) {
+  if (!citesId && query.length < 2) {
     return res.status(400).json({ error: 'Enter at least two characters.' });
   }
 
   try {
-    const result = await searchScholar(query, offset, limit);
+    const result = citesId
+      ? await searchScholarCitations(citesId, query, offset, limit)
+      : await searchScholar(query, offset, limit);
     res.set('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
     res.json(result);
   } catch (err) {
