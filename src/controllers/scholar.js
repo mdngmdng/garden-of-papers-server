@@ -1,5 +1,5 @@
 const { getClient } = require('../services/mongo');
-const { fetchCitedBy } = require('../services/serpapi');
+const { fetchCitedBy, searchScholar } = require('../services/serpapi');
 const syncKeys = require('../services/syncKeys');
 const { ObjectId } = require('mongodb');
 
@@ -10,6 +10,30 @@ function getQuery(fileId) {
     return { _id: fileId };
   }
 }
+
+/**
+ * GET /search-scholar?query=...&offset=0&limit=10
+ * SerpAPI Google Scholar 결과를 웹앱에서 바로 사용할 수 있는 형식으로 반환한다.
+ */
+exports.searchScholar = async (req, res) => {
+  const query = String(req.query.query || '').trim();
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit = Math.max(1, Math.min(20, Number(req.query.limit) || 10));
+
+  if (query.length < 2) {
+    return res.status(400).json({ error: 'Enter at least two characters.' });
+  }
+
+  try {
+    const result = await searchScholar(query, offset, limit);
+    res.set('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
+    res.json(result);
+  } catch (err) {
+    console.error(`[SerpAPI] Scholar search failed:`, err.message);
+    const status = /SERPAPI_KEY not configured/.test(err.message) ? 503 : 502;
+    res.status(status).json({ error: err.message });
+  }
+};
 
 /**
  * POST /fetch_citations/:projectName

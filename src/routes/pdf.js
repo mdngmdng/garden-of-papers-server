@@ -12,6 +12,9 @@ router.get('/list_pdfs/:projectName', pdfController.listPdfs);
 router.get('/download_pdf/:projectName/:fileid', pdfController.downloadPdf);
 router.get('/citations/:projectName/:fileid', pdfController.getCitations);
 
+// Google Scholar search
+router.get('/search-scholar', scholarController.searchScholar);
+
 // Google Scholar citedBy
 router.post('/fetch_citations/:projectName', scholarController.fetchCitedBy);
 router.get('/cited_by/:projectName/:fileid', scholarController.getCitedBy);

@@ -3,6 +3,86 @@ const config = require('../config');
 
 const BASE_URL = 'https://serpapi.com/search';
 
+function extractYear(summary) {
+  const matches = String(summary || '').match(/\b(?:19|20)\d{2}\b/g);
+  if (!matches?.length) return null;
+  return Number(matches.at(-1));
+}
+
+function extractVenue(summary) {
+  const parts = String(summary || '')
+    .split(' - ')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return '';
+  const candidate = parts.length >= 3 ? parts.at(-2) : parts.at(-1);
+  return String(candidate || '').replace(/,?\s*(?:19|20)\d{2}\s*$/, '').trim();
+}
+
+function normalizeScholarResult(result) {
+  const publicationInfo = result.publication_info || {};
+  const resource = (result.resources || []).find(
+    (candidate) =>
+      String(candidate.file_format || '').toUpperCase() === 'PDF' &&
+      candidate.link,
+  );
+
+  return {
+    paperId: result.result_id || result.inline_links?.cited_by?.cites_id || '',
+    title: result.title || 'Untitled paper',
+    authors: (publicationInfo.authors || [])
+      .map((author) => author.name)
+      .filter(Boolean),
+    year: extractYear(publicationInfo.summary),
+    venue: extractVenue(publicationInfo.summary),
+    citationCount: Number(result.inline_links?.cited_by?.total || 0),
+    url: result.link || resource?.link || '',
+    abstract: result.snippet || '',
+    openAccessPdfUrl: resource?.link,
+    citesId: result.inline_links?.cited_by?.cites_id,
+  };
+}
+
+/**
+ * Google Scholar 일반 검색.
+ * SerpAPI의 organic_results를 웹 클라이언트의 ScholarResult 형식으로 정규화한다.
+ */
+async function searchScholar(query, offset = 0, limit = 10) {
+  if (!query || String(query).trim().length < 2) {
+    throw new Error('query must contain at least two characters');
+  }
+  if (!config.serpApiKey) throw new Error('SERPAPI_KEY not configured');
+
+  const safeOffset = Math.max(0, Number(offset) || 0);
+  const safeLimit = Math.max(1, Math.min(20, Number(limit) || 10));
+  const response = await axios.get(BASE_URL, {
+    params: {
+      engine: 'google_scholar',
+      api_key: config.serpApiKey,
+      q: String(query).trim(),
+      start: safeOffset,
+      num: safeLimit,
+      hl: 'en',
+    },
+    timeout: 30000,
+  });
+  if (response.data?.error) {
+    throw new Error(response.data.error);
+  }
+
+  const results = (response.data?.organic_results || [])
+    .map(normalizeScholarResult)
+    .filter((result) => result.paperId && result.title)
+    .slice(0, safeLimit);
+
+  return {
+    total: Number(response.data?.search_information?.total_results || results.length),
+    offset: safeOffset,
+    results,
+    provider: 'serpapi-google-scholar',
+  };
+}
+
 /**
  * Google Scholar citedBy 검색
  * Unity의 searchCitationsAboutScientificPaper()와 동일한 로직
@@ -121,4 +201,9 @@ async function fetchScholarIdByTitle(title) {
   }
 }
 
-module.exports = { fetchCitedBy, fetchScholarIdByTitle };
+module.exports = {
+  fetchCitedBy,
+  fetchScholarIdByTitle,
+  normalizeScholarResult,
+  searchScholar,
+};
