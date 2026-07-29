@@ -149,6 +149,7 @@ exports.updateData = async (req, res) => {
     WebSocketID, _projectName, _id,
     type, pos, textValue, paperName, year, resourceLink, fileId, pdfSourceUrl, publicationVenue,
     resultId, citesId, citationCount, referenceTitleList, citationTitleList,
+    scholarCitationStatus, scholarCitationNextOffset, scholarCitationError,
     abovePageIndex, referenceTextArray, highlightTexts, copiedOrigianlPaperId,
     lastPageNavigationTime, paperIndex, parentPaperId, color, noteType,
     textAlignmentIndex, fontSizeIndex, startPaperId, endPaperId, labelPosIndex,
@@ -183,6 +184,15 @@ exports.updateData = async (req, res) => {
     if (citationCount !== '') update.citationCount = citationCount;
     if (referenceTitleList !== null && referenceTitleList.key.length !== 0) update.referenceTitleList = referenceTitleList;
     if (citationTitleList !== null && citationTitleList.key.length !== 0) update.citationTitleList = citationTitleList;
+    if (scholarCitationStatus !== undefined && scholarCitationStatus !== '') {
+      update.scholarCitationStatus = scholarCitationStatus;
+    }
+    if (Number.isFinite(scholarCitationNextOffset)) {
+      update.scholarCitationNextOffset = scholarCitationNextOffset;
+    }
+    if (scholarCitationError !== undefined) {
+      update.scholarCitationError = scholarCitationError;
+    }
     update.abovePageIndex = abovePageIndex;
     if (referenceTextArray !== null && referenceTextArray.length !== 0) update.referenceTextArray = referenceTextArray;
     if (highlightTexts !== null && highlightTexts.length !== 0) update.highlightTexts = highlightTexts;
