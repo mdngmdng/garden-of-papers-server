@@ -272,13 +272,14 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
       query = { _id: fileId };
     }
     await db.collection('SaveFile').updateOne(
-      query,
+      { $or: [query, { fileId }] },
       {
         $set: {
           citationHits,
           pageSizeList,
           referenceList,
           referenceTitleList,
+          citationStatus: 'ready',
           citationsExtractedAt: new Date(),
         },
       },
@@ -366,7 +367,25 @@ exports.getCitations = async (req, res) => {
       $or: [query, { fileId: fileid }],
     });
     const metadata = await getPdfMetaCollection(projectName).findOne({ fileId: fileid });
-    const doc = savedPaper?.citationHits ? savedPaper : metadata;
+    const savedPaperReady = Boolean(
+      savedPaper
+      && Array.isArray(savedPaper.citationHits)
+      && (
+        savedPaper.citationStatus === 'ready'
+        || savedPaper.citationsExtractedAt
+        || savedPaper.citationHits.length > 0
+      ),
+    );
+    const metadataReady = Boolean(
+      metadata
+      && Array.isArray(metadata.citationHits)
+      && (
+        metadata.citationStatus === 'ready'
+        || metadata.citationsExtractedAt
+        || metadata.citationHits.length > 0
+      ),
+    );
+    const doc = savedPaperReady ? savedPaper : metadataReady ? metadata : null;
 
     if (!doc || !doc.citationHits) {
       const retryQueued = await retryCitationExtractionIfDue(

@@ -22,6 +22,59 @@ exports.loadData = async (req, res) => {
     const db = client.db(req.body._projectName);
     const collection = db.collection('SaveFile');
     const data = await collection.find().toArray();
+    const paperRows = data.filter((row) => row.type === 'GX.MAROScientificPaper');
+    const fileIds = [
+      ...new Set(
+        paperRows
+          .map((row) => String(row.fileId || row._id || ''))
+          .filter(Boolean),
+      ),
+    ];
+
+    if (fileIds.length) {
+      const cachedExtractions = await db.collection('PdfMeta').find({
+        fileId: { $in: fileIds },
+        citationStatus: 'ready',
+        citationHits: { $exists: true },
+      }).toArray();
+      const cachedByFileId = new Map(
+        cachedExtractions.map((entry) => [String(entry.fileId), entry]),
+      );
+      const backfills = [];
+
+      for (const row of paperRows) {
+        if (
+          row.citationStatus === 'ready'
+          && Array.isArray(row.citationHits)
+        ) {
+          continue;
+        }
+        const fileId = String(row.fileId || row._id || '');
+        const cached = cachedByFileId.get(fileId);
+        if (!cached) continue;
+        const citationCache = {
+          citationHits: cached.citationHits,
+          pageSizeList: cached.pageSizeList ?? cached.pageSizes ?? [],
+          referenceList: cached.referenceList ?? cached.references ?? [],
+          citationStatus: 'ready',
+          citationsExtractedAt: cached.citationsExtractedAt ?? new Date(),
+        };
+        if (cached.referenceTitleList !== undefined) {
+          citationCache.referenceTitleList = cached.referenceTitleList;
+        }
+        Object.assign(row, citationCache);
+        backfills.push({
+          updateOne: {
+            filter: { _id: row._id },
+            update: { $set: citationCache },
+          },
+        });
+      }
+
+      if (backfills.length) {
+        await collection.bulkWrite(backfills);
+      }
+    }
 
     res.status(200).json(data);
 
@@ -103,7 +156,7 @@ exports.updateData = async (req, res) => {
     citationContextParagraph, citationSentenceRangePageIndex,
     citationSentenceRangeStartChar, citationSentenceRangeLength,
     relationshipInfo, referenceText, linkHighlightTexts, summaryNoteId,
-    translations,
+    translations, citationHits, pageSizeList, referenceList, citationStatus,
   } = req.body;
 
   try {
@@ -157,6 +210,13 @@ exports.updateData = async (req, res) => {
     if (linkHighlightTexts !== null && linkHighlightTexts !== undefined && linkHighlightTexts.length !== 0) update.linkHighlightTexts = linkHighlightTexts;
     if (summaryNoteId && summaryNoteId !== '') update.summaryNoteId = summaryNoteId;
     if (translations !== null && translations !== undefined) update.translations = translations;
+    if (Array.isArray(citationHits) && citationHits.length !== 0) update.citationHits = citationHits;
+    if (Array.isArray(pageSizeList) && pageSizeList.length !== 0) update.pageSizeList = pageSizeList;
+    if (Array.isArray(referenceList) && referenceList.length !== 0) update.referenceList = referenceList;
+    if (citationStatus === 'ready') {
+      update.citationStatus = 'ready';
+      update.citationsExtractedAt = new Date();
+    }
 
     try {
       const updatedData = await collection.findOneAndUpdate(
