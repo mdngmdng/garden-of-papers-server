@@ -191,12 +191,30 @@ function citationPayload(fileId, document) {
 // GET /pdf_metadata/:projectName/:fileid
 exports.getMetadata = async (req, res) => {
   const { projectName, fileid } = req.params;
+  const requireCompletion = req.query.requireCompletion === '1';
+
+  const respondWithMetadata = (size, uploadedAt) => {
+    const ready = Boolean(size && uploadedAt);
+    if (requireCompletion && !ready) {
+      res.setHeader('Retry-After', '2');
+      return res.status(202).json({
+        size,
+        ready: false,
+        status: 'processing',
+      });
+    }
+    return res.status(200).json({
+      size,
+      ready,
+      uploadedAt: uploadedAt || undefined,
+    });
+  };
 
   try {
     // 1. MongoDB 캐시에서 먼저 조회
     const cached = await getPdfMetaCollection(projectName).findOne({ fileId: fileid });
-    if (cached) {
-      return res.status(200).json({ size: cached.size });
+    if (Number.isFinite(cached?.size) && cached.size > 0) {
+      return respondWithMetadata(cached.size, cached.uploadedAt);
     }
 
     // 2. 캐시 미스 → S3에서 조회 후 캐싱
@@ -206,7 +224,7 @@ exports.getMetadata = async (req, res) => {
       { $set: { fileId: fileid, size: metadata.size } },
       { upsert: true },
     );
-    res.status(200).json({ size: metadata.size });
+    return respondWithMetadata(metadata.size, cached?.uploadedAt);
   } catch (err) {
     if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
       return res.status(404).json({ error: 'File not found' });
@@ -544,6 +562,14 @@ exports.refreshCitations = async (req, res) => {
     try {
       await s3Service.headPdf(s3Key(projectName, fileid));
     } catch (error) {
+      if (isMissingPdfError(error)) {
+        res.setHeader('Retry-After', '2');
+        return res.status(202).json({
+          fileId: fileid,
+          status: 'awaiting_pdf',
+          queued: false,
+        });
+      }
       await markCitationFailure(projectName, fileid, error);
       return res.status(404).json({
         fileId: fileid,
