@@ -44,7 +44,7 @@ async function markCitationFailure(projectName, fileId, error) {
 
 function queueCitationExtraction(projectName, fileId, pdfBuffer) {
   const jobKey = `${projectName}/${fileId}`;
-  if (citationJobs.has(jobKey)) return;
+  if (citationJobs.has(jobKey)) return false;
 
   const job = new Promise((resolve) => setImmediate(resolve))
     .then(async () => {
@@ -57,6 +57,7 @@ function queueCitationExtraction(projectName, fileId, pdfBuffer) {
       citationJobs.delete(jobKey);
     });
   citationJobs.set(jobKey, job);
+  return true;
 }
 
 async function retryCitationExtractionIfDue(projectName, fileId, metadata) {
@@ -78,6 +79,57 @@ async function retryCitationExtractionIfDue(projectName, fileId, metadata) {
   );
   queueCitationExtraction(projectName, fileId);
   return true;
+}
+
+function saveFileQuery(fileId) {
+  const { ObjectId } = require('mongodb');
+  try {
+    return { _id: new ObjectId(fileId) };
+  } catch {
+    return { _id: fileId };
+  }
+}
+
+function isCitationDocumentReady(document) {
+  return Boolean(
+    document
+    && Array.isArray(document.citationHits)
+    && (
+      document.citationStatus === 'ready'
+      || document.citationsExtractedAt
+      || document.citationHits.length > 0
+    ),
+  );
+}
+
+async function findCitationState(projectName, fileId) {
+  const db = getClient().db(projectName);
+  const query = saveFileQuery(fileId);
+  const savedPaper = await db.collection('SaveFile').findOne({
+    $or: [query, { fileId }],
+  });
+  const metadata = await getPdfMetaCollection(projectName).findOne({ fileId });
+  return {
+    db,
+    query,
+    metadata,
+    document: isCitationDocumentReady(savedPaper)
+      ? savedPaper
+      : isCitationDocumentReady(metadata)
+        ? metadata
+        : null,
+  };
+}
+
+function citationPayload(fileId, document) {
+  return {
+    fileId,
+    citationHits: document.citationHits,
+    pageSizes: document.pageSizeList ?? document.pageSizes,
+    references: document.referenceList ?? document.references,
+    referenceTitleList: document.referenceTitleList,
+    extractedAt: document.citationsExtractedAt,
+  };
 }
 
 // GET /pdf_metadata/:projectName/:fileid
@@ -355,37 +407,10 @@ exports.getCitations = async (req, res) => {
   const { projectName, fileid } = req.params;
 
   try {
-    const db = getClient().db(projectName);
-    const { ObjectId } = require('mongodb');
-    let query;
-    try {
-      query = { _id: new ObjectId(fileid) };
-    } catch {
-      query = { _id: fileid };
-    }
-    const savedPaper = await db.collection('SaveFile').findOne({
-      $or: [query, { fileId: fileid }],
-    });
-    const metadata = await getPdfMetaCollection(projectName).findOne({ fileId: fileid });
-    const savedPaperReady = Boolean(
-      savedPaper
-      && Array.isArray(savedPaper.citationHits)
-      && (
-        savedPaper.citationStatus === 'ready'
-        || savedPaper.citationsExtractedAt
-        || savedPaper.citationHits.length > 0
-      ),
+    const { document: doc, metadata } = await findCitationState(
+      projectName,
+      fileid,
     );
-    const metadataReady = Boolean(
-      metadata
-      && Array.isArray(metadata.citationHits)
-      && (
-        metadata.citationStatus === 'ready'
-        || metadata.citationsExtractedAt
-        || metadata.citationHits.length > 0
-      ),
-    );
-    const doc = savedPaperReady ? savedPaper : metadataReady ? metadata : null;
 
     if (!doc || !doc.citationHits) {
       const retryQueued = await retryCitationExtractionIfDue(
@@ -406,17 +431,61 @@ exports.getCitations = async (req, res) => {
       });
     }
 
-    res.json({
-      fileId: fileid,
-      citationHits: doc.citationHits,
-      pageSizes: doc.pageSizeList ?? doc.pageSizes,
-      references: doc.referenceList ?? doc.references,
-      referenceTitleList: doc.referenceTitleList,
-      extractedAt: doc.citationsExtractedAt,
-    });
+    res.json(citationPayload(fileid, doc));
   } catch (err) {
     console.error('Error fetching citations:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// POST /citations/:projectName/:fileid/refresh
+// A manual UI refresh only starts GROBID when no completed extraction exists.
+exports.refreshCitations = async (req, res) => {
+  const { projectName, fileid } = req.params;
+  const jobKey = `${projectName}/${fileid}`;
+
+  try {
+    const {
+      document: cached,
+      metadata,
+    } = await findCitationState(projectName, fileid);
+    if (cached) {
+      return res.json(citationPayload(fileid, cached));
+    }
+    if (citationJobs.has(jobKey)) {
+      return res.status(202).json({
+        fileId: fileid,
+        status: 'processing',
+        queued: false,
+      });
+    }
+
+    await getPdfMetaCollection(projectName).updateOne(
+      { fileId: fileid },
+      {
+        $set: {
+          fileId: fileid,
+          citationStatus: 'processing',
+          citationRefreshRequestedAt: new Date(),
+        },
+        $unset: {
+          citationError: '',
+          citationsFailedAt: '',
+        },
+      },
+      { upsert: true },
+    );
+    const queued = queueCitationExtraction(projectName, fileid);
+    return res.status(202).json({
+      fileId: fileid,
+      status: metadata?.citationStatus === 'failed'
+        ? 'retrying'
+        : 'processing',
+      queued,
+    });
+  } catch (err) {
+    console.error('Error refreshing citations:', err);
+    return res.status(500).json({ error: 'Could not refresh citations' });
   }
 };
 

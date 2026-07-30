@@ -13,6 +13,10 @@ router.post('/upload_pdf/:projectName', upload.single('file'), pdfController.upl
 router.get('/list_pdfs/:projectName', pdfController.listPdfs);
 router.get('/download_pdf/:projectName/:fileid', pdfController.downloadPdf);
 router.get('/citations/:projectName/:fileid', pdfController.getCitations);
+router.post(
+  '/citations/:projectName/:fileid/refresh',
+  pdfController.refreshCitations,
+);
 
 // Google Scholar search
 router.get('/search-scholar', scholarController.searchScholar);

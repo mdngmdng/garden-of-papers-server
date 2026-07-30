@@ -93,6 +93,7 @@ async function searchScholarCitations(
   query = '',
   offset = 0,
   limit = 10,
+  { sortByDate = false, noCache = false } = {},
 ) {
   if (!citesId) throw new Error('citesId is required');
   if (!config.serpApiKey) throw new Error('SERPAPI_KEY not configured');
@@ -109,6 +110,8 @@ async function searchScholarCitations(
   };
   const normalizedQuery = String(query || '').trim();
   if (normalizedQuery) params.q = normalizedQuery;
+  if (sortByDate) params.scisbd = 2;
+  if (noCache) params.no_cache = 'true';
 
   const response = await axios.get(BASE_URL, {
     params,

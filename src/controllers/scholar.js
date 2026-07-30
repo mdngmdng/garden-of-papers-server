@@ -24,6 +24,8 @@ exports.searchScholar = async (req, res) => {
   const citesId = String(req.query.cites || '').trim();
   const offset = Math.max(0, Number(req.query.offset) || 0);
   const limit = Math.max(1, Math.min(10, Number(req.query.limit) || 10));
+  const sortByDate = String(req.query.sort || '') === 'date';
+  const refresh = String(req.query.refresh || '') === '1';
 
   if (!citesId && query.length < 2) {
     return res.status(400).json({ error: 'Enter at least two characters.' });
@@ -31,9 +33,17 @@ exports.searchScholar = async (req, res) => {
 
   try {
     const result = citesId
-      ? await searchScholarCitations(citesId, query, offset, limit)
+      ? await searchScholarCitations(citesId, query, offset, limit, {
+        sortByDate,
+        noCache: refresh,
+      })
       : await searchScholar(query, offset, limit);
-    res.set('Cache-Control', 'public, max-age=120, stale-while-revalidate=300');
+    res.set(
+      'Cache-Control',
+      refresh
+        ? 'private, no-store, max-age=0'
+        : 'public, max-age=120, stale-while-revalidate=300',
+    );
     res.json(result);
   } catch (err) {
     console.error(`[SerpAPI] Scholar search failed:`, err.message);
