@@ -7,7 +7,16 @@ const {
   ListObjectsV2Command,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { NodeHttpHandler } = require('@smithy/node-http-handler');
+const https = require('node:https');
 const config = require('../config');
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 32,
+  maxFreeSockets: 8,
+  timeout: 30_000,
+});
 
 const s3 = new S3Client({
   region: config.aws.region,
@@ -15,6 +24,14 @@ const s3 = new S3Client({
     accessKeyId: config.aws.accessKeyId,
     secretAccessKey: config.aws.secretAccessKey,
   },
+  requestHandler: new NodeHttpHandler({
+    httpsAgent,
+    connectionTimeout: 5_000,
+    socketTimeout: 30_000,
+    requestTimeout: 120_000,
+    throwOnRequestTimeout: true,
+    socketAcquisitionWarningTimeout: 5_000,
+  }),
 });
 
 const Bucket = config.aws.s3Bucket;
@@ -41,18 +58,26 @@ async function createPdfUploadUrl(key, contentType = 'application/pdf') {
   );
 }
 
-async function downloadPdf(key, range) {
+async function downloadPdf(key, range, { abortSignal } = {}) {
   const input = { Bucket, Key: key };
   if (range) input.Range = range;
-  const res = await s3.send(new GetObjectCommand(input));
+  const res = await s3.send(
+    new GetObjectCommand(input),
+    abortSignal ? { abortSignal } : undefined,
+  );
   return res;
 }
 
-async function downloadPdfBuffer(key) {
-  const res = await downloadPdf(key);
+async function downloadPdfBuffer(key, { abortSignal } = {}) {
+  const res = await downloadPdf(key, undefined, { abortSignal });
   const chunks = [];
-  for await (const chunk of res.Body) chunks.push(chunk);
-  return Buffer.concat(chunks);
+  try {
+    for await (const chunk of res.Body) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  } catch (error) {
+    if (typeof res.Body.destroy === 'function') res.Body.destroy();
+    throw error;
+  }
 }
 
 async function deletePdf(key) {

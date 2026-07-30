@@ -3,9 +3,15 @@ const s3Service = require('../services/s3');
 const grobidService = require('../services/grobid');
 const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
+const { pipeline } = require('node:stream/promises');
 
 const MAX_PDF_BYTES = 250 * 1024 * 1024;
+const MAX_CONCURRENT_CITATION_JOBS = 2;
+const CITATION_RETRY_COOLDOWN_MS = 10 * 60 * 1000;
+const PDF_STREAM_ACQUIRE_TIMEOUT_MS = 30_000;
 const citationJobs = new Map();
+const citationQueue = [];
+let activeCitationJobs = 0;
 
 function s3Key(projectName, fileId) {
   return `papers/${projectName}/${fileId}.pdf`;
@@ -19,8 +25,27 @@ function getPdfMetaCollection(projectName) {
   return getClient().db(projectName).collection('PdfMeta');
 }
 
+function isMissingPdfError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return Boolean(
+    error?.name === 'NoSuchKey'
+    || error?.Code === 'NoSuchKey'
+    || error?.$metadata?.httpStatusCode === 404
+    || /specified key does not exist|file not found|no such key/i.test(message),
+  );
+}
+
+function isAbortError(error) {
+  return Boolean(
+    error?.name === 'AbortError'
+    || error?.name === 'TimeoutError'
+    || error?.code === 'ABORT_ERR',
+  );
+}
+
 async function markCitationFailure(projectName, fileId, error) {
   const message = error instanceof Error ? error.message : String(error);
+  const retryable = !isMissingPdfError(error);
   console.error(`[GROBID] Failed to extract citations for ${fileId}:`, message);
   await getPdfMetaCollection(projectName).updateOne(
     { fileId },
@@ -28,6 +53,7 @@ async function markCitationFailure(projectName, fileId, error) {
       $set: {
         citationStatus: 'failed',
         citationError: message,
+        citationRetryable: retryable,
         citationsFailedAt: new Date(),
       },
     },
@@ -42,16 +68,48 @@ async function markCitationFailure(projectName, fileId, error) {
   });
 }
 
+function drainCitationQueue() {
+  while (
+    activeCitationJobs < MAX_CONCURRENT_CITATION_JOBS
+    && citationQueue.length > 0
+  ) {
+    const next = citationQueue.shift();
+    activeCitationJobs += 1;
+    console.log(
+      `[GROBID] Starting queued job ${next.jobKey} `
+      + `(active=${activeCitationJobs}, queued=${citationQueue.length})`,
+    );
+    Promise.resolve()
+      .then(next.run)
+      .then(next.resolve, next.reject)
+      .finally(() => {
+        activeCitationJobs -= 1;
+        drainCitationQueue();
+      });
+  }
+}
+
+function enqueueCitationJob(jobKey, run) {
+  return new Promise((resolve, reject) => {
+    citationQueue.push({ jobKey, run, resolve, reject });
+    drainCitationQueue();
+  });
+}
+
 function queueCitationExtraction(projectName, fileId, pdfBuffer) {
   const jobKey = `${projectName}/${fileId}`;
   if (citationJobs.has(jobKey)) return false;
 
-  const job = new Promise((resolve) => setImmediate(resolve))
-    .then(async () => {
-      const data = pdfBuffer
-        ?? await s3Service.downloadPdfBuffer(s3Key(projectName, fileId));
-      await extractAndSaveCitations(projectName, fileId, data);
-    })
+  // Do not retain large upload buffers while waiting behind other GROBID jobs.
+  const bufferedPdf = activeCitationJobs < MAX_CONCURRENT_CITATION_JOBS
+    && citationQueue.length === 0
+    ? pdfBuffer
+    : undefined;
+  const job = enqueueCitationJob(jobKey, async () => {
+    const data = bufferedPdf
+      ?? await s3Service.downloadPdfBuffer(s3Key(projectName, fileId));
+    await extractAndSaveCitations(projectName, fileId, data);
+  })
     .catch((error) => markCitationFailure(projectName, fileId, error))
     .finally(() => {
       citationJobs.delete(jobKey);
@@ -60,25 +118,23 @@ function queueCitationExtraction(projectName, fileId, pdfBuffer) {
   return true;
 }
 
-async function retryCitationExtractionIfDue(projectName, fileId, metadata) {
-  if (metadata?.citationStatus !== 'failed') return false;
+function citationRetryState(metadata) {
+  if (metadata?.citationStatus !== 'failed') {
+    return { blocked: false, permanent: false };
+  }
+  const permanent = metadata.citationRetryable === false
+    || /specified key does not exist|file not found|no such key/i.test(
+      metadata.citationError || '',
+    );
   const failedAt = metadata.citationsFailedAt
     ? new Date(metadata.citationsFailedAt).getTime()
     : 0;
-  if (Date.now() - failedAt < 60_000) return false;
-
-  await getPdfMetaCollection(projectName).updateOne(
-    { fileId },
-    {
-      $set: {
-        citationStatus: 'processing',
-        citationRetryQueuedAt: new Date(),
-      },
-      $unset: { citationError: '' },
-    },
-  );
-  queueCitationExtraction(projectName, fileId);
-  return true;
+  return {
+    blocked:
+      permanent
+      || Date.now() - failedAt < CITATION_RETRY_COOLDOWN_MS,
+    permanent,
+  };
 }
 
 function saveFileQuery(fileId) {
@@ -185,6 +241,11 @@ exports.uploadPdf = async (req, res) => {
           citationStatus: 'processing',
           uploadedAt: new Date(),
         },
+        $unset: {
+          citationError: '',
+          citationRetryable: '',
+          citationsFailedAt: '',
+        },
       },
       { upsert: true },
     );
@@ -268,6 +329,11 @@ exports.completePdfUpload = async (req, res) => {
           citationStatus: 'processing',
           uploadedAt: new Date(),
         },
+        $unset: {
+          citationError: '',
+          citationRetryable: '',
+          citationsFailedAt: '',
+        },
       },
       { upsert: true },
     );
@@ -334,6 +400,11 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           citationStatus: 'ready',
           citationsExtractedAt: new Date(),
         },
+        $unset: {
+          citationError: '',
+          citationRetryable: '',
+          citationsFailedAt: '',
+        },
       },
     );
     await getPdfMetaCollection(projectName).updateOne(
@@ -346,6 +417,11 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           referenceTitleList,
           citationStatus: 'ready',
           citationsExtractedAt: new Date(),
+        },
+        $unset: {
+          citationError: '',
+          citationRetryable: '',
+          citationsFailedAt: '',
         },
       },
       { upsert: true },
@@ -413,15 +489,9 @@ exports.getCitations = async (req, res) => {
     );
 
     if (!doc || !doc.citationHits) {
-      const retryQueued = await retryCitationExtractionIfDue(
-        projectName,
-        fileid,
-        metadata,
-      );
-      const status =
-        metadata?.citationStatus === 'failed' && !retryQueued
-          ? 'failed'
-          : 'processing';
+      const status = metadata?.citationStatus === 'failed'
+        ? 'failed'
+        : 'processing';
       res.setHeader('Retry-After', '2');
       return res.status(404).json({
         error: status === 'failed'
@@ -443,6 +513,7 @@ exports.getCitations = async (req, res) => {
 exports.refreshCitations = async (req, res) => {
   const { projectName, fileid } = req.params;
   const jobKey = `${projectName}/${fileid}`;
+  const force = req.body?.force === true;
 
   try {
     const {
@@ -460,6 +531,30 @@ exports.refreshCitations = async (req, res) => {
       });
     }
 
+    const retry = citationRetryState(metadata);
+    if (retry.permanent || (retry.blocked && !force)) {
+      return res.status(404).json({
+        fileId: fileid,
+        status: 'failed',
+        retryable: !retry.permanent,
+        error: metadata?.citationError || 'Citation extraction failed',
+      });
+    }
+
+    try {
+      await s3Service.headPdf(s3Key(projectName, fileid));
+    } catch (error) {
+      await markCitationFailure(projectName, fileid, error);
+      return res.status(404).json({
+        fileId: fileid,
+        status: 'failed',
+        retryable: !isMissingPdfError(error),
+        error: isMissingPdfError(error)
+          ? 'The PDF is not available in AWS S3'
+          : 'Could not access the PDF in AWS S3',
+      });
+    }
+
     await getPdfMetaCollection(projectName).updateOne(
       { fileId: fileid },
       {
@@ -470,6 +565,7 @@ exports.refreshCitations = async (req, res) => {
         },
         $unset: {
           citationError: '',
+          citationRetryable: '',
           citationsFailedAt: '',
         },
       },
@@ -527,13 +623,50 @@ exports.listPdfs = async (req, res) => {
 // GET /download_pdf/:projectName/:fileid
 exports.downloadPdf = async (req, res) => {
   const { projectName, fileid } = req.params;
+  const startedAt = Date.now();
+  const abortController = new AbortController();
+  let s3Body;
+  const abortStream = () => {
+    if (!abortController.signal.aborted) {
+      abortController.abort();
+    }
+    if (s3Body && typeof s3Body.destroy === 'function') {
+      s3Body.destroy();
+    }
+  };
+  const onRequestAborted = () => abortStream();
+  const onResponseClosed = () => {
+    if (!res.writableEnded) abortStream();
+  };
+  req.once('aborted', onRequestAborted);
+  res.once('close', onResponseClosed);
+  const acquireTimeout = setTimeout(
+    () => abortController.abort(),
+    PDF_STREAM_ACQUIRE_TIMEOUT_MS,
+  );
+  const slowTimer = setTimeout(() => {
+    console.warn(
+      `[PDF] Slow S3 stream ${projectName}/${fileid} `
+      + `range=${req.headers.range || 'full'} elapsedMs=${Date.now() - startedAt}`,
+    );
+  }, 5_000);
 
   try {
     const key = s3Key(projectName, fileid);
     const range = typeof req.headers.range === 'string'
       ? req.headers.range
       : undefined;
-    const s3Response = await s3Service.downloadPdf(key, range);
+    const s3Response = await s3Service.downloadPdf(
+      key,
+      range,
+      { abortSignal: abortController.signal },
+    );
+    clearTimeout(acquireTimeout);
+    s3Body = s3Response.Body;
+    if (abortController.signal.aborted || req.aborted || res.destroyed) {
+      if (typeof s3Body.destroy === 'function') s3Body.destroy();
+      return;
+    }
     const safeFileId = fileid.replace(/[^a-zA-Z0-9._-]/g, '_');
 
     res.status(s3Response.ContentRange ? 206 : 200);
@@ -553,21 +686,20 @@ exports.downloadPdf = async (req, res) => {
     if (s3Response.LastModified) {
       res.setHeader('Last-Modified', s3Response.LastModified.toUTCString());
     }
-    res.on('close', () => {
-      if (!res.writableEnded && typeof s3Response.Body.destroy === 'function') {
-        s3Response.Body.destroy();
-      }
-    });
-    s3Response.Body.on('error', (streamError) => {
-      console.error('Error while streaming PDF:', streamError);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'An error occurred during the download process' });
-      } else {
-        res.destroy(streamError);
-      }
-    });
-    s3Response.Body.pipe(res);
+    await pipeline(s3Body, res);
   } catch (err) {
+    if (
+      abortController.signal.aborted
+      || req.aborted
+      || res.destroyed
+      || isAbortError(err)
+    ) {
+      console.warn(
+        `[PDF] Stream aborted ${projectName}/${fileid} `
+        + `range=${req.headers.range || 'full'} elapsedMs=${Date.now() - startedAt}`,
+      );
+      return;
+    }
     if (
       err.name === 'InvalidRange' ||
       err.Code === 'InvalidRange' ||
@@ -579,6 +711,15 @@ exports.downloadPdf = async (req, res) => {
       return res.status(404).json({ error: 'File not found' });
     }
     console.error('Error during download:', err);
-    res.status(500).json({ error: 'An error occurred during the download process' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'An error occurred during the download process' });
+    } else {
+      res.destroy(err);
+    }
+  } finally {
+    clearTimeout(acquireTimeout);
+    clearTimeout(slowTimer);
+    req.off('aborted', onRequestAborted);
+    res.off('close', onResponseClosed);
   }
 };
