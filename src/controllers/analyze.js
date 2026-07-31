@@ -2,6 +2,10 @@ const { analyzeRelations, generateClusterLabels, findRelevantSentences, findClos
 const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
 const semanticIndexService = require('../services/semanticIndex');
+const {
+  findCitationHit,
+  findMatchingReference,
+} = require('../services/citationContext');
 const { getClient } = require('../services/mongo');
 const config = require('../config');
 
@@ -599,10 +603,10 @@ exports.closestSentence = async (req, res) => {
   if (
     !projectName ||
     (!paperId && !fileId) ||
-    (!paragraph && (!sourcePaperId || !marker))
+    (!paragraph && !sourcePaperId && !sourceFileId)
   ) {
     return res.status(400).json({
-      error: 'projectName, cited paper id, and paragraph or sourcePaperId/marker are required',
+      error: 'projectName, cited paper id, and paragraph or citing paper id are required',
     });
   }
 
@@ -614,8 +618,14 @@ exports.closestSentence = async (req, res) => {
     }
 
     let citationContext = String(paragraph || '').trim();
-    if (!citationContext) {
-      const sourceDoc = await findPaperDocument(
+    let resolvedMarker = String(marker || '').replace(/^#/, '').trim();
+    if (/^(?:cites?|references?|relates?\s+to)$/i.test(resolvedMarker)) {
+      resolvedMarker = '';
+    }
+    let sourceDoc = null;
+    let citationHit = null;
+    if (sourcePaperId || sourceFileId) {
+      sourceDoc = await findPaperDocument(
         db,
         sourcePaperId,
         sourceFileId,
@@ -623,12 +633,41 @@ exports.closestSentence = async (req, res) => {
       if (!sourceDoc) {
         return res.status(404).json({ error: 'Citing paper was not found' });
       }
+
+      if (!resolvedMarker) {
+        const matchedReference = findMatchingReference(
+          sourceDoc,
+          doc,
+          paperTitle,
+        );
+        resolvedMarker = matchedReference?.refId || '';
+        if (resolvedMarker) {
+          console.log(
+            `[ClosestSentence] Recovered reference ${resolvedMarker} for `
+            + `${sourcePaperId || sourceFileId} -> ${paperId || fileId}`,
+          );
+        }
+      }
+      if (resolvedMarker) {
+        citationHit = findCitationHit(sourceDoc, resolvedMarker);
+      }
+    }
+
+    if (!citationContext) {
+      if (!sourceDoc || !resolvedMarker) {
+        return res.status(422).json({
+          error: 'The cited paper could not be matched to the citing paper reference list',
+        });
+      }
       const source = await loadPaperTeiXml(
         projectName,
         sourceDoc,
         sourceFileId,
       );
-      citationContext = extractCitationContext(source.teiXml, marker);
+      citationContext = extractCitationContext(
+        source.teiXml,
+        resolvedMarker,
+      );
       if (!citationContext) {
         return res.status(422).json({
           error: 'Citation context could not be recovered from the citing paper',
@@ -667,7 +706,7 @@ exports.closestSentence = async (req, res) => {
         try {
           const geminiMatch = await findClosestSentence(
             citationContext,
-            marker,
+            resolvedMarker,
             title,
             candidateSentences,
           );
@@ -692,7 +731,7 @@ exports.closestSentence = async (req, res) => {
       );
       const geminiMatch = await findClosestSentence(
         citationContext,
-        marker,
+        resolvedMarker,
         title,
         sentences,
       );
@@ -748,6 +787,18 @@ exports.closestSentence = async (req, res) => {
       fileId: target.storageFileId,
       title,
       context: citationContext,
+      resolvedMarker: resolvedMarker || undefined,
+      citationHitId: citationHit?.id || undefined,
+      citationSentenceRange:
+        Number.isFinite(citationHit?.pageIndex)
+        && Number.isFinite(citationHit?.startChar)
+        && Number.isFinite(citationHit?.length)
+          ? {
+              pageIndex: citationHit.pageIndex,
+              startChar: citationHit.startChar,
+              length: citationHit.length,
+            }
+          : undefined,
       sentence: sentences[index],
       sentenceIndex: index,
       matchProvider: match.provider,
