@@ -38,7 +38,7 @@ RERANK_BATCH_SIZE = int(os.getenv("QWEN_RERANK_BATCH_SIZE", "4"))
 MAX_REQUEST_TEXTS = int(os.getenv("QWEN_MAX_REQUEST_TEXTS", "96"))
 WARM_EMBEDDINGS_AFTER_RERANK = os.getenv(
     "QWEN_WARM_EMBEDDINGS_AFTER_RERANK",
-    "true",
+    "false",
 ).lower() in {"1", "true", "yes"}
 
 _embedding_model = None

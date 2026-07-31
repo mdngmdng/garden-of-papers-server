@@ -6,6 +6,7 @@ const {
   semanticIndexKey,
   sentenceHash,
   shouldUseGeminiFallback,
+  withQwenLock,
 } = require('../src/services/semanticIndex');
 
 test('semantic index vectors survive compact float32 serialization', () => {
@@ -52,4 +53,30 @@ test('high-confidence reranker matches do not invoke Gemini for a narrow margin'
     }),
     true,
   );
+});
+
+test('serializes complete Qwen retrieval jobs', async () => {
+  const events = [];
+  let active = 0;
+  let maximumActive = 0;
+  const task = (id) => withQwenLock(async () => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    events.push(`start-${id}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    events.push(`end-${id}`);
+    active -= 1;
+  });
+
+  await Promise.all([task(1), task(2), task(3)]);
+
+  assert.equal(maximumActive, 1);
+  assert.deepEqual(events, [
+    'start-1',
+    'end-1',
+    'start-2',
+    'end-2',
+    'start-3',
+    'end-3',
+  ]);
 });

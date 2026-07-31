@@ -11,6 +11,13 @@ const SCHEMA_VERSION = 1;
 const INSTRUCTION_VERSION = 'citation-evidence-v1';
 const memoryCache = new Map();
 const buildJobs = new Map();
+let qwenQueue = Promise.resolve();
+
+function withQwenLock(task) {
+  const result = qwenQueue.then(task, task);
+  qwenQueue = result.catch(() => {});
+  return result;
+}
 
 function semanticIndexKey(projectName, fileId) {
   return [
@@ -180,7 +187,7 @@ async function buildSemanticIndex(projectName, fileId, sentences) {
   return hydrated;
 }
 
-async function ensureSemanticIndex(projectName, fileId, sentences) {
+async function ensureSemanticIndexUnlocked(projectName, fileId, sentences) {
   if (!config.qwen.enabled) {
     throw new Error('Qwen retrieval is disabled');
   }
@@ -197,6 +204,12 @@ async function ensureSemanticIndex(projectName, fileId, sentences) {
   });
   buildJobs.set(cacheKey, job);
   return job;
+}
+
+async function ensureSemanticIndex(projectName, fileId, sentences) {
+  return withQwenLock(() =>
+    ensureSemanticIndexUnlocked(projectName, fileId, sentences),
+  );
 }
 
 function dotProduct(query, vectors, start, dimensions) {
@@ -224,64 +237,72 @@ async function findClosestSentence({
   context,
   sentences,
 }) {
-  const index = await ensureSemanticIndex(projectName, fileId, sentences);
-  const query = await qwen.embedQuery(context);
-  if (query.dimensions !== index.dimensions) {
-    throw new Error('Qwen query and document embedding dimensions do not match');
-  }
-
-  const candidates = sentences
-    .map((text, sentenceIndex) => ({
-      sentenceIndex,
-      text,
-      retrievalScore: dotProduct(
-        query.embedding,
-        index.vectors,
-        sentenceIndex * index.dimensions,
-        index.dimensions,
-      ),
-    }))
-    .sort((left, right) => right.retrievalScore - left.retrievalScore)
-    .slice(0, Math.min(config.qwen.topK, sentences.length));
-
-  let ranked = candidates;
-  let provider = 'qwen-embedding';
-  let rerankError = null;
-  try {
-    const reranked = await qwen.rerank(
-      context,
-      candidates.map((candidate) => candidate.text),
+  return withQwenLock(async () => {
+    const index = await ensureSemanticIndexUnlocked(
+      projectName,
+      fileId,
+      sentences,
     );
-    ranked = candidates
-      .map((candidate, candidateIndex) => ({
-        ...candidate,
-        rerankScore: reranked.scores[candidateIndex],
-      }))
-      .sort((left, right) => right.rerankScore - left.rerankScore);
-    provider = 'qwen-reranker';
-  } catch (error) {
-    rerankError = error;
-    console.warn(`[SemanticIndex] Reranker unavailable: ${error.message}`);
-  }
+    const query = await qwen.embedQuery(context);
+    if (query.dimensions !== index.dimensions) {
+      throw new Error(
+        'Qwen query and document embedding dimensions do not match',
+      );
+    }
 
-  const winner = ranked[0];
-  const runnerUp = ranked[1];
-  const confidence = winner?.rerankScore ?? winner?.retrievalScore ?? 0;
-  const margin = runnerUp
-    ? confidence - (runnerUp.rerankScore ?? runnerUp.retrievalScore)
-    : confidence;
-  return {
-    index: winner?.sentenceIndex ?? -1,
-    confidence,
-    margin,
-    provider,
-    candidateIndices: ranked.map((candidate) => candidate.sentenceIndex),
-    needsGeminiFallback: shouldUseGeminiFallback({
-      rerankError,
+    const candidates = sentences
+      .map((text, sentenceIndex) => ({
+        sentenceIndex,
+        text,
+        retrievalScore: dotProduct(
+          query.embedding,
+          index.vectors,
+          sentenceIndex * index.dimensions,
+          index.dimensions,
+        ),
+      }))
+      .sort((left, right) => right.retrievalScore - left.retrievalScore)
+      .slice(0, Math.min(config.qwen.topK, sentences.length));
+
+    let ranked = candidates;
+    let provider = 'qwen-embedding';
+    let rerankError = null;
+    try {
+      const reranked = await qwen.rerank(
+        context,
+        candidates.map((candidate) => candidate.text),
+      );
+      ranked = candidates
+        .map((candidate, candidateIndex) => ({
+          ...candidate,
+          rerankScore: reranked.scores[candidateIndex],
+        }))
+        .sort((left, right) => right.rerankScore - left.rerankScore);
+      provider = 'qwen-reranker';
+    } catch (error) {
+      rerankError = error;
+      console.warn(`[SemanticIndex] Reranker unavailable: ${error.message}`);
+    }
+
+    const winner = ranked[0];
+    const runnerUp = ranked[1];
+    const confidence = winner?.rerankScore ?? winner?.retrievalScore ?? 0;
+    const margin = runnerUp
+      ? confidence - (runnerUp.rerankScore ?? runnerUp.retrievalScore)
+      : confidence;
+    return {
+      index: winner?.sentenceIndex ?? -1,
       confidence,
       margin,
-    }),
-  };
+      provider,
+      candidateIndices: ranked.map((candidate) => candidate.sentenceIndex),
+      needsGeminiFallback: shouldUseGeminiFallback({
+        rerankError,
+        confidence,
+        margin,
+      }),
+    };
+  });
 }
 
 module.exports = {
@@ -290,6 +311,7 @@ module.exports = {
   encodeVectors,
   decodeVectors,
   shouldUseGeminiFallback,
+  withQwenLock,
   ensureSemanticIndex,
   findClosestSentence,
 };
