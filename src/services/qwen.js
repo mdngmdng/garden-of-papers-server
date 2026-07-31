@@ -22,7 +22,7 @@ function assertEmbeddingResponse(data, expectedCount) {
   }
 }
 
-async function embedTexts(texts, kind) {
+async function embedTexts(texts, kind, task = 'citation_evidence') {
   if (!config.qwen.enabled) {
     throw new Error('Qwen retrieval is disabled');
   }
@@ -31,7 +31,7 @@ async function embedTexts(texts, kind) {
   let model = config.qwen.embeddingModel;
   for (let offset = 0; offset < texts.length; offset += config.qwen.requestBatchSize) {
     const batch = texts.slice(offset, offset + config.qwen.requestBatchSize);
-    const { data } = await client.post('/embed', { texts: batch, kind });
+    const { data } = await client.post('/embed', { texts: batch, kind, task });
     assertEmbeddingResponse(data, batch.length);
     if (dimensions && data.dimensions !== dimensions) {
       throw new Error('Qwen embedding dimensions changed within one request');
@@ -56,11 +56,24 @@ async function embedQuery(text) {
   };
 }
 
-async function rerank(query, documents) {
+async function embedPaperDocuments(texts) {
+  return embedTexts(texts, 'document', 'paper_retrieval');
+}
+
+async function embedPaperQuery(text) {
+  const result = await embedTexts([text], 'query', 'paper_retrieval');
+  return {
+    model: result.model,
+    dimensions: result.dimensions,
+    embedding: result.embeddings[0],
+  };
+}
+
+async function rerank(query, documents, task = 'citation_evidence') {
   if (!config.qwen.enabled) {
     throw new Error('Qwen retrieval is disabled');
   }
-  const { data } = await client.post('/rerank', { query, documents });
+  const { data } = await client.post('/rerank', { query, documents, task });
   if (
     !data
     || !Array.isArray(data.scores)
@@ -75,6 +88,10 @@ async function rerank(query, documents) {
   };
 }
 
+async function rerankPapers(query, documents) {
+  return rerank(query, documents, 'paper_retrieval');
+}
+
 async function health() {
   const { data } = await client.get('/health', { timeout: 5_000 });
   return data;
@@ -83,6 +100,9 @@ async function health() {
 module.exports = {
   embedDocuments,
   embedQuery,
+  embedPaperDocuments,
+  embedPaperQuery,
   rerank,
+  rerankPapers,
   health,
 };

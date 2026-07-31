@@ -22,3 +22,14 @@ test('does not race background embedding warmups with citation reranking', () =>
     /WARM_EMBEDDINGS_AFTER_RERANK = os\.getenv\(\s*"QWEN_WARM_EMBEDDINGS_AFTER_RERANK",\s*"false"/s,
   );
 });
+
+test('keeps citation evidence and manuscript paper retrieval as separate tasks', () => {
+  const service = readFileSync(
+    path.join(__dirname, '..', 'qwen-service', 'app.py'),
+    'utf8',
+  );
+
+  assert.match(service, /"citation_evidence": QUERY_INSTRUCTION/);
+  assert.match(service, /"paper_retrieval": PAPER_QUERY_INSTRUCTION/);
+  assert.match(service, /prompt_name=request\.task/);
+});

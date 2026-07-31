@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const pdfController = require('../controllers/pdf');
 const scholarController = require('../controllers/scholar');
+const relatedWorkController = require('../controllers/relatedWork');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -20,6 +21,11 @@ router.post(
 
 // Google Scholar search
 router.get('/search-scholar', scholarController.searchScholar);
+router.post('/search-related', relatedWorkController.search);
+router.post('/related-search/jobs', relatedWorkController.createJob);
+router.get('/related-search/jobs/:jobId', relatedWorkController.getJob);
+router.delete('/related-search/jobs/:jobId', relatedWorkController.cancelJob);
+router.get('/related-ranking/:jobId', relatedWorkController.ranking);
 
 // Google Scholar citedBy
 router.post('/fetch_citations/:projectName', scholarController.fetchCitedBy);

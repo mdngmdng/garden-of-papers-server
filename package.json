@@ -26,6 +26,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1014.0",
     "@aws-sdk/s3-request-presigner": "^3.1096.0",
+    "@modelcontextprotocol/client": "^2.0.0",
     "@smithy/node-http-handler": "^4.5.0",
     "axios": "^1.13.6",
     "cors": "^2.8.6",
@@ -34,7 +35,6 @@
     "mongoose": "^9.3.1",
     "multer": "^2.1.1",
     "umap-js": "^1.4.0",
-    "uuid": "^9.0.1",
     "ws": "^8.19.0"
   }
 }

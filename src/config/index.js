@@ -46,6 +46,16 @@ module.exports = {
   s2ApiKey: process.env.S2_API_KEY || '',
   serpApiKey: process.env.SERPAPI_KEY || '',
   geminiApiKey: process.env.GEMINI_API_KEY || '',
+  asta: {
+    apiKey: process.env.ASTA_TOOL_KEY || '',
+    endpoint:
+      process.env.ASTA_MCP_ENDPOINT || 'https://asta-tools.allen.ai/mcp/v1',
+    requestTimeoutMs: Number(
+      process.env.ASTA_REQUEST_TIMEOUT_MS || 120_000,
+    ),
+    snippetLimit: Number(process.env.ASTA_SNIPPET_LIMIT || 60),
+    relevanceLimit: Number(process.env.ASTA_RELEVANCE_LIMIT || 40),
+  },
   qwen: {
     enabled: !['0', 'false', 'no'].includes(
       String(process.env.QWEN_ENABLED || 'true').toLowerCase(),

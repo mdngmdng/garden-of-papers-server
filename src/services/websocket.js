@@ -1,12 +1,12 @@
 const WebSocket = require('ws');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('node:crypto');
 const syncKeys = require('./syncKeys');
 
 function createWebSocketServer(server) {
   const wss = new WebSocket.Server({ server });
 
   wss.on('connection', (ws) => {
-    const id = uuidv4();
+    const id = randomUUID();
     syncKeys.clients.set(id, ws);
     syncKeys.registerClient(id);
     ws.id = id;

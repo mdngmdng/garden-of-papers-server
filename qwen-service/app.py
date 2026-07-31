@@ -25,6 +25,14 @@ QUERY_INSTRUCTION = os.getenv(
         "from that paper that directly support the cited claim.\nQuery: "
     ),
 )
+PAPER_QUERY_INSTRUCTION = os.getenv(
+    "QWEN_PAPER_QUERY_INSTRUCTION",
+    (
+        "Instruct: Given the research profile of a draft manuscript and an optional "
+        "focused topic, retrieve academic papers that would be appropriate related "
+        "work for that manuscript.\nQuery: "
+    ),
+)
 RERANK_INSTRUCTION = os.getenv(
     "QWEN_RERANK_INSTRUCTION",
     (
@@ -32,6 +40,21 @@ RERANK_INSTRUCTION = os.getenv(
         "the claim made about that paper in the citing context"
     ),
 )
+PAPER_RERANK_INSTRUCTION = os.getenv(
+    "QWEN_PAPER_RERANK_INSTRUCTION",
+    (
+        "Judge how useful an academic paper would be as related work for the given "
+        "draft manuscript and optional focused search topic"
+    ),
+)
+QUERY_INSTRUCTIONS = {
+    "citation_evidence": QUERY_INSTRUCTION,
+    "paper_retrieval": PAPER_QUERY_INSTRUCTION,
+}
+RERANK_INSTRUCTIONS = {
+    "citation_evidence": RERANK_INSTRUCTION,
+    "paper_retrieval": PAPER_RERANK_INSTRUCTION,
+}
 MAX_SEQUENCE_LENGTH = int(os.getenv("QWEN_MAX_SEQUENCE_LENGTH", "512"))
 EMBED_BATCH_SIZE = int(os.getenv("QWEN_EMBED_BATCH_SIZE", "8"))
 RERANK_BATCH_SIZE = int(os.getenv("QWEN_RERANK_BATCH_SIZE", "4"))
@@ -107,7 +130,7 @@ def get_reranker_model() -> CrossEncoder:
                 device=DEVICE,
                 max_length=MAX_SEQUENCE_LENGTH,
                 model_kwargs={"dtype": MODEL_DTYPE},
-                prompts={"citation_evidence": RERANK_INSTRUCTION},
+                prompts=RERANK_INSTRUCTIONS,
                 default_prompt_name="citation_evidence",
             )
             _reranker_model = model
@@ -118,11 +141,13 @@ def get_reranker_model() -> CrossEncoder:
 class EmbedRequest(BaseModel):
     texts: list[str] = Field(min_length=1)
     kind: Literal["query", "document"] = "document"
+    task: Literal["citation_evidence", "paper_retrieval"] = "citation_evidence"
 
 
 class RerankRequest(BaseModel):
     query: str = Field(min_length=1)
     documents: list[str] = Field(min_length=1)
+    task: Literal["citation_evidence", "paper_retrieval"] = "citation_evidence"
 
 
 @asynccontextmanager
@@ -170,7 +195,11 @@ def embed(request: EmbedRequest):
 
     with _inference_lock:
         model = get_embedding_model()
-        prompt = QUERY_INSTRUCTION if request.kind == "query" else None
+        prompt = (
+            QUERY_INSTRUCTIONS[request.task]
+            if request.kind == "query"
+            else None
+        )
         vectors = model.encode(
             texts,
             prompt=prompt,
@@ -206,6 +235,7 @@ def rerank(request: RerankRequest, background_tasks: BackgroundTasks):
         pairs = [(query, document) for document in documents]
         scores = model.predict(
             pairs,
+            prompt_name=request.task,
             batch_size=RERANK_BATCH_SIZE,
             activation_fn=torch.nn.Sigmoid(),
             show_progress_bar=False,

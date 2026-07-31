@@ -1,4 +1,4 @@
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('node:crypto');
 
 // WebSocket 클라이언트 관리
 const clients = new Map();
@@ -59,7 +59,7 @@ function checkKey(wsId, projectName) {
 }
 
 function rotateKey(wsId, projectName) {
-  const newKey = uuidv4();
+  const newKey = randomUUID();
   projectUploadKeys.set(projectName, newKey);
   clientProjects.forEach((clientProject, clientId) => {
     if (clientProject === projectName) {
