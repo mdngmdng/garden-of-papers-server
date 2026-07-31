@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   findCitationHit,
+  findCitationHits,
   findMatchingReference,
 } = require('../src/services/citationContext');
 
@@ -48,4 +49,37 @@ test('returns the citation hit associated with the recovered marker', () => {
   };
 
   assert.equal(findCitationHit(source, 'b11')?.id, 'hit-2');
+});
+
+test('selects the citation occurrence for the requested page or hit id', () => {
+  const source = {
+    citationHits: [
+      {
+        id: 'grobid-2',
+        refIds: ['b11'],
+        boxes: [{ page: 1 }],
+      },
+      {
+        id: 'grobid-101',
+        refIds: ['b11'],
+        boxes: [{ page: 14 }],
+      },
+    ],
+  };
+
+  assert.deepEqual(
+    findCitationHits(source, 'b11').map((hit) => hit.id),
+    ['grobid-2', 'grobid-101'],
+  );
+  assert.equal(
+    findCitationHit(source, 'b11', { pageIndex: 13 })?.id,
+    'grobid-101',
+  );
+  assert.equal(
+    findCitationHit(source, 'b11', {
+      citationHitId: 'grobid-101',
+      pageIndex: 0,
+    })?.id,
+    'grobid-101',
+  );
 });

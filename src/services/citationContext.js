@@ -119,19 +119,45 @@ function findMatchingReference(sourceDoc, targetDoc, fallbackTitle = '') {
   return best;
 }
 
-function findCitationHit(sourceDoc, referenceId) {
+function findCitationHits(sourceDoc, referenceId) {
   const hits = Array.isArray(sourceDoc.citationHits)
     ? sourceDoc.citationHits
     : [];
-  return hits.find((hit) =>
+  return hits.filter((hit) =>
     (Array.isArray(hit.refIds) ? hit.refIds : []).some((candidate) =>
       referenceIdsMatch(candidate, referenceId),
     ),
-  ) || null;
+  );
+}
+
+function citationHitPageIndex(hit) {
+  if (Number.isFinite(hit?.pageIndex)) return Number(hit.pageIndex);
+  const page = Number(hit?.boxes?.[0]?.page);
+  return Number.isFinite(page) ? Math.max(0, page - 1) : null;
+}
+
+function findCitationHit(
+  sourceDoc,
+  referenceId,
+  { citationHitId = '', pageIndex } = {},
+) {
+  const hits = findCitationHits(sourceDoc, referenceId);
+  if (citationHitId) {
+    const exact = hits.find((hit) => hit.id === citationHitId);
+    if (exact) return exact;
+  }
+  if (Number.isFinite(pageIndex)) {
+    const onPage = hits.find(
+      (hit) => citationHitPageIndex(hit) === Number(pageIndex),
+    );
+    if (onPage) return onPage;
+  }
+  return hits[0] || null;
 }
 
 module.exports = {
   findCitationHit,
+  findCitationHits,
   findMatchingReference,
   normalizeDoi,
   normalizeTitle,

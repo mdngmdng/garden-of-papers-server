@@ -4,6 +4,7 @@ const s3Service = require('../services/s3');
 const semanticIndexService = require('../services/semanticIndex');
 const {
   findCitationHit,
+  findCitationHits,
   findMatchingReference,
 } = require('../services/citationContext');
 const { getClient } = require('../services/mongo');
@@ -565,15 +566,20 @@ function teiText(value) {
     .trim();
 }
 
-function extractCitationContext(teiXml, referenceId) {
+function extractCitationContext(
+  teiXml,
+  referenceId,
+  occurrenceIndex = 0,
+) {
   const normalizedReferenceId = String(referenceId || '').replace(/^#/, '');
   if (!normalizedReferenceId) return '';
   const body = teiXml.match(/<body>([\s\S]*?)<\/body>/)?.[1] || teiXml;
   const markerPattern = new RegExp(
     `<ref\\b[^>]*\\btarget=["']#${escapeRegExp(normalizedReferenceId)}["'][^>]*>`,
-    'i',
+    'gi',
   );
-  const marker = markerPattern.exec(body);
+  const markers = [...body.matchAll(markerPattern)];
+  const marker = markers[Math.max(0, occurrenceIndex)] || markers[0];
   if (!marker) return '';
   const markerIndex = marker.index;
   for (const tag of ['s', 'p']) {
@@ -598,6 +604,8 @@ exports.closestSentence = async (req, res) => {
     paperTitle = '',
     sourcePaperId,
     sourceFileId,
+    sourceCitationHitId,
+    sourcePageIndex,
   } = req.body;
 
   if (
@@ -649,7 +657,12 @@ exports.closestSentence = async (req, res) => {
         }
       }
       if (resolvedMarker) {
-        citationHit = findCitationHit(sourceDoc, resolvedMarker);
+        citationHit = findCitationHit(sourceDoc, resolvedMarker, {
+          citationHitId: sourceCitationHitId,
+          pageIndex: Number.isFinite(sourcePageIndex)
+            ? sourcePageIndex
+            : undefined,
+        });
       }
     }
 
@@ -664,9 +677,15 @@ exports.closestSentence = async (req, res) => {
         sourceDoc,
         sourceFileId,
       );
+      const matchingHits = findCitationHits(sourceDoc, resolvedMarker);
+      const occurrenceIndex = Math.max(
+        0,
+        matchingHits.findIndex((hit) => hit === citationHit),
+      );
       citationContext = extractCitationContext(
         source.teiXml,
         resolvedMarker,
+        occurrenceIndex,
       );
       if (!citationContext) {
         return res.status(422).json({

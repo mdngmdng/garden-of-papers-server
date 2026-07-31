@@ -156,7 +156,8 @@ exports.updateData = async (req, res) => {
     scaleFactor, ptCurveIds, ptArray, parentPageIndex,
     citationContextParagraph, citationSentenceRangePageIndex,
     citationSentenceRangeStartChar, citationSentenceRangeLength,
-    relationshipInfo, referenceText, linkHighlightTexts, summaryNoteId,
+    relationshipInfo, referenceText, citationHitId, citationContexts,
+    linkHighlightTexts, summaryNoteId,
     translations, citationHits, pageSizeList, referenceList, citationStatus,
   } = req.body;
 
@@ -217,6 +218,8 @@ exports.updateData = async (req, res) => {
     if (citationSentenceRangeLength !== undefined) update.citationSentenceRangeLength = citationSentenceRangeLength;
     if (relationshipInfo && relationshipInfo !== '') update.relationshipInfo = relationshipInfo;
     if (referenceText && referenceText !== '') update.referenceText = referenceText;
+    if (citationHitId && citationHitId !== '') update.citationHitId = citationHitId;
+    if (Array.isArray(citationContexts)) update.citationContexts = citationContexts;
     if (linkHighlightTexts !== null && linkHighlightTexts !== undefined && linkHighlightTexts.length !== 0) update.linkHighlightTexts = linkHighlightTexts;
     if (summaryNoteId && summaryNoteId !== '') update.summaryNoteId = summaryNoteId;
     if (translations !== null && translations !== undefined) update.translations = translations;
