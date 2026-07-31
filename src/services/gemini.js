@@ -325,6 +325,100 @@ ${numberedSentences}
 }
 
 /**
+ * 인용 문맥과 의미적으로 가장 가까운 문장 하나를 인용된 논문 본문에서 찾기.
+ * 긴 논문은 청크별 최상위 후보를 병렬로 찾은 뒤 후보끼리 한 번 더 비교한다.
+ *
+ * @returns {{ index: number }}
+ */
+async function findClosestSentence(paragraph, marker, paperTitle, sentences) {
+  const indexedSentences = sentences
+    .map((text, index) => ({ index, text }))
+    .filter(({ text }) => typeof text === 'string' && text.trim().length > 10);
+  if (indexedSentences.length === 0) return { index: -1 };
+
+  const CHUNK_SIZE = 140;
+  const chunks = [];
+  for (let start = 0; start < indexedSentences.length; start += CHUNK_SIZE) {
+    chunks.push(indexedSentences.slice(start, start + CHUNK_SIZE));
+  }
+
+  const winners = await Promise.all(
+    chunks.map((chunk) => _findClosestSentenceCandidate(
+      paragraph,
+      marker,
+      paperTitle,
+      chunk,
+    )),
+  );
+  const candidates = winners
+    .map(({ index }) => indexedSentences.find((sentence) => sentence.index === index))
+    .filter(Boolean);
+
+  if (candidates.length === 0) return { index: -1 };
+  if (candidates.length === 1) return { index: candidates[0].index };
+  return _findClosestSentenceCandidate(
+    paragraph,
+    marker,
+    paperTitle,
+    candidates,
+  );
+}
+
+async function _findClosestSentenceCandidate(
+  paragraph,
+  marker,
+  paperTitle,
+  indexedSentences,
+) {
+  const numberedSentences = indexedSentences
+    .map(({ index, text }) => `[${index}] ${text}`)
+    .join('\n');
+  const prompt = `You are tracing an academic citation back to its source. Select the ONE sentence from the cited paper that is semantically closest to, and best supports, what the citing context says about that paper.
+
+## Citing context
+${paragraph}
+
+## Cited paper
+Marker: ${marker || 'unknown'}
+Title: "${paperTitle || 'Untitled'}"
+
+## Candidate sentences from the cited paper
+${numberedSentences}
+
+Return ONLY valid JSON with an index copied exactly from the brackets:
+{"index": 42}`;
+
+  const res = await axios.post(
+    `${GEMINI_URL}?key=${config.geminiApiKey}`,
+    {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: 'application/json',
+      },
+    },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000,
+    },
+  );
+
+  const text = res.data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+  try {
+    const result = JSON.parse(text);
+    const validIndices = new Set(indexedSentences.map(({ index }) => index));
+    return {
+      index: Number.isInteger(result.index) && validIndices.has(result.index)
+        ? result.index
+        : -1,
+    };
+  } catch {
+    console.error('[Gemini] Failed to parse closest-sentence response:', text);
+    return { index: -1 };
+  }
+}
+
+/**
  * 논문 본문 문장 + Related Work 문맥 → 논문 요약 생성
  * @param {string} paragraph - Related Work 문단
  * @param {string} marker - 논문 마커 (e.g., "[22]")
@@ -559,4 +653,4 @@ async function translateToKorean(englishText) {
   return text.trim();
 }
 
-module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences, summarizePaper, storytelling, generatePlacementReasons, translateToKorean };
+module.exports = { analyzeRelations, analyzeRelationsForLayout, getEmbedding, getEmbeddings, generateClusterLabels, findRelevantSentences, findClosestSentence, summarizePaper, storytelling, generatePlacementReasons, translateToKorean };

@@ -1,4 +1,4 @@
-const { analyzeRelations, generateClusterLabels, findRelevantSentences, summarizePaper, storytelling, generatePlacementReasons } = require('../services/gemini');
+const { analyzeRelations, generateClusterLabels, findRelevantSentences, findClosestSentence, summarizePaper, storytelling, generatePlacementReasons } = require('../services/gemini');
 const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
 const { getClient } = require('../services/mongo');
@@ -506,6 +506,173 @@ exports.highlights = async (req, res) => {
   }
 };
 
+// POST /analyze/closest-sentence
+// 선택한 인용 링크의 문맥과 가장 가까운 문장을 인용된 논문에서 하나 찾기
+async function findPaperDocument(db, paperId, fileId) {
+  const { ObjectId } = require('mongodb');
+  const queries = [];
+  if (paperId) {
+    try {
+      queries.push({ _id: new ObjectId(paperId) });
+    } catch {
+      queries.push({ _id: paperId });
+    }
+  }
+  if (fileId) queries.push({ fileId });
+  if (queries.length === 0) return null;
+  return db.collection('SaveFile').findOne(
+    queries.length === 1 ? queries[0] : { $or: queries },
+  );
+}
+
+async function loadPaperTeiXml(projectName, doc, fallbackFileId) {
+  const storageFileId = String(doc.fileId || fallbackFileId || doc._id);
+  const teiKey = `tei/${projectName}/${storageFileId}.xml`;
+  try {
+    return {
+      storageFileId,
+      teiXml: await s3Service.downloadTeiXml(teiKey),
+    };
+  } catch {
+    const { processFulltext } = require('../services/grobid');
+    const pdfKey = `papers/${projectName}/${storageFileId}.pdf`;
+    const pdfBuffer = await s3Service.downloadPdfBuffer(pdfKey);
+    const teiXml = await processFulltext(pdfBuffer);
+    await s3Service.uploadTeiXml(teiKey, teiXml);
+    return { storageFileId, teiXml };
+  }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function teiText(value) {
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractCitationContext(teiXml, referenceId) {
+  const normalizedReferenceId = String(referenceId || '').replace(/^#/, '');
+  if (!normalizedReferenceId) return '';
+  const body = teiXml.match(/<body>([\s\S]*?)<\/body>/)?.[1] || teiXml;
+  const markerPattern = new RegExp(
+    `<ref\\b[^>]*\\btarget=["']#${escapeRegExp(normalizedReferenceId)}["'][^>]*>`,
+    'i',
+  );
+  const marker = markerPattern.exec(body);
+  if (!marker) return '';
+  const markerIndex = marker.index;
+  for (const tag of ['s', 'p']) {
+    const openIndex = body.lastIndexOf(`<${tag}`, markerIndex);
+    const closeIndex = body.indexOf(`</${tag}>`, markerIndex);
+    if (openIndex < 0 || closeIndex < 0) continue;
+    const openEnd = body.indexOf('>', openIndex);
+    if (openEnd < 0 || openEnd > markerIndex) continue;
+    const context = teiText(body.slice(openEnd + 1, closeIndex));
+    if (context.length > 10) return context;
+  }
+  return '';
+}
+
+exports.closestSentence = async (req, res) => {
+  const {
+    projectName,
+    paperId,
+    fileId,
+    paragraph,
+    marker = '',
+    paperTitle = '',
+    sourcePaperId,
+    sourceFileId,
+  } = req.body;
+
+  if (
+    !projectName ||
+    (!paperId && !fileId) ||
+    (!paragraph && (!sourcePaperId || !marker))
+  ) {
+    return res.status(400).json({
+      error: 'projectName, cited paper id, and paragraph or sourcePaperId/marker are required',
+    });
+  }
+
+  try {
+    const db = getClient().db(projectName);
+    const doc = await findPaperDocument(db, paperId, fileId);
+    if (!doc) {
+      return res.status(404).json({ error: 'Cited paper was not found' });
+    }
+
+    let citationContext = String(paragraph || '').trim();
+    if (!citationContext) {
+      const sourceDoc = await findPaperDocument(
+        db,
+        sourcePaperId,
+        sourceFileId,
+      );
+      if (!sourceDoc) {
+        return res.status(404).json({ error: 'Citing paper was not found' });
+      }
+      const source = await loadPaperTeiXml(
+        projectName,
+        sourceDoc,
+        sourceFileId,
+      );
+      citationContext = extractCitationContext(source.teiXml, marker);
+      if (!citationContext) {
+        return res.status(422).json({
+          error: 'Citation context could not be recovered from the citing paper',
+        });
+      }
+    }
+
+    const target = await loadPaperTeiXml(projectName, doc, fileId);
+    const sentences = extractSentences(target.teiXml);
+    if (sentences.length === 0) {
+      return res.status(404).json({
+        error: 'No searchable sentences were extracted from the cited paper',
+      });
+    }
+
+    const title = doc.paperName || paperTitle || 'Untitled';
+    console.log(
+      `[ClosestSentence] ${paperId || fileId}: comparing ${sentences.length} sentences`,
+    );
+    const { index } = await findClosestSentence(
+      citationContext,
+      marker,
+      title,
+      sentences,
+    );
+    if (index < 0 || !sentences[index]) {
+      return res.status(422).json({
+        error: 'No semantically matching sentence was found',
+      });
+    }
+
+    console.log(`[ClosestSentence] ${paperId || fileId}: selected sentence ${index}`);
+    return res.json({
+      paperId: String(doc._id),
+      fileId: target.storageFileId,
+      title,
+      context: citationContext,
+      sentence: sentences[index],
+      sentenceIndex: index,
+    });
+  } catch (err) {
+    console.error('[ClosestSentence] Error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 // POST /analyze/summarize
 // 키워드 검색으로 수집한 논문의 독립 요약 (citation context 불필요)
 exports.summarize = async (req, res) => {
@@ -587,4 +754,3 @@ exports.storytelling = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
