@@ -157,6 +157,7 @@ exports.updateData = async (req, res) => {
     citationContextParagraph, citationSentenceRangePageIndex,
     citationSentenceRangeStartChar, citationSentenceRangeLength,
     relationshipInfo, referenceText, citationHitId, citationContexts,
+    semanticPreparationStatus, semanticPreparationError,
     linkHighlightTexts, summaryNoteId,
     translations, citationHits, pageSizeList, referenceList, citationStatus,
   } = req.body;
@@ -220,6 +221,12 @@ exports.updateData = async (req, res) => {
     if (referenceText && referenceText !== '') update.referenceText = referenceText;
     if (citationHitId && citationHitId !== '') update.citationHitId = citationHitId;
     if (Array.isArray(citationContexts)) update.citationContexts = citationContexts;
+    if (semanticPreparationStatus) {
+      update.semanticPreparationStatus = semanticPreparationStatus;
+    }
+    if (semanticPreparationError !== undefined) {
+      update.semanticPreparationError = semanticPreparationError;
+    }
     if (linkHighlightTexts !== null && linkHighlightTexts !== undefined && linkHighlightTexts.length !== 0) update.linkHighlightTexts = linkHighlightTexts;
     if (summaryNoteId && summaryNoteId !== '') update.summaryNoteId = summaryNoteId;
     if (translations !== null && translations !== undefined) update.translations = translations;
