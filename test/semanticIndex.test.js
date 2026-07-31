@@ -80,3 +80,39 @@ test('serializes complete Qwen retrieval jobs', async () => {
     'end-3',
   ]);
 });
+
+test('runs citation matches before queued background indexing', async () => {
+  const events = [];
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const backgroundOne = withQwenLock(
+    async () => {
+      events.push('background-1-start');
+      await firstGate;
+      events.push('background-1-end');
+    },
+    { priority: 'background' },
+  );
+  const backgroundTwo = withQwenLock(
+    async () => {
+      events.push('background-2');
+    },
+    { priority: 'background' },
+  );
+  const citationMatch = withQwenLock(async () => {
+    events.push('citation-match');
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseFirst();
+  await Promise.all([backgroundOne, backgroundTwo, citationMatch]);
+
+  assert.deepEqual(events, [
+    'background-1-start',
+    'background-1-end',
+    'citation-match',
+    'background-2',
+  ]);
+});

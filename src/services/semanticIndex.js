@@ -11,11 +11,36 @@ const SCHEMA_VERSION = 1;
 const INSTRUCTION_VERSION = 'citation-evidence-v1';
 const memoryCache = new Map();
 const buildJobs = new Map();
-let qwenQueue = Promise.resolve();
+const qwenQueues = {
+  interactive: [],
+  background: [],
+};
+let qwenJobRunning = false;
 
-function withQwenLock(task) {
-  const result = qwenQueue.then(task, task);
-  qwenQueue = result.catch(() => {});
+function runNextQwenJob() {
+  if (qwenJobRunning) return;
+  const job =
+    qwenQueues.interactive.shift() || qwenQueues.background.shift();
+  if (!job) return;
+  qwenJobRunning = true;
+  Promise.resolve()
+    .then(job.task)
+    .then(job.resolve, job.reject)
+    .finally(() => {
+      qwenJobRunning = false;
+      runNextQwenJob();
+    });
+}
+
+function withQwenLock(task, { priority = 'interactive' } = {}) {
+  const queue =
+    priority === 'background'
+      ? qwenQueues.background
+      : qwenQueues.interactive;
+  const result = new Promise((resolve, reject) => {
+    queue.push({ task, resolve, reject });
+    runNextQwenJob();
+  });
   return result;
 }
 
@@ -207,8 +232,9 @@ async function ensureSemanticIndexUnlocked(projectName, fileId, sentences) {
 }
 
 async function ensureSemanticIndex(projectName, fileId, sentences) {
-  return withQwenLock(() =>
-    ensureSemanticIndexUnlocked(projectName, fileId, sentences),
+  return withQwenLock(
+    () => ensureSemanticIndexUnlocked(projectName, fileId, sentences),
+    { priority: 'background' },
   );
 }
 
