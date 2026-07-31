@@ -5,8 +5,11 @@ services:
       - "5002:5002"
     env_file:
       - .env
+    environment:
+      QWEN_SERVICE_URL: http://qwen:8000
     depends_on:
       - grobid
+      - qwen
     restart: unless-stopped
 
   grobid:
@@ -14,3 +17,21 @@ services:
     ports:
       - "8070:8070"
     restart: unless-stopped
+
+  qwen:
+    build: ./qwen-service
+    ports:
+      - "127.0.0.1:8071:8000"
+    environment:
+      HF_HOME: /models
+      QWEN_DEVICE: ${QWEN_DEVICE:-cpu}
+      QWEN_PRELOAD: ${QWEN_PRELOAD:-false}
+      QWEN_EMBEDDING_MODEL: ${QWEN_EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+      QWEN_RERANKER_MODEL: ${QWEN_RERANKER_MODEL:-Qwen/Qwen3-Reranker-0.6B}
+    volumes:
+      - qwen-model-cache:/models
+    shm_size: 2gb
+    restart: unless-stopped
+
+volumes:
+  qwen-model-cache:

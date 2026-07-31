@@ -111,6 +111,24 @@ async function downloadTeiXml(key) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
+async function uploadSemanticIndex(key, buffer) {
+  await s3.send(new PutObjectCommand({
+    Bucket,
+    Key: key,
+    Body: buffer,
+    ContentType: 'application/json',
+    ContentEncoding: 'gzip',
+  }));
+  return key;
+}
+
+async function downloadSemanticIndex(key) {
+  const res = await s3.send(new GetObjectCommand({ Bucket, Key: key }));
+  const chunks = [];
+  for await (const chunk of res.Body) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
 module.exports = {
   uploadPdf,
   createPdfUploadUrl,
@@ -121,4 +139,6 @@ module.exports = {
   headPdf,
   uploadTeiXml,
   downloadTeiXml,
+  uploadSemanticIndex,
+  downloadSemanticIndex,
 };

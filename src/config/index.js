@@ -17,6 +17,21 @@ function resolveGrobidUrl(value) {
   return configured.replace(/\/$/, '');
 }
 
+function resolveLocalServiceUrl(value, dockerHostname, localPort) {
+  const configured = value || `http://127.0.0.1:${localPort}`;
+  try {
+    const url = new URL(configured);
+    if (url.hostname === dockerHostname && !fs.existsSync('/.dockerenv')) {
+      url.hostname = '127.0.0.1';
+      url.port = String(localPort);
+      return url.toString().replace(/\/$/, '');
+    }
+  } catch {
+    return configured;
+  }
+  return configured.replace(/\/$/, '');
+}
+
 module.exports = {
   port: process.env.PORT || 5002,
   origin: process.env.ORIGIN || 'http://34.64.85.65:3000',
@@ -31,4 +46,32 @@ module.exports = {
   s2ApiKey: process.env.S2_API_KEY || '',
   serpApiKey: process.env.SERPAPI_KEY || '',
   geminiApiKey: process.env.GEMINI_API_KEY || '',
+  qwen: {
+    enabled: !['0', 'false', 'no'].includes(
+      String(process.env.QWEN_ENABLED || 'true').toLowerCase(),
+    ),
+    serviceUrl: resolveLocalServiceUrl(
+      process.env.QWEN_SERVICE_URL,
+      'qwen',
+      8071,
+    ),
+    embeddingModel:
+      process.env.QWEN_EMBEDDING_MODEL || 'Qwen/Qwen3-Embedding-0.6B',
+    rerankerModel:
+      process.env.QWEN_RERANKER_MODEL || 'Qwen/Qwen3-Reranker-0.6B',
+    indexName: process.env.QWEN_INDEX_NAME || 'qwen3-embedding-0.6b-v1',
+    requestTimeoutMs: Number(process.env.QWEN_REQUEST_TIMEOUT_MS || 600_000),
+    requestBatchSize: Number(process.env.QWEN_REQUEST_BATCH_SIZE || 48),
+    topK: Number(process.env.QWEN_TOP_K || 12),
+    minimumRerankScore: Number(
+      process.env.QWEN_MINIMUM_RERANK_SCORE || 0.55,
+    ),
+    highConfidenceRerankScore: Number(
+      process.env.QWEN_HIGH_CONFIDENCE_RERANK_SCORE || 0.9,
+    ),
+    minimumRerankMargin: Number(
+      process.env.QWEN_MINIMUM_RERANK_MARGIN || 0.04,
+    ),
+    memoryCacheEntries: Number(process.env.QWEN_MEMORY_CACHE_ENTRIES || 12),
+  },
 };
