@@ -15,6 +15,11 @@ const PAPER_FIELDS = [
   'tldr',
 ].join(',');
 
+let nextAstaRequestAt = 0;
+let rateReservationTail = Promise.resolve();
+let activeSearches = 0;
+const pendingSearches = [];
+
 function isConfigured() {
   return Boolean(config.asta.apiKey && config.asta.endpoint);
 }
@@ -218,32 +223,232 @@ function normalizeToolResult(result, source) {
 
 function wait(milliseconds, signal) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds);
-    if (typeof timer.unref === 'function') timer.unref();
-    signal?.addEventListener('abort', () => {
+    if (signal?.aborted) {
+      reject(signal.reason || new Error('Asta search was cancelled'));
+      return;
+    }
+    const onAbort = () => {
       clearTimeout(timer);
       reject(signal.reason || new Error('Asta search was cancelled'));
-    }, { once: true });
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, Math.max(0, milliseconds));
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
-function retryable(error) {
-  return /429|rate limit|timed? ?out|timeout|502|503|504|connection|fetch failed/i
-    .test(String(error?.message || ''));
+function errorStatus(error) {
+  const candidates = [
+    error?.status,
+    error?.statusCode,
+    error?.response?.status,
+    error?.data?.status,
+    error?.data?.statusCode,
+    error?.cause?.status,
+    error?.cause?.statusCode,
+  ];
+  return candidates.map(Number).find(Number.isFinite) || 0;
 }
 
-async function callToolWithRetry(client, name, args, signal) {
+function retryable(error) {
+  const status = errorStatus(error);
+  if (status === 429 || (status >= 500 && status <= 599)) return true;
+  if (status >= 400 && status <= 499) return false;
+  return /429|too many requests|rate limit|temporar|timed? ?out|timeout|502|503|504|connection|fetch failed|socket/i
+    .test(String(error?.message || error || ''));
+}
+
+function parseRetryAfter(value, now = Date.now()) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 0;
+  const seconds = Number(normalized);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1_000);
+  }
+  const date = Date.parse(normalized);
+  return Number.isFinite(date) ? Math.max(0, date - now) : 0;
+}
+
+function retryAfterFromError(error) {
+  const explicit = Number(
+    error?.retryAfterMs
+    || error?.data?.retryAfterMs
+    || error?.cause?.retryAfterMs,
+  );
+  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+  const headers = error?.response?.headers || error?.data?.headers;
+  if (headers?.get) return parseRetryAfter(headers.get('retry-after'));
+  if (headers && typeof headers === 'object') {
+    return parseRetryAfter(headers['retry-after'] || headers['Retry-After']);
+  }
+  const match = String(error?.message || '').match(
+    /retry[- ]after[^0-9]*([0-9]+(?:\.[0-9]+)?)/i,
+  );
+  return match ? Math.ceil(Number(match[1]) * 1_000) : 0;
+}
+
+function retryDelay(attempt, retryAfterMs = 0, random = Math.random) {
+  const exponential = Math.min(
+    config.asta.retryMaxMs,
+    config.asta.retryBaseMs * (2 ** attempt),
+  );
+  const jittered = exponential * (0.5 + Math.max(0, Math.min(1, random())) * 0.5);
+  return Math.ceil(Math.max(retryAfterMs, jittered));
+}
+
+async function reserveAstaRequestSlot(
+  signal,
+  { now = Date.now, sleep = wait } = {},
+) {
+  let releaseReservation;
+  const previous = rateReservationTail;
+  rateReservationTail = new Promise((resolve) => {
+    releaseReservation = resolve;
+  });
+  await previous;
+  try {
+    if (signal?.aborted) {
+      throw signal.reason || new Error('Asta search was cancelled');
+    }
+    const current = now();
+    const spacing = Math.ceil(1_000 / config.asta.maxRequestsPerSecond);
+    const reservedAt = Math.max(current, nextAstaRequestAt);
+    nextAstaRequestAt = reservedAt + spacing;
+    if (reservedAt > current) await sleep(reservedAt - current, signal);
+  } finally {
+    releaseReservation();
+  }
+}
+
+function releaseSearchSlot() {
+  const next = pendingSearches.shift();
+  if (next) {
+    next.signal?.removeEventListener('abort', next.onAbort);
+    next.resolve(releaseSearchSlot);
+    return;
+  }
+  activeSearches = Math.max(0, activeSearches - 1);
+}
+
+function acquireSearchSlot(signal) {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason || new Error('Asta search was cancelled'));
+  }
+  if (activeSearches < config.asta.maxConcurrentSearches) {
+    activeSearches += 1;
+    return Promise.resolve(releaseSearchSlot);
+  }
+  return new Promise((resolve, reject) => {
+    const entry = { resolve, reject, signal, onAbort: null };
+    entry.onAbort = () => {
+      const index = pendingSearches.indexOf(entry);
+      if (index >= 0) pendingSearches.splice(index, 1);
+      reject(signal.reason || new Error('Asta search was cancelled'));
+    };
+    signal?.addEventListener('abort', entry.onAbort, { once: true });
+    pendingSearches.push(entry);
+  });
+}
+
+async function withSearchSlot(signal, callback) {
+  const release = await acquireSearchSlot(signal);
+  try {
+    return await callback();
+  } finally {
+    release();
+  }
+}
+
+function createAstaFetch({
+  fetchImpl = fetch,
+  reserveSlot = reserveAstaRequestSlot,
+  sleep = wait,
+  random = Math.random,
+  onRetry = () => {},
+} = {}) {
+  return async (input, init = {}) => {
+    const signal = init.signal || input?.signal;
+    let lastError;
+    for (let attempt = 0; attempt <= config.asta.maxRetries; attempt += 1) {
+      await reserveSlot(signal);
+      try {
+        const response = await fetchImpl(input, init);
+        if (
+          response.status !== 429
+          && (response.status < 500 || response.status > 599)
+        ) return response;
+        if (attempt >= config.asta.maxRetries) return response;
+        const retryAfterMs = parseRetryAfter(
+          response.headers?.get?.('retry-after'),
+        );
+        const delay = retryDelay(attempt, retryAfterMs, random);
+        onRetry({ attempt: attempt + 1, delay, status: response.status });
+        if (response.body?.cancel) {
+          await response.body.cancel().catch(() => {});
+        }
+        await sleep(delay, signal);
+      } catch (error) {
+        lastError = error;
+        if (signal?.aborted || attempt >= config.asta.maxRetries || !retryable(error)) {
+          throw error;
+        }
+        const delay = retryDelay(attempt, retryAfterFromError(error), random);
+        onRetry({ attempt: attempt + 1, delay, status: errorStatus(error) });
+        await sleep(delay, signal);
+      }
+    }
+    throw lastError || new Error('Asta request failed after retries');
+  };
+}
+
+function toolErrorDetail(result) {
+  if (!result?.isError) return '';
+  return (result.content || [])
+    .filter((content) => content?.type === 'text')
+    .map((content) => content.text)
+    .join(' ')
+    .trim();
+}
+
+async function callToolWithRetry(
+  client,
+  name,
+  args,
+  signal,
+  { sleep = wait, random = Math.random } = {},
+) {
   let lastError;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt <= config.asta.maxRetries; attempt += 1) {
     try {
-      return await client.callTool(
+      const result = await client.callTool(
         { name, arguments: args },
         { timeout: config.asta.requestTimeoutMs, signal },
       );
+      const detail = toolErrorDetail(result);
+      if (detail && retryable(new Error(detail))) {
+        const error = new Error(detail);
+        error.astaToolLevel = true;
+        if (/429|too many requests|rate limit/i.test(detail)) error.status = 429;
+        throw error;
+      }
+      return result;
     } catch (error) {
       lastError = error;
-      if (attempt > 0 || !retryable(error) || signal?.aborted) throw error;
-      await wait(750, signal);
+      const retryLimit = error?.astaToolLevel
+        ? config.asta.maxRetries
+        : Math.min(1, config.asta.maxRetries);
+      if (
+        attempt >= retryLimit
+        || !retryable(error)
+        || signal?.aborted
+      ) throw error;
+      const delay = retryDelay(attempt, retryAfterFromError(error), random);
+      console.warn(
+        `[Asta] ${name} temporarily unavailable; retry ${attempt + 1}/${retryLimit} in ${delay}ms`,
+      );
+      await sleep(delay, signal);
     }
   }
   throw lastError;
@@ -262,6 +467,13 @@ async function withClient(callback) {
           'x-api-key': config.asta.apiKey,
         },
       },
+      fetch: createAstaFetch({
+        onRetry: ({ attempt, delay, status }) => {
+          console.warn(
+            `[Asta] HTTP ${status || 'network'}; retry ${attempt}/${config.asta.maxRetries} in ${delay}ms`,
+          );
+        },
+      }),
     },
   );
   const client = new Client({
@@ -286,11 +498,11 @@ async function searchRelatedPapers(descriptions, { signal } = {}) {
       description.length >= 2 && values.indexOf(description) === index)
     .slice(0, 2);
   if (!queries.length) return [];
-  return withClient(async (client) => {
+  return withSearchSlot(signal, () => withClient(async (client) => {
     const snippetResult = await callToolWithRetry(client, 'snippet_search', {
-        query: queries[0],
-        limit: Math.max(1, Math.min(100, config.asta.snippetLimit)),
-      }, signal);
+      query: queries[0],
+      limit: Math.max(1, Math.min(100, config.asta.snippetLimit)),
+    }, signal);
     const relevanceResult = await callToolWithRetry(
       client,
       'search_papers_by_relevance',
@@ -316,7 +528,7 @@ async function searchRelatedPapers(descriptions, { signal } = {}) {
       ]);
     }
     return papers;
-  });
+  }));
 }
 
 module.exports = {
@@ -327,5 +539,12 @@ module.exports = {
   normalizePaperCandidate,
   normalizeToolResult,
   mergeAstaPapers,
+  errorStatus,
+  retryable,
+  parseRetryAfter,
+  retryDelay,
+  reserveAstaRequestSlot,
+  createAstaFetch,
+  callToolWithRetry,
   searchRelatedPapers,
 };

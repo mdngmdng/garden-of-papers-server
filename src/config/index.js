@@ -55,6 +55,23 @@ module.exports = {
     ),
     snippetLimit: Number(process.env.ASTA_SNIPPET_LIMIT || 60),
     relevanceLimit: Number(process.env.ASTA_RELEVANCE_LIMIT || 40),
+    maxRequestsPerSecond: Math.max(
+      1,
+      Math.min(10, Number(process.env.ASTA_MAX_REQUESTS_PER_SECOND || 8)),
+    ),
+    maxConcurrentSearches: Math.max(
+      1,
+      Number(process.env.ASTA_MAX_CONCURRENT_SEARCHES || 2),
+    ),
+    maxRetries: Math.max(0, Number(process.env.ASTA_MAX_RETRIES || 5)),
+    retryBaseMs: Math.max(
+      100,
+      Number(process.env.ASTA_RETRY_BASE_MS || 1_000),
+    ),
+    retryMaxMs: Math.max(
+      1_000,
+      Number(process.env.ASTA_RETRY_MAX_MS || 15_000),
+    ),
   },
   qwen: {
     enabled: !['0', 'false', 'no'].includes(
