@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const { getClient } = require('../services/mongo');
 const syncKeys = require('../services/syncKeys');
+const pdfPreviewService = require('../services/pdfPreview');
 
 function getIdQuery(id) {
   const value = String(id ?? '');
@@ -23,6 +24,7 @@ exports.loadData = async (req, res) => {
     const collection = db.collection('SaveFile');
     const data = await collection.find().toArray();
     const paperRows = data.filter((row) => row.type === 'GX.MAROScientificPaper');
+    const previewRequests = [];
     const fileIds = [
       ...new Set(
         paperRows
@@ -34,8 +36,6 @@ exports.loadData = async (req, res) => {
     if (fileIds.length) {
       const cachedExtractions = await db.collection('PdfMeta').find({
         fileId: { $in: fileIds },
-        citationStatus: 'ready',
-        citationHits: { $exists: true },
       }).toArray();
       const cachedByFileId = new Map(
         cachedExtractions.map((entry) => [String(entry.fileId), entry]),
@@ -43,32 +43,51 @@ exports.loadData = async (req, res) => {
       const backfills = [];
 
       for (const row of paperRows) {
-        if (
-          row.citationStatus === 'ready'
-          && Array.isArray(row.citationHits)
-        ) {
-          continue;
-        }
         const fileId = String(row.fileId || row._id || '');
         const cached = cachedByFileId.get(fileId);
-        if (!cached) continue;
-        const citationCache = {
-          citationHits: cached.citationHits,
-          pageSizeList: cached.pageSizeList ?? cached.pageSizes ?? [],
-          referenceList: cached.referenceList ?? cached.references ?? [],
-          citationStatus: 'ready',
-          citationsExtractedAt: cached.citationsExtractedAt ?? new Date(),
-        };
-        if (cached.referenceTitleList !== undefined) {
-          citationCache.referenceTitleList = cached.referenceTitleList;
+        const rowUpdate = {};
+        if (
+          cached?.citationStatus === 'ready'
+          && Array.isArray(cached.citationHits)
+          && !(
+            row.citationStatus === 'ready'
+            && Array.isArray(row.citationHits)
+          )
+        ) {
+          Object.assign(rowUpdate, {
+            citationHits: cached.citationHits,
+            pageSizeList: cached.pageSizeList ?? cached.pageSizes ?? [],
+            referenceList: cached.referenceList ?? cached.references ?? [],
+            citationStatus: 'ready',
+            citationsExtractedAt: cached.citationsExtractedAt ?? new Date(),
+          });
+          if (cached.referenceTitleList !== undefined) {
+            rowUpdate.referenceTitleList = cached.referenceTitleList;
+          }
         }
-        Object.assign(row, citationCache);
-        backfills.push({
-          updateOne: {
-            filter: { _id: row._id },
-            update: { $set: citationCache },
-          },
-        });
+        const pageIndex = Math.max(0, Math.floor(Number(row.abovePageIndex) || 0));
+        const preview = pdfPreviewService.createPreviewDescriptor(
+          req.body._projectName,
+          fileId,
+          cached?.pdfPagePreview,
+        );
+        if (pdfPreviewService.isPreviewCurrent(preview, fileId, pageIndex)) {
+          rowUpdate.pdfPagePreview = preview;
+        } else if (fileId) {
+          if (row.pdfPagePreview != null) rowUpdate.pdfPagePreview = null;
+          if (pdfPreviewService.canAttemptPdfPreview(cached)) {
+            previewRequests.push({ fileId, pageIndex });
+          }
+        }
+        if (Object.keys(rowUpdate).length) {
+          Object.assign(row, rowUpdate);
+          backfills.push({
+            updateOne: {
+              filter: { _id: row._id },
+              update: { $set: rowUpdate },
+            },
+          });
+        }
       }
 
       if (backfills.length) {
@@ -77,6 +96,15 @@ exports.loadData = async (req, res) => {
     }
 
     res.status(200).json(data);
+
+    // Cold-workspace preview generation must never delay the load response.
+    for (const request of previewRequests) {
+      pdfPreviewService.queuePdfPreview(
+        req.body._projectName,
+        request.fileId,
+        request.pageIndex,
+      );
+    }
 
     syncKeys.onLoadData(req.body.WebSocketID, req.body._projectName);
     syncKeys.debugLog();
@@ -102,6 +130,11 @@ exports.uploadData = async (req, res) => {
       return res.status(202).json();
     }
 
+    // Browser-generated Base64 previews were a temporary compatibility path.
+    // Only compact server-owned URL descriptors are allowed into MongoDB now.
+    if (data.type === 'GX.MAROScientificPaper') {
+      delete data.pdfPagePreview;
+    }
     const newData = await collection.insertOne(data);
     if (!newData) {
       return res.status(404).json({ status: 'error', message: 'Data not found' });
@@ -111,6 +144,13 @@ exports.uploadData = async (req, res) => {
     console.log('Data uploaded successfully.');
     syncKeys.rotateKey(data.WebSocketID, data._projectName);
     syncKeys.debugLog();
+    if (data.type === 'GX.MAROScientificPaper' && data.fileId) {
+      pdfPreviewService.queuePdfPreview(
+        data._projectName,
+        String(data.fileId),
+        Math.max(0, Math.floor(Number(data.abovePageIndex) || 0)),
+      );
+    }
   } catch (error) {
     console.error('Failed to upload data:', error);
     res.status(500).json({ status: 'error', message: 'Failed to upload data', data: error });
@@ -160,6 +200,7 @@ exports.updateData = async (req, res) => {
     semanticPreparationStatus, semanticPreparationError,
     linkHighlightTexts, summaryNoteId,
     translations, citationHits, pageSizeList, referenceList, citationStatus,
+    pdfPagePreview,
   } = req.body;
 
   try {
@@ -172,6 +213,7 @@ exports.updateData = async (req, res) => {
     }
 
     const update = {};
+    const unset = {};
     if (type !== '') update.type = type;
     if (pos.x !== 0 || pos.y !== 0 || pos.z !== 0) update.pos = pos;
     update.textValue = textValue;
@@ -237,11 +279,17 @@ exports.updateData = async (req, res) => {
       update.citationStatus = 'ready';
       update.citationsExtractedAt = new Date();
     }
+    if (pdfPagePreview?.version === 1) {
+      unset.pdfPagePreview = '';
+    }
 
     try {
       const updatedData = await collection.findOneAndUpdate(
         getIdQuery(_id),
-        { $set: update },
+        {
+          $set: update,
+          ...(Object.keys(unset).length ? { $unset: unset } : {}),
+        },
         { returnDocument: 'after' },
       );
 
@@ -252,6 +300,23 @@ exports.updateData = async (req, res) => {
       res.status(200).json(updatedData);
       syncKeys.rotateKey(WebSocketID, _projectName);
       syncKeys.debugLog();
+      if (updatedData.type === 'GX.MAROScientificPaper' && updatedData.fileId) {
+        const pageIndex = Math.max(
+          0,
+          Math.floor(Number(updatedData.abovePageIndex) || 0),
+        );
+        if (!pdfPreviewService.isPreviewCurrent(
+          updatedData.pdfPagePreview,
+          String(updatedData.fileId),
+          pageIndex,
+        )) {
+          pdfPreviewService.queuePdfPreview(
+            _projectName,
+            String(updatedData.fileId),
+            pageIndex,
+          );
+        }
+      }
     } catch (error) {
       return res.status(404).json({ status: 'error', message: 'Id not found' });
     }

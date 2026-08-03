@@ -13,6 +13,7 @@ router.post('/complete_pdf_upload/:projectName', pdfController.completePdfUpload
 router.post('/upload_pdf/:projectName', upload.single('file'), pdfController.uploadPdf);
 router.get('/list_pdfs/:projectName', pdfController.listPdfs);
 router.get('/download_pdf/:projectName/:fileid', pdfController.downloadPdf);
+router.get('/pdf_preview/:projectName/:fileid', pdfController.downloadPdfPreview);
 router.get('/citations/:projectName/:fileid', pdfController.getCitations);
 router.post(
   '/citations/:projectName/:fileid/refresh',

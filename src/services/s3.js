@@ -46,6 +46,17 @@ async function uploadPdf(key, buffer) {
   return key;
 }
 
+async function uploadPdfPreview(key, buffer, contentType = 'image/webp') {
+  await s3.send(new PutObjectCommand({
+    Bucket,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+    CacheControl: 'private, max-age=31536000, immutable',
+  }));
+  return key;
+}
+
 async function createPdfUploadUrl(key, contentType = 'application/pdf') {
   return getSignedUrl(
     s3,
@@ -80,6 +91,13 @@ async function downloadPdfBuffer(key, { abortSignal } = {}) {
   }
 }
 
+async function downloadPdfPreview(key, { abortSignal } = {}) {
+  return s3.send(
+    new GetObjectCommand({ Bucket, Key: key }),
+    abortSignal ? { abortSignal } : undefined,
+  );
+}
+
 async function deletePdf(key) {
   await s3.send(new DeleteObjectCommand({ Bucket, Key: key }));
 }
@@ -92,6 +110,14 @@ async function listPdfs(prefix) {
 async function headPdf(key) {
   const res = await s3.send(new HeadObjectCommand({ Bucket, Key: key }));
   return { size: res.ContentLength };
+}
+
+async function headPdfPreview(key) {
+  const res = await s3.send(new HeadObjectCommand({ Bucket, Key: key }));
+  return {
+    size: res.ContentLength,
+    contentType: res.ContentType,
+  };
 }
 
 async function uploadTeiXml(key, xmlString) {
@@ -131,12 +157,15 @@ async function downloadSemanticIndex(key) {
 
 module.exports = {
   uploadPdf,
+  uploadPdfPreview,
   createPdfUploadUrl,
   downloadPdf,
   downloadPdfBuffer,
+  downloadPdfPreview,
   deletePdf,
   listPdfs,
   headPdf,
+  headPdfPreview,
   uploadTeiXml,
   downloadTeiXml,
   uploadSemanticIndex,

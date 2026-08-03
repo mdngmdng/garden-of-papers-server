@@ -4,6 +4,7 @@ const grobidService = require('../services/grobid');
 const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
 const semanticIndexService = require('../services/semanticIndex');
+const pdfPreviewService = require('../services/pdfPreview');
 const config = require('../config');
 const { pipeline } = require('node:stream/promises');
 
@@ -265,9 +266,19 @@ exports.uploadPdf = async (req, res) => {
           citationError: '',
           citationRetryable: '',
           citationsFailedAt: '',
+          pdfPagePreview: '',
+          previewError: '',
+          previewRetryable: '',
+          previewFailedAt: '',
+          previewStatus: '',
         },
       },
       { upsert: true },
+    );
+
+    await getClient().db(projectName).collection('SaveFile').updateMany(
+      { fileId },
+      { $unset: { pdfPagePreview: '' } },
     );
 
     // PDF는 바로 사용할 수 있게 응답하고, 무거운 GROBID 처리는 백그라운드에서 실행한다.
@@ -277,6 +288,7 @@ exports.uploadPdf = async (req, res) => {
     });
 
     queueCitationExtraction(projectName, fileId, pdfData);
+    pdfPreviewService.queuePdfPreview(projectName, fileId, 0, pdfData);
   } catch (error) {
     console.error('Error during upload:', error);
     res.status(500).json({ error: 'An error occurred during the upload process' });
@@ -353,15 +365,25 @@ exports.completePdfUpload = async (req, res) => {
           citationError: '',
           citationRetryable: '',
           citationsFailedAt: '',
+          pdfPagePreview: '',
+          previewError: '',
+          previewRetryable: '',
+          previewFailedAt: '',
+          previewStatus: '',
         },
       },
       { upsert: true },
+    );
+    await getClient().db(projectName).collection('SaveFile').updateMany(
+      { fileId },
+      { $unset: { pdfPagePreview: '' } },
     );
     res.status(201).json({
       message: 'PDF uploaded successfully to S3',
       citationStatus: 'processing',
     });
     queueCitationExtraction(projectName, fileId);
+    pdfPreviewService.queuePdfPreview(projectName, fileId, 0);
   } catch (error) {
     if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
       return res.status(404).json({ error: 'Uploaded PDF was not found' });
@@ -707,6 +729,18 @@ exports.listPdfs = async (req, res) => {
         }
       }
     }).catch((err) => console.error('Orphan cleanup failed:', err));
+
+    const previewPrefix = `previews/${projectName}/`;
+    s3Service.listPdfs(previewPrefix).then((keys) => {
+      for (const key of keys) {
+        const fileId = key.slice(previewPrefix.length).split('/')[0];
+        if (!validFileIds.includes(fileId)) {
+          s3Service.deletePdf(key)
+            .then(() => console.log(`Deleted orphan PDF preview from S3: ${fileId}`))
+            .catch((err) => console.error(`Failed to delete orphan PDF preview: ${fileId}`, err));
+        }
+      }
+    }).catch((err) => console.error('Orphan preview cleanup failed:', err));
   } catch (error) {
     console.error('Error listing PDFs:', error);
     res.status(500).json({ error: 'An error occurred' });
@@ -812,6 +846,79 @@ exports.downloadPdf = async (req, res) => {
   } finally {
     clearTimeout(acquireTimeout);
     clearTimeout(slowTimer);
+    req.off('aborted', onRequestAborted);
+    res.off('close', onResponseClosed);
+  }
+};
+
+// GET /pdf_preview/:projectName/:fileid
+// Streams the current server-rendered page preview without touching PDF.js in the browser.
+exports.downloadPdfPreview = async (req, res) => {
+  const { projectName, fileid } = req.params;
+  const requestedPageIndex = Number(req.query.pageIndex);
+  const abortController = new AbortController();
+  let s3Body;
+  const abortStream = () => {
+    if (!abortController.signal.aborted) abortController.abort();
+    if (s3Body && typeof s3Body.destroy === 'function') s3Body.destroy();
+  };
+  const onRequestAborted = () => abortStream();
+  const onResponseClosed = () => {
+    if (!res.writableEnded) abortStream();
+  };
+  req.once('aborted', onRequestAborted);
+  res.once('close', onResponseClosed);
+
+  try {
+    if (!Number.isInteger(requestedPageIndex) || requestedPageIndex < 0) {
+      return res.status(400).json({ error: 'Invalid PDF preview page' });
+    }
+    const metadata = await getPdfMetaCollection(projectName).findOne({ fileId: fileid });
+    const preview = metadata?.pdfPagePreview;
+    const descriptor = pdfPreviewService.createPreviewDescriptor(
+      projectName,
+      fileid,
+      preview,
+    );
+    if (
+      !descriptor
+      || descriptor.pageIndex !== requestedPageIndex
+      || typeof preview.s3Key !== 'string'
+      || !preview.s3Key
+    ) {
+      return res.status(404).json({ error: 'PDF preview is not ready' });
+    }
+    const s3Response = await s3Service.downloadPdfPreview(
+      preview.s3Key,
+      { abortSignal: abortController.signal },
+    );
+    s3Body = s3Response.Body;
+    if (abortController.signal.aborted || req.aborted || res.destroyed) return;
+    res.setHeader('Content-Type', s3Response.ContentType || descriptor.mimeType);
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    if (s3Response.ContentLength !== undefined) {
+      res.setHeader('Content-Length', String(s3Response.ContentLength));
+    }
+    if (s3Response.ETag) res.setHeader('ETag', s3Response.ETag);
+    await pipeline(s3Body, res);
+  } catch (error) {
+    if (
+      abortController.signal.aborted
+      || req.aborted
+      || res.destroyed
+      || isAbortError(error)
+    ) {
+      return;
+    }
+    if (isMissingPdfError(error)) {
+      return res.status(404).json({ error: 'PDF preview is not ready' });
+    }
+    console.error('Error downloading PDF preview:', error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Could not download PDF preview' });
+    }
+    return res.destroy(error);
+  } finally {
     req.off('aborted', onRequestAborted);
     res.off('close', onResponseClosed);
   }
