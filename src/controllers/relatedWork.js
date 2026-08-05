@@ -26,6 +26,9 @@ exports.createJob = (req, res) => {
   try {
     const jobId = createRelatedSearchJob({
       manuscript: req.body?.manuscript || {},
+      sourcePapers: Array.isArray(req.body?.sourcePapers)
+        ? req.body.sourcePapers
+        : [],
       keyword: String(req.body?.keyword || '').trim(),
     });
     noStore(res);
@@ -95,6 +98,9 @@ exports.search = async (req, res) => {
   try {
     const result = await executeRelatedSearch({
       manuscript: req.body?.manuscript || {},
+      sourcePapers: Array.isArray(req.body?.sourcePapers)
+        ? req.body.sourcePapers
+        : [],
       keyword: String(req.body?.keyword || '').trim(),
     });
     const offset = safeOffset(req.body?.offset);

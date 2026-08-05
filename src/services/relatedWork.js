@@ -50,7 +50,7 @@ function manuscriptText(manuscript) {
     .slice(0, MAX_MANUSCRIPT_CHARACTERS);
 }
 
-function fallbackSearchPlan(manuscript, keyword = '') {
+function fallbackSearchPlan(manuscript, keyword = '', relationshipRequirements = '') {
   const normalized = normalizeManuscript(manuscript);
   const focus = String(keyword || '').trim();
   const headings = normalized.sections
@@ -66,13 +66,18 @@ function fallbackSearchPlan(manuscript, keyword = '') {
     .trim()
     .slice(0, 280);
   const researchProfile = manuscriptText(normalized).slice(0, 2_500);
+  const relationshipFocus = String(relationshipRequirements || '').trim();
   const paperDescription = focus
     ? [
       `Find academic papers that directly investigate this research need: ${focus}.`,
+      relationshipFocus,
       normalized.title ? `The linked draft is titled "${normalized.title}".` : '',
-      researchProfile ? `Use this draft context to disambiguate the request: ${researchProfile}` : '',
+      searchQuery ? `Use these source topics to disambiguate the request: ${searchQuery}.` : '',
     ].filter(Boolean).join(' ')
-    : `Find prior academic work closely related to this draft, including its research problem, methods, and application setting: ${researchProfile}`;
+    : [
+      relationshipFocus,
+      `Find prior academic work closely related to this source document's research problem, methods, claims, and application setting: ${searchQuery}.`,
+    ].filter(Boolean).join(' ');
   return {
     searchQuery,
     scholarQuery: compactSearchQuery(searchQuery, focus, 8),

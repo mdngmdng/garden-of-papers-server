@@ -653,7 +653,11 @@ async function translateToKorean(englishText) {
   return text.trim();
 }
 
-async function prepareRelatedWorkBrief(manuscript, keyword = '') {
+async function prepareRelatedWorkBrief(
+  manuscript,
+  keyword = '',
+  relationshipRequirements = '',
+) {
   const sections = (manuscript.sections || [])
     .map((section) =>
       `[${section.id || 'unknown'}] ${section.heading || 'Untitled section'}\n`
@@ -671,6 +675,9 @@ ${sections}
 ## Optional focused search phrase
 ${focus || '(none — search broadly for work related to the whole manuscript)'}
 
+## Required semantic relationships
+${String(relationshipRequirements || '').trim() || '(none — infer any meaningful scholarly relationship)'}
+
 ## Instructions
 1. Write paperDescription as 2 to 5 precise English sentences describing what
    relevant papers should investigate. This will be sent directly to a semantic
@@ -680,15 +687,19 @@ ${focus || '(none — search broadly for work related to the whole manuscript)'}
    only to disambiguate its domain, interaction, population, and purpose.
 3. If no focus phrase exists, cover the draft's problem, method, application
    setting, and the strongest neighboring research areas.
-4. Write one or two retrievalQueries as complete natural-language research
+4. If required semantic relationships are supplied, make them hard retrieval
+   constraints. Translate the intended meaning into concrete claims, findings,
+   methods, or evidence that a full-text corpus can retrieve. Never send the
+   source PDF text itself as the search query.
+5. Write one or two retrievalQueries as complete natural-language research
    descriptions. They may capture complementary facets but must not broaden away
    from the draft.
-5. Create scholarQuery as a fallback containing exactly 6 to 8 unique,
+6. Create scholarQuery as a fallback containing exactly 6 to 8 unique,
    discriminative English technical terms. Do not use Boolean operators,
    authors, years, or generic terms such as paper, study, research, and related work.
-6. Write researchProfile as a compact English description suitable for local
+7. Write researchProfile as a compact English description suitable for local
    semantic reranking.
-7. Return only valid JSON.
+8. Return only valid JSON.
 
 ## Output
 {
@@ -739,7 +750,12 @@ async function prepareRelatedWorkSearch(manuscript, keyword = '') {
   return prepareRelatedWorkBrief(manuscript, keyword);
 }
 
-async function explainRelatedPaperResults(researchProfile, keyword, papers) {
+async function explainRelatedPaperResults(
+  researchProfile,
+  keyword,
+  papers,
+  relationshipRequirements = '',
+) {
   if (!Array.isArray(papers) || papers.length === 0) return [];
   const focus = String(keyword || '').trim();
   const paperList = papers.slice(0, 20).map((paper, index) => ({
@@ -759,16 +775,24 @@ ${String(researchProfile || '').slice(0, 5_000)}
 ## Optional focused research description
 ${focus || '(none — explain relevance to the draft as a whole)'}
 
+## Required semantic relationships
+${String(relationshipRequirements || '').trim() || '(none)'}
+
 ## Candidate papers
 ${JSON.stringify(paperList)}
 
-For each candidate, write one concise sentence in the primary language of the
-draft profile explaining the concrete research connection. Use only the title,
-abstract, and full-text snippets supplied. If the evidence is weak, explicitly
-say that the connection is tentative. Do not invent results or capabilities.
-Return only valid JSON with exactly one entry per candidate.
+For each candidate, classify its strongest relationship to the source as one of
+similar, supports, contradicts, extends, uses-method, background, applies,
+compares, or related. If a required relationship uses a custom label, preserve
+that exact label when the evidence satisfies it. Set matchesRequestedRelationship
+to false when supplied evidence does not support a required relationship.
+Write one concise sentence in the primary language of the source profile
+explaining the concrete connection. Use only the title, abstract, and full-text
+snippets supplied. If the evidence is weak, explicitly say that the connection
+is tentative. Do not invent results or capabilities. Return only valid JSON
+with exactly one entry per candidate.
 
-{"explanations":[{"index":0,"text":"grounded relevance explanation"}]}`;
+{"explanations":[{"index":0,"relationship":"similar","matchesRequestedRelationship":true,"text":"grounded relevance explanation"}]}`;
   const res = await axios.post(
     `${GEMINI_URL}?key=${config.geminiApiKey}`,
     {
@@ -790,10 +814,20 @@ Return only valid JSON with exactly one entry per candidate.
       .filter((item) => Number.isInteger(item?.index))
       .map((item) => [
         item.index,
-        truncateToSentence(String(item.text || '').trim(), 500),
+        {
+          text: truncateToSentence(String(item.text || '').trim(), 500),
+          relationship: String(item.relationship || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 48),
+          matchesRequestedRelationship:
+            typeof item.matchesRequestedRelationship === 'boolean'
+              ? item.matchesRequestedRelationship
+              : undefined,
+        },
       ]),
   );
-  return paperList.map((paper) => explanations.get(paper.index) || '');
+  return paperList.map((paper) => explanations.get(paper.index) || null);
 }
 
 async function generateCollectedPaperContext(manuscript, keyword, paper) {
