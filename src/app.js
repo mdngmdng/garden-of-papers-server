@@ -4,6 +4,7 @@ dns.setServers(['8.8.8.8', '8.8.4.4']);
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const config = require('./config');
 const { connect } = require('./services/mongo');
 const { createWebSocketServer } = require('./services/websocket');
@@ -36,6 +37,10 @@ app.use(cors({
   ],
   credentials: true,
 }));
+// Workspace payloads contain highly compressible citation and note JSON.
+// Compressing them prevents multi-megabyte boards from spending most of their
+// load deadline crossing the public tunnel to the browser.
+app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 
 // Health check
