@@ -16,6 +16,7 @@ const pdfRouter = require('./routes/pdf');
 const papersRouter = require('./routes/papers');
 const analyzeRouter = require('./routes/analyze');
 const extensionBridgeRouter = require('./routes/extensionBridge');
+const workspaceSnapshotsRouter = require('./routes/workspaceSnapshots');
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.use(cors({
     'ETag',
     'Last-Modified',
     'Retry-After',
+    'x-gop-idempotent-replay',
   ],
   credentials: true,
 }));
@@ -52,6 +54,9 @@ app.use('/analyze', analyzeRouter);
 
 // Chrome 확장 프로그램 브릿지
 app.use('/extension', extensionBridgeRouter);
+
+// Web client durable workspace snapshots (single-document MongoDB CAS)
+app.use('/api', workspaceSnapshotsRouter);
 
 const server = http.createServer(app);
 

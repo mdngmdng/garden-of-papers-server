@@ -35,7 +35,7 @@ function resolveLocalServiceUrl(value, dockerHostname, localPort) {
 module.exports = {
   port: process.env.PORT || 5002,
   origin: process.env.ORIGIN || 'http://34.64.85.65:3000',
-  mongoUrl: process.env.MONGODB_URI || 'mongodb+srv://admin:0423504564@gx-mongo.eau3o.mongodb.net',
+  mongoUrl: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017',
   aws: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,

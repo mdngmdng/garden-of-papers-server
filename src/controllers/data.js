@@ -25,18 +25,55 @@ exports.loadData = async (req, res) => {
     const data = await collection.find().toArray();
     const paperRows = data.filter((row) => row.type === 'GX.MAROScientificPaper');
     const previewRequests = [];
-    const fileIds = [
+    const metadataFileIds = [
       ...new Set(
         paperRows
+          .filter((row) => {
+            const fileId = String(row.fileId || row._id || '');
+            const pageIndex = Math.max(
+              0,
+              Math.floor(Number(row.abovePageIndex) || 0),
+            );
+            const hasCitations = row.citationStatus === 'ready'
+              && Array.isArray(row.citationHits);
+            const hasPreview = pdfPreviewService.isPreviewCurrent(
+              row.pdfPagePreview,
+              fileId,
+              pageIndex,
+            );
+            return fileId && (!hasCitations || !hasPreview);
+          })
           .map((row) => String(row.fileId || row._id || ''))
           .filter(Boolean),
       ),
     ];
 
-    if (fileIds.length) {
-      const cachedExtractions = await db.collection('PdfMeta').find({
-        fileId: { $in: fileIds },
-      }).toArray();
+    if (metadataFileIds.length) {
+      // PdfMeta may contain large extraction/index payloads that are not part
+      // of the workspace response. Reading whole metadata documents made a
+      // modest board take longer than the browser's load deadline. Fetch only
+      // the compatibility fields needed to backfill SaveFile rows and preview
+      // descriptors.
+      const cachedExtractions = await db.collection('PdfMeta').find(
+        { fileId: { $in: metadataFileIds } },
+        {
+          projection: {
+            fileId: 1,
+            citationStatus: 1,
+            citationHits: 1,
+            pageSizeList: 1,
+            pageSizes: 1,
+            referenceList: 1,
+            references: 1,
+            referenceTitleList: 1,
+            citationsExtractedAt: 1,
+            pdfPagePreview: 1,
+            previewStatus: 1,
+            previewRetryable: 1,
+            previewFailedAt: 1,
+          },
+        },
+      ).toArray();
       const cachedByFileId = new Map(
         cachedExtractions.map((entry) => [String(entry.fileId), entry]),
       );
@@ -66,13 +103,27 @@ exports.loadData = async (req, res) => {
           }
         }
         const pageIndex = Math.max(0, Math.floor(Number(row.abovePageIndex) || 0));
-        const preview = pdfPreviewService.createPreviewDescriptor(
-          req.body._projectName,
+        const storedPreview = pdfPreviewService.isPreviewCurrent(
+          row.pdfPagePreview,
           fileId,
-          cached?.pdfPagePreview,
-        );
-        if (pdfPreviewService.isPreviewCurrent(preview, fileId, pageIndex)) {
-          rowUpdate.pdfPagePreview = preview;
+          pageIndex,
+        )
+          ? row.pdfPagePreview
+          : pdfPreviewService.createPreviewDescriptor(
+            req.body._projectName,
+            fileId,
+            cached?.pdfPagePreview,
+          );
+        if (
+          pdfPreviewService.isPreviewCurrent(
+            storedPreview,
+            fileId,
+            pageIndex,
+          )
+        ) {
+          if (row.pdfPagePreview !== storedPreview) {
+            rowUpdate.pdfPagePreview = storedPreview;
+          }
         } else if (fileId) {
           if (row.pdfPagePreview != null) rowUpdate.pdfPagePreview = null;
           if (pdfPreviewService.canAttemptPdfPreview(cached)) {
