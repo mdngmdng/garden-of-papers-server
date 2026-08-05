@@ -68,6 +68,65 @@ test('runs Asta, Scholar enrichment, Qwen ranking, and explanations in order', a
   assert.equal(result.provider, 'asta+serpapi-google-scholar+qwen-reranker');
 });
 
+test('ranks an [x] search against the claim and uses manuscript text only as local context', async () => {
+  let plannerIntent = '';
+  let rankingQuery = '';
+  let explanationIntent = '';
+  const result = await executeRelatedSearch(
+    {
+      manuscript: {
+        title: manuscript.title,
+        sections: [{
+          id: 'focused-paragraph',
+          heading: 'Interaction',
+          text: 'The local paragraph defines navigation overhead in spatial documents.',
+        }],
+      },
+      keyword: 'Direct manipulation reduces navigation overhead.',
+      searchIntent: 'claim_support',
+    },
+    () => {},
+    {
+      planner: async (_document, _keyword, _relationships, intent) => {
+        plannerIntent = intent;
+        return {
+          paperDescription: 'Find direct empirical evidence for reduced navigation overhead.',
+          scholarQuery: 'direct manipulation navigation overhead performance evidence',
+          researchProfile: 'A focused interaction claim.',
+        };
+      },
+      astaService: {
+        isConfigured: () => true,
+        searchRelatedPapers: async () => [{
+          paperId: 'supporting-paper',
+          title: 'Direct Manipulation and Navigation Performance',
+          authors: [],
+          evidenceSnippets: ['Direct manipulation reduced navigation time.'],
+        }],
+      },
+      scholarRetriever: async () => [],
+      ranker: async (context, papers) => {
+        rankingQuery = context;
+        return { provider: 'qwen-reranker', results: papers };
+      },
+      explainer: async (_profile, _keyword, papers, _relationships, intent) => {
+        explanationIntent = intent;
+        return papers.map(() => ({
+          relationship: 'supports',
+          text: 'The reported result directly supports the claim.',
+        }));
+      },
+    },
+  );
+
+  assert.equal(plannerIntent, 'claim_support');
+  assert.equal(explanationIntent, 'claim_support');
+  assert.match(rankingQuery, /Claim requiring evidence: Direct manipulation/);
+  assert.match(rankingQuery, /Mere topical, domain, or interface similarity is weak/);
+  assert.match(rankingQuery, /Local manuscript context \(disambiguation only/);
+  assert.equal(result.searchMode, 'claim_support');
+});
+
 test('stores completed search jobs and pages results ten at a time', async () => {
   const results = Array.from({ length: 12 }, (_, index) => ({
     paperId: `paper-${index}`,

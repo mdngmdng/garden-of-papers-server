@@ -30,6 +30,9 @@ exports.createJob = (req, res) => {
         ? req.body.sourcePapers
         : [],
       keyword: String(req.body?.keyword || '').trim(),
+      searchIntent: req.body?.searchIntent === 'claim_support'
+        ? 'claim_support'
+        : '',
     });
     noStore(res);
     return res.status(202).json({
@@ -102,6 +105,9 @@ exports.search = async (req, res) => {
         ? req.body.sourcePapers
         : [],
       keyword: String(req.body?.keyword || '').trim(),
+      searchIntent: req.body?.searchIntent === 'claim_support'
+        ? 'claim_support'
+        : '',
     });
     const offset = safeOffset(req.body?.offset);
     const limit = safeLimit(req.body?.limit);

@@ -45,6 +45,18 @@ test('uses a search-paper keyword as the primary fallback query', () => {
   );
 });
 
+test('makes direct claim support stricter than broad topical similarity', () => {
+  const plan = fallbackSearchPlan(
+    manuscript,
+    'Direct manipulation reduces navigation overhead.',
+    '',
+    'claim_support',
+  );
+  assert.match(plan.paperDescription, /directly support or substantiate/);
+  assert.match(plan.paperDescription, /merely share its broad topic are not sufficient/);
+  assert.match(plan.paperDescription, /local draft context only to disambiguate/);
+});
+
 test('preserves manuscript section ids for collection placement', () => {
   const text = manuscriptText(manuscript);
   assert.match(text, /Section: Abstract/);

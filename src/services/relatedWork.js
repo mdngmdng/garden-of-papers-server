@@ -50,9 +50,15 @@ function manuscriptText(manuscript) {
     .slice(0, MAX_MANUSCRIPT_CHARACTERS);
 }
 
-function fallbackSearchPlan(manuscript, keyword = '', relationshipRequirements = '') {
+function fallbackSearchPlan(
+  manuscript,
+  keyword = '',
+  relationshipRequirements = '',
+  searchIntent = '',
+) {
   const normalized = normalizeManuscript(manuscript);
   const focus = String(keyword || '').trim();
+  const claimSupport = searchIntent === 'claim_support';
   const headings = normalized.sections
     .map((section) => section.heading)
     .filter(Boolean)
@@ -69,10 +75,14 @@ function fallbackSearchPlan(manuscript, keyword = '', relationshipRequirements =
   const relationshipFocus = String(relationshipRequirements || '').trim();
   const paperDescription = focus
     ? [
-      `Find academic papers that directly investigate this research need: ${focus}.`,
+      claimSupport
+        ? `Find academic papers whose reported findings, methods, or arguments directly support or substantiate this manuscript claim: ${focus}. Papers that merely share its broad topic are not sufficient.`
+        : `Find academic papers that directly investigate this research need: ${focus}.`,
       relationshipFocus,
       normalized.title ? `The linked draft is titled "${normalized.title}".` : '',
-      searchQuery ? `Use these source topics to disambiguate the request: ${searchQuery}.` : '',
+      manuscriptText(normalized)
+        ? `Use the local draft context only to disambiguate the claim's terminology and domain: ${manuscriptText(normalized).slice(0, 1_800)}.`
+        : '',
     ].filter(Boolean).join(' ')
     : [
       relationshipFocus,

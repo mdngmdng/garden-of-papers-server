@@ -159,6 +159,10 @@ function relationshipRequirements(sources) {
   return requirements.join('\n');
 }
 
+function normalizeSearchIntent(value) {
+  return value === 'claim_support' ? 'claim_support' : '';
+}
+
 function validateRelatedSearchInput(input) {
   const keyword = cleanText(input?.keyword, 4_000);
   const sources = normalizeSourcePapers(input?.sourcePapers);
@@ -214,7 +218,23 @@ async function retrieveScholarCandidates(queries, stopAfterFirst, signal) {
   return mergePaperCandidates(pages);
 }
 
-function rankingContext(plan, keyword, manuscript, relationships) {
+function rankingContext(
+  plan,
+  keyword,
+  manuscript,
+  relationships,
+  searchIntent,
+) {
+  if (searchIntent === 'claim_support' && keyword) {
+    return [
+      'Task: rank candidate papers as scholarly evidence for a specific manuscript claim.',
+      `Claim requiring evidence: ${keyword}`,
+      'Highest priority: the paper must report findings, methods, data, or arguments that directly substantiate the claim. Mere topical, domain, or interface similarity is weak relevance and must rank lower.',
+      relationships ? `Required semantic relationships:\n${relationships}` : '',
+      `Planned evidence target: ${plan.paperDescription || ''}`,
+      `Local manuscript context (disambiguation only; do not broaden away from the claim): ${manuscriptText(manuscript)}`,
+    ].filter(Boolean).join('\n');
+  }
   return [
     keyword ? `Focused research need: ${keyword}` : 'Whole-manuscript related-work search',
     relationships ? `Required semantic relationships:\n${relationships}` : '',
@@ -231,6 +251,7 @@ async function explainCandidateBatches(
   papers,
   relationships,
   warnings,
+  searchIntent,
 ) {
   const assessments = [];
   for (let offset = 0; offset < papers.length; offset += 20) {
@@ -241,6 +262,7 @@ async function explainCandidateBatches(
         keyword,
         batch,
         relationships,
+        searchIntent,
       );
       assessments.push(
         ...batch.map((_, index) => explained?.[index] ?? null),
@@ -258,6 +280,7 @@ async function explainCandidateBatches(
 async function executeRelatedSearch(input, onProgress = () => {}, options = {}) {
   validateRelatedSearchInput(input);
   const keyword = String(input.keyword || '').trim();
+  const searchIntent = normalizeSearchIntent(input.searchIntent);
   const signal = options.signal;
   const warnings = [];
   const prepared = await prepareSearchInput(input, { ...options, signal });
@@ -272,12 +295,18 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
       ? 'Turning the focused research description into an evidence search…'
       : 'Reading the linked manuscript and preparing its research profile…',
   ));
-  let plan = fallbackSearchPlan(manuscript, keyword, relationships);
+  let plan = fallbackSearchPlan(
+    manuscript,
+    keyword,
+    relationships,
+    searchIntent,
+  );
   try {
     const generated = await (options.planner || prepareRelatedWorkBrief)(
       manuscript,
       keyword,
       relationships,
+      searchIntent,
     );
     if (generated.paperDescription?.length >= 10) {
       plan = { ...plan, ...generated };
@@ -338,7 +367,7 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
       results: [],
       total: 0,
       provider: astaAttempted ? 'asta+scholar-no-results' : 'scholar-fallback-no-results',
-      searchMode: keyword ? 'keyword' : 'manuscript',
+      searchMode: searchIntent || (keyword ? 'keyword' : 'manuscript'),
       retrievalQuery: plan.paperDescription,
       scholarQuery: scholarQueries[0] || '',
       researchProfile: plan.researchProfile,
@@ -355,7 +384,13 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
   let qwenRanked = false;
   try {
     const ranked = await (options.ranker || rankRelatedPapers)(
-      rankingContext(plan, keyword, manuscript, relationships),
+      rankingContext(
+        plan,
+        keyword,
+        manuscript,
+        relationships,
+        searchIntent,
+      ),
       candidates,
     );
     rankedResults = ranked.results;
@@ -376,6 +411,7 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
     rankedResults,
     relationships,
     warnings,
+    searchIntent,
   );
 
   const requestedLabels = [...new Set(
@@ -423,7 +459,7 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
     results: rankedResults,
     total: rankedResults.length,
     provider: providers.join('+') || 'related-work',
-    searchMode: keyword ? 'keyword' : 'manuscript',
+    searchMode: searchIntent || (keyword ? 'keyword' : 'manuscript'),
     retrievalQuery: plan.paperDescription,
     scholarQuery: scholarQueries[0] || '',
     researchProfile: plan.researchProfile,
