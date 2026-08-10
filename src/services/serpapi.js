@@ -3,6 +3,16 @@ const config = require('../config');
 
 const BASE_URL = 'https://serpapi.com/search';
 
+function normalizeTotalResults(value, fallback = 0) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+  const parsed = Number(String(value ?? '').replace(/[^\d]/g, ''));
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : Math.max(0, Number(fallback) || 0);
+}
+
 function extractYear(summary) {
   const matches = String(summary || '').match(/\b(?:19|20)\d{2}\b/g);
   if (!matches?.length) return null;
@@ -75,8 +85,13 @@ async function searchScholar(query, offset = 0, limit = 10) {
     .filter((result) => result.paperId && result.title)
     .slice(0, safeLimit);
 
+  const totalResults = normalizeTotalResults(
+    response.data?.search_information?.total_results,
+    results.length,
+  );
   return {
-    total: Number(response.data?.search_information?.total_results || results.length),
+    total: totalResults,
+    totalResults,
     offset: safeOffset,
     results,
     provider: 'serpapi-google-scholar',
@@ -126,8 +141,13 @@ async function searchScholarCitations(
     .filter((result) => result.paperId && result.title)
     .slice(0, safeLimit);
 
+  const totalResults = normalizeTotalResults(
+    response.data?.search_information?.total_results,
+    results.length,
+  );
   return {
-    total: Number(response.data?.search_information?.total_results || results.length),
+    total: totalResults,
+    totalResults,
     offset: safeOffset,
     results,
     provider: 'serpapi-google-scholar',
@@ -254,6 +274,7 @@ async function fetchScholarIdByTitle(title) {
 }
 
 module.exports = {
+  normalizeTotalResults,
   fetchCitedBy,
   fetchScholarIdByTitle,
   normalizeScholarResult,
