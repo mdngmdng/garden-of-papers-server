@@ -5,6 +5,7 @@ const {
   HeadObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
+  CopyObjectCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { NodeHttpHandler } = require('@smithy/node-http-handler');
@@ -36,12 +37,13 @@ const s3 = new S3Client({
 
 const Bucket = config.aws.s3Bucket;
 
-async function uploadPdf(key, buffer) {
+async function uploadPdf(key, buffer, { doi } = {}) {
   await s3.send(new PutObjectCommand({
     Bucket,
     Key: key,
     Body: buffer,
     ContentType: 'application/pdf',
+    Metadata: doi ? { doi: String(doi) } : undefined,
   }));
   return key;
 }
@@ -100,6 +102,20 @@ async function downloadPdfPreview(key, { abortSignal } = {}) {
 
 async function deletePdf(key) {
   await s3.send(new DeleteObjectCommand({ Bucket, Key: key }));
+}
+
+async function copyPdf(sourceKey, destinationKey) {
+  await s3.send(new CopyObjectCommand({
+    Bucket,
+    CopySource: `${Bucket}/${sourceKey}`
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/'),
+    Key: destinationKey,
+    ContentType: 'application/pdf',
+    MetadataDirective: 'REPLACE',
+  }));
+  return destinationKey;
 }
 
 async function listPdfs(prefix) {
@@ -163,6 +179,7 @@ module.exports = {
   downloadPdfBuffer,
   downloadPdfPreview,
   deletePdf,
+  copyPdf,
   listPdfs,
   headPdf,
   headPdfPreview,

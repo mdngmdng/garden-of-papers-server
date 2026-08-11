@@ -1,6 +1,7 @@
 const { analyzeRelations, generateClusterLabels, findRelevantSentences, findClosestSentence, summarizePaper, storytelling, generatePlacementReasons } = require('../services/gemini');
 const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
+const pdfStorage = require('../services/pdfStorage');
 const semanticIndexService = require('../services/semanticIndex');
 const {
   findCitationHit,
@@ -457,7 +458,7 @@ exports.highlights = async (req, res) => {
           // TEI XML이 없으면 PDF에서 GROBID 추출
           console.log(`[Highlights] ${marker}: No cached TEI XML, extracting from PDF...`);
           const { processFulltext } = require('../services/grobid');
-          const s3Key = `papers/${projectName}/${fileId}.pdf`;
+          const s3Key = await pdfStorage.resolvePdfKey(projectName, fileId);
           const s3Res = await s3Service.downloadPdf(s3Key);
           const chunks = [];
           for await (const chunk of s3Res.Body) chunks.push(chunk);
@@ -542,7 +543,7 @@ async function loadPaperTeiXml(projectName, doc, fallbackFileId) {
     };
   } catch {
     const { processFulltext } = require('../services/grobid');
-    const pdfKey = `papers/${projectName}/${storageFileId}.pdf`;
+    const pdfKey = await pdfStorage.resolvePdfKey(projectName, storageFileId);
     const pdfBuffer = await s3Service.downloadPdfBuffer(pdfKey);
     const teiXml = await processFulltext(pdfBuffer);
     await s3Service.uploadTeiXml(teiKey, teiXml);
@@ -855,7 +856,7 @@ exports.summarize = async (req, res) => {
     } catch {
       console.log(`[Summarize] No cached TEI, extracting from PDF...`);
       const { processFulltext } = require('../services/grobid');
-      const s3Key = `papers/${projectName}/${fileId}.pdf`;
+      const s3Key = await pdfStorage.resolvePdfKey(projectName, fileId);
       const s3Res = await s3Service.downloadPdf(s3Key);
       const chunks = [];
       for await (const chunk of s3Res.Body) chunks.push(chunk);

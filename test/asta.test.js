@@ -27,6 +27,7 @@ test('normalizes full-text snippet results into paper evidence', () => {
             paperId: 'abc123',
             title: 'Bare-Hand Notes in Virtual Reality',
             authors: [{ name: 'A. Author' }],
+            externalIds: { DOI: '10.1145/1234.5678' },
             year: 2025,
             venue: 'CHI',
           },
@@ -41,6 +42,7 @@ test('normalizes full-text snippet results into paper evidence', () => {
 
   assert.equal(papers.length, 1);
   assert.equal(papers[0].semanticScholarId, 'abc123');
+  assert.equal(papers[0].doi, '10.1145/1234.5678');
   assert.deepEqual(papers[0].authors, ['A. Author']);
   assert.match(papers[0].evidenceSnippets[0], /free-hand gestures/);
 });

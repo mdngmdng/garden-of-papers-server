@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const asta = require('./asta');
 const grobid = require('./grobid');
 const s3 = require('./s3');
+const pdfStorage = require('./pdfStorage');
 const { searchScholar } = require('./serpapi');
 const {
   fallbackSearchPlan,
@@ -74,7 +75,10 @@ async function loadStoredSourceText(source, signal) {
   try {
     return teiBodyText(await s3.downloadTeiXml(teiKey));
   } catch {
-    const pdfKey = `papers/${source.projectId}/${source.fileId}.pdf`;
+    const pdfKey = await pdfStorage.resolvePdfKey(
+      source.projectId,
+      source.fileId,
+    );
     const pdfBuffer = await s3.downloadPdfBuffer(pdfKey, { abortSignal: signal });
     const teiXml = await grobid.processFulltext(pdfBuffer);
     await s3.uploadTeiXml(teiKey, teiXml);

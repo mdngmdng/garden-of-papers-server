@@ -1,6 +1,7 @@
 // In-memory store for pending PDF requests from Unity
 // Map<fileId, { projectName, fileId, pdfUrl, paperTitle, timestamp }>
 const { getClient } = require('../services/mongo');
+const pdfStorage = require('../services/pdfStorage');
 
 const pendingRequests = new Map();
 const EXPIRY_MS = 60 * 60 * 1000; // 60 minutes
@@ -18,6 +19,7 @@ function cleanExpired() {
 // POST /extension/register — Unity registers a pending PDF request
 exports.register = async (req, res) => {
   const { projectName, fileId, pdfUrl, scholarUrl, paperTitle } = req.body;
+  const doi = pdfStorage.normalizeDoi(req.body?.doi);
   if (!projectName || !fileId) {
     return res.status(400).json({
       error: 'projectName and fileId are required',
@@ -50,11 +52,18 @@ exports.register = async (req, res) => {
     pdfUrl: pdfUrl || '',           // 자동 다운로드용 실제 PDF URL
     scholarUrl: scholarUrl || '',   // Open URL 버튼용 Scholar 검색 URL
     paperTitle: paperTitle || '',
+    doi,
     timestamp: Date.now(),
   });
 
   console.log(`[ExtBridge] Registered: ${fileId} pdf=${(pdfUrl || '').substring(0, 60)} scholar=${(scholarUrl || '').substring(0, 60)}`);
   return res.json({ status: 'ok' });
+};
+
+exports.pendingDoi = (projectName, fileId) => {
+  const pending = pendingRequests.get(fileId);
+  if (!pending || pending.projectName !== projectName) return '';
+  return pending.doi || '';
 };
 
 // GET /extension/pending — Extension polls for pending requests

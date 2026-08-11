@@ -29,6 +29,13 @@ function extractVenue(summary) {
   return String(candidate || '').replace(/,?\s*(?:19|20)\d{2}\s*$/, '').trim();
 }
 
+function extractDoi(...values) {
+  const text = values.filter(Boolean).join(' ');
+  return text.match(/(?:doi\.org\/|\/doi\/|doi[:\s]+)(10\.\d{4,9}\/[^?#\s]+)/i)?.[1]
+    ?.replace(/[.,;]+$/g, '')
+    .toLowerCase();
+}
+
 function normalizeScholarResult(result) {
   const publicationInfo = result.publication_info || {};
   const resource = (result.resources || []).find(
@@ -39,6 +46,7 @@ function normalizeScholarResult(result) {
 
   return {
     paperId: result.result_id || result.inline_links?.cited_by?.cites_id || '',
+    doi: extractDoi(result.link, resource?.link, result.snippet),
     title: result.title || 'Untitled paper',
     authors: (publicationInfo.authors || [])
       .map((author) => author.name)
@@ -274,6 +282,7 @@ async function fetchScholarIdByTitle(title) {
 }
 
 module.exports = {
+  extractDoi,
   normalizeTotalResults,
   fetchCitedBy,
   fetchScholarIdByTitle,

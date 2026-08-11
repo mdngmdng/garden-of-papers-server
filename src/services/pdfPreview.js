@@ -1,5 +1,6 @@
 const { getClient } = require('./mongo');
 const s3Service = require('./s3');
+const pdfStorage = require('./pdfStorage');
 
 const PDF_PREVIEW_VERSION = 2;
 const PDF_PREVIEW_MAX_WIDTH = 320;
@@ -22,10 +23,6 @@ let canvasModule;
 const previewJobs = new Map();
 const previewQueue = [];
 let activePreviewJobs = 0;
-
-function pdfS3Key(projectName, fileId) {
-  return `papers/${projectName}/${fileId}.pdf`;
-}
 
 function previewS3Key(projectName, fileId, updatedAt) {
   return `previews/${projectName}/${fileId}`
@@ -193,7 +190,7 @@ async function generatePdfPreview(
   }
 
   const source = pdfBuffer ?? await s3Service.downloadPdfBuffer(
-    pdfS3Key(projectName, fileId),
+    await pdfStorage.resolvePdfKey(projectName, fileId, client),
   );
   const rendered = await renderPdfPage(source, pageIndex);
   const updatedAt = Date.now();

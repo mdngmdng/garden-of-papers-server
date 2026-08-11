@@ -13,6 +13,7 @@ const PAPER_FIELDS = [
   'isOpenAccess',
   'journal',
   'tldr',
+  'externalIds',
 ].join(',');
 
 let nextAstaRequestAt = 0;
@@ -152,6 +153,12 @@ function normalizePaperCandidate(candidate, source) {
   return {
     paperId: paperId || `asta-title:${title.toLowerCase()}`,
     semanticScholarId: paperId,
+    doi: firstText(
+      paper?.externalIds?.DOI,
+      paper?.externalIds?.doi,
+      paper?.doi,
+      candidate?.doi,
+    ).replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '').toLowerCase(),
     title: title || 'Untitled paper',
     authors: authorNames(paper?.authors || candidate?.authors),
     year: Number(paper?.year || candidate?.year) || null,
@@ -188,6 +195,7 @@ function mergeAstaPapers(papers) {
       continue;
     }
     current.abstract ||= paper.abstract;
+    current.doi ||= paper.doi;
     current.url ||= paper.url;
     current.openAccessPdfUrl ||= paper.openAccessPdfUrl;
     current.venue ||= paper.venue;

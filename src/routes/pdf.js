@@ -8,6 +8,7 @@ const relatedWorkController = require('../controllers/relatedWork');
 const upload = multer({ storage: multer.memoryStorage() });
 
 router.get('/pdf_metadata/:projectName/:fileid', pdfController.getMetadata);
+router.post('/resolve_pdf_cache/:projectName', pdfController.resolvePdfCache);
 router.post('/pdf_upload_url/:projectName', pdfController.createUploadUrl);
 router.post('/complete_pdf_upload/:projectName', pdfController.completePdfUpload);
 router.post('/upload_pdf/:projectName', upload.single('file'), pdfController.uploadPdf);

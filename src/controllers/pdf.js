@@ -5,7 +5,10 @@ const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
 const semanticIndexService = require('../services/semanticIndex');
 const pdfPreviewService = require('../services/pdfPreview');
+const pdfStorage = require('../services/pdfStorage');
+const extensionBridge = require('./extensionBridge');
 const config = require('../config');
+const crypto = require('node:crypto');
 const { pipeline } = require('node:stream/promises');
 
 const MAX_PDF_BYTES = 250 * 1024 * 1024;
@@ -15,10 +18,6 @@ const PDF_STREAM_ACQUIRE_TIMEOUT_MS = 30_000;
 const citationJobs = new Map();
 const citationQueue = [];
 let activeCitationJobs = 0;
-
-function s3Key(projectName, fileId) {
-  return `papers/${projectName}/${fileId}.pdf`;
-}
 
 function isValidFileId(value) {
   return typeof value === 'string' && /^[a-zA-Z0-9._-]{1,200}$/.test(value);
@@ -110,7 +109,9 @@ function queueCitationExtraction(projectName, fileId, pdfBuffer) {
     : undefined;
   const job = enqueueCitationJob(jobKey, async () => {
     const data = bufferedPdf
-      ?? await s3Service.downloadPdfBuffer(s3Key(projectName, fileId));
+      ?? await s3Service.downloadPdfBuffer(
+        await pdfStorage.resolvePdfKey(projectName, fileId),
+      );
     await extractAndSaveCitations(projectName, fileId, data);
   })
     .catch((error) => markCitationFailure(projectName, fileId, error))
@@ -221,7 +222,9 @@ exports.getMetadata = async (req, res) => {
     }
 
     // 2. 캐시 미스 → S3에서 조회 후 캐싱
-    const metadata = await s3Service.headPdf(s3Key(projectName, fileid));
+    const metadata = await s3Service.headPdf(
+      await pdfStorage.resolvePdfKey(projectName, fileid),
+    );
     await getPdfMetaCollection(projectName).updateOne(
       { fileId: fileid },
       { $set: { fileId: fileid, size: metadata.size } },
@@ -237,6 +240,51 @@ exports.getMetadata = async (req, res) => {
   }
 };
 
+// POST /resolve_pdf_cache/:projectName
+// Reuses one canonical S3 object for every workspace that collects the same DOI.
+exports.resolvePdfCache = async (req, res) => {
+  const { projectName } = req.params;
+  const requestedFileId = req.body?.fileId;
+  const doi = pdfStorage.normalizeDoi(
+    req.body?.doi || extensionBridge.pendingDoi(projectName, requestedFileId),
+  );
+  if (!pdfStorage.isValidDoi(doi)) {
+    return res.status(400).json({ error: 'A valid DOI is required' });
+  }
+  if (requestedFileId && !isValidFileId(requestedFileId)) {
+    return res.status(400).json({ error: 'Invalid PDF cache request' });
+  }
+
+  try {
+    const cached = await pdfStorage.findDoiPdf(doi);
+    if (!cached) return res.status(404).json({ hit: false, doi });
+
+    const fileId = requestedFileId || crypto.randomUUID();
+    await pdfStorage.saveProjectPdfMetadata(projectName, fileId, {
+      doi: cached.doi,
+      storageKey: cached.storageKey,
+      size: cached.size,
+    });
+    await getClient().db(projectName).collection('SaveFile').updateMany(
+      { fileId },
+      { $unset: { pdfPagePreview: '' } },
+    );
+    const queued = queueCitationExtraction(projectName, fileId);
+    pdfPreviewService.queuePdfPreview(projectName, fileId, 0);
+    return res.json({
+      hit: true,
+      doi: cached.doi,
+      fileId,
+      size: cached.size,
+      citationStatus: 'processing',
+      citationQueued: queued,
+    });
+  } catch (error) {
+    console.error('Error resolving DOI PDF cache:', error);
+    return res.status(500).json({ error: 'Could not check the DOI PDF cache' });
+  }
+};
+
 // POST /upload_pdf/:projectName
 exports.uploadPdf = async (req, res) => {
   if (!req.file) {
@@ -246,35 +294,21 @@ exports.uploadPdf = async (req, res) => {
   const { fileId } = req.body;
   const { projectName } = req.params;
   const pdfData = req.file.buffer;
+  const doi = pdfStorage.normalizeDoi(
+    req.body?.doi || extensionBridge.pendingDoi(projectName, fileId),
+  );
 
   try {
     // 1. S3에 PDF 업로드
-    const key = s3Key(projectName, fileId);
-    await s3Service.uploadPdf(key, pdfData);
+    const key = pdfStorage.uploadPdfKey(projectName, fileId, doi);
+    await s3Service.uploadPdf(key, pdfData, { doi });
 
     // 2. 크기를 MongoDB에 캐싱
-    await getPdfMetaCollection(projectName).updateOne(
-      { fileId },
-      {
-        $set: {
-          fileId,
-          size: pdfData.length,
-          citationStatus: 'processing',
-          uploadedAt: new Date(),
-        },
-        $unset: {
-          citationError: '',
-          citationRetryable: '',
-          citationsFailedAt: '',
-          pdfPagePreview: '',
-          previewError: '',
-          previewRetryable: '',
-          previewFailedAt: '',
-          previewStatus: '',
-        },
-      },
-      { upsert: true },
-    );
+    await pdfStorage.saveProjectPdfMetadata(projectName, fileId, {
+      doi,
+      storageKey: key,
+      size: pdfData.length,
+    });
 
     await getClient().db(projectName).collection('SaveFile').updateMany(
       { fileId },
@@ -300,6 +334,9 @@ exports.uploadPdf = async (req, res) => {
 exports.createUploadUrl = async (req, res) => {
   const { projectName } = req.params;
   const { fileId, contentType, size } = req.body ?? {};
+  const doi = pdfStorage.normalizeDoi(
+    req.body?.doi || extensionBridge.pendingDoi(projectName, fileId),
+  );
   const fileSize = Number(size);
 
   if (
@@ -315,8 +352,9 @@ exports.createUploadUrl = async (req, res) => {
     const normalizedContentType = contentType === 'application/pdf'
       ? contentType
       : 'application/pdf';
+    const key = pdfStorage.uploadPdfKey(projectName, fileId, doi);
     const uploadUrl = await s3Service.createPdfUploadUrl(
-      s3Key(projectName, fileId),
+      key,
       normalizedContentType,
     );
     res.json({
@@ -336,6 +374,9 @@ exports.createUploadUrl = async (req, res) => {
 exports.completePdfUpload = async (req, res) => {
   const { projectName } = req.params;
   const { fileId, size } = req.body ?? {};
+  const doi = pdfStorage.normalizeDoi(
+    req.body?.doi || extensionBridge.pendingDoi(projectName, fileId),
+  );
   const expectedSize = Number(size);
 
   if (
@@ -348,32 +389,16 @@ exports.completePdfUpload = async (req, res) => {
   }
 
   try {
-    const metadata = await s3Service.headPdf(s3Key(projectName, fileId));
+    const key = pdfStorage.uploadPdfKey(projectName, fileId, doi);
+    const metadata = await s3Service.headPdf(key);
     if (metadata.size !== expectedSize) {
       return res.status(409).json({ error: 'Uploaded PDF size does not match' });
     }
-    await getPdfMetaCollection(projectName).updateOne(
-      { fileId },
-      {
-        $set: {
-          fileId,
-          size: metadata.size,
-          citationStatus: 'processing',
-          uploadedAt: new Date(),
-        },
-        $unset: {
-          citationError: '',
-          citationRetryable: '',
-          citationsFailedAt: '',
-          pdfPagePreview: '',
-          previewError: '',
-          previewRetryable: '',
-          previewFailedAt: '',
-          previewStatus: '',
-        },
-      },
-      { upsert: true },
-    );
+    await pdfStorage.saveProjectPdfMetadata(projectName, fileId, {
+      doi,
+      storageKey: key,
+      size: metadata.size,
+    });
     await getClient().db(projectName).collection('SaveFile').updateMany(
       { fileId },
       { $unset: { pdfPagePreview: '' } },
@@ -649,7 +674,9 @@ exports.refreshCitations = async (req, res) => {
     }
 
     try {
-      await s3Service.headPdf(s3Key(projectName, fileid));
+      await s3Service.headPdf(
+        await pdfStorage.resolvePdfKey(projectName, fileid),
+      );
     } catch (error) {
       if (isMissingPdfError(error)) {
         res.setHeader('Retry-After', '2');
@@ -779,7 +806,7 @@ exports.downloadPdf = async (req, res) => {
   }, 5_000);
 
   try {
-    const key = s3Key(projectName, fileid);
+    const key = await pdfStorage.resolvePdfKey(projectName, fileid);
     const range = typeof req.headers.range === 'string'
       ? req.headers.range
       : undefined;

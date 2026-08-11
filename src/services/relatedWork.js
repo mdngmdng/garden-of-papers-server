@@ -198,6 +198,7 @@ function mergePaperCandidates(candidateGroups) {
       && result.paperId
     ) current.paperId = result.paperId;
     current.abstract ||= result.abstract;
+    current.doi ||= result.doi;
     current.url ||= result.url;
     current.openAccessPdfUrl ||= result.openAccessPdfUrl;
     current.citesId ||= result.citesId;
