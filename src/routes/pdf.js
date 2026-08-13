@@ -11,6 +11,20 @@ router.get('/pdf_metadata/:projectName/:fileid', pdfController.getMetadata);
 router.post('/resolve_pdf_cache/:projectName', pdfController.resolvePdfCache);
 router.post('/pdf_upload_url/:projectName', pdfController.createUploadUrl);
 router.post('/complete_pdf_upload/:projectName', pdfController.completePdfUpload);
+// Backward compatibility for Bridge 1.0.0. Express 5 exposes named wildcard
+// segments as an array, which lets legacy clients keep using project names
+// containing slashes until the extension is reloaded with the stable endpoint.
+router.post(
+  '/upload_pdf/*projectName',
+  upload.single('file'),
+  (req, res, next) => {
+    if (Array.isArray(req.params.projectName)) {
+      req.params.projectName = req.params.projectName.join('/');
+    }
+    next();
+  },
+  pdfController.uploadPdf,
+);
 router.post('/upload_pdf/:projectName', upload.single('file'), pdfController.uploadPdf);
 router.get('/list_pdfs/:projectName', pdfController.listPdfs);
 router.get('/download_pdf/:projectName/:fileid', pdfController.downloadPdf);
