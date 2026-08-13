@@ -1,5 +1,6 @@
 const { resolveAtlasPaper } = require('../services/atlasImport');
 const { translateToKorean } = require('../services/gemini');
+const { translateWithMyMemory } = require('../services/myMemoryTranslation');
 const crypto = require('crypto');
 
 const translationCache = new Map();
@@ -50,16 +51,29 @@ exports.translatePaper = async (req, res) => {
       res.set('Cache-Control', 'private, no-store, max-age=0');
       return res.json({ ...cached, cached: true });
     }
-    const [translatedTitle, translatedAbstract] = await Promise.all([
-      title ? translateToKorean(title) : Promise.resolve(''),
-      abstract ? translateToKorean(abstract) : Promise.resolve(''),
-    ]);
+    let provider = 'mymemory';
+    let translatedTitle;
+    let translatedAbstract;
+    try {
+      [translatedTitle, translatedAbstract] = await Promise.all([
+        title ? translateWithMyMemory(title) : Promise.resolve(''),
+        abstract ? translateWithMyMemory(abstract) : Promise.resolve(''),
+      ]);
+    } catch (myMemoryError) {
+      console.warn('[Atlas] MyMemory translation fallback:', myMemoryError.message);
+      provider = 'gemini';
+      [translatedTitle, translatedAbstract] = await Promise.all([
+        title ? translateToKorean(title) : Promise.resolve(''),
+        abstract ? translateToKorean(abstract) : Promise.resolve(''),
+      ]);
+    }
     if ((title && !translatedTitle) || (abstract && !translatedAbstract)) {
       throw new Error('번역 모델이 결과를 반환하지 않았습니다.');
     }
     const payload = {
       title: translatedTitle || title,
       abstract: translatedAbstract || abstract,
+      provider,
     };
     cacheTranslation(key, payload);
     res.set('Cache-Control', 'private, no-store, max-age=0');
