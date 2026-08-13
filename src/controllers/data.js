@@ -252,6 +252,7 @@ exports.updateData = async (req, res) => {
     linkHighlightTexts, summaryNoteId,
     translations, citationHits, pageSizeList, referenceList, citationStatus,
     pdfPagePreview,
+    discoverySource,
   } = req.body;
 
   try {
@@ -332,6 +333,9 @@ exports.updateData = async (req, res) => {
     }
     if (pdfPagePreview?.version === 1) {
       unset.pdfPagePreview = '';
+    }
+    if (discoverySource?.kind === 'atlas') {
+      update.discoverySource = discoverySource;
     }
 
     try {
