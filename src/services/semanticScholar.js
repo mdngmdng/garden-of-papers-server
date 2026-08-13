@@ -2,7 +2,7 @@ const axios = require('axios');
 const config = require('../config');
 
 const S2_BASE = 'https://api.semanticscholar.org/graph/v1';
-const FIELDS = 'externalIds,title,authors,year,citationCount,url';
+const FIELDS = 'externalIds,title,authors,year,venue,citationCount,url,abstract,openAccessPdf';
 
 // API 키 헤더 (rate limit 향상: DOI=10req/s, search=1req/s)
 // 키가 403이면 키 없이 시도 (무인증: 100 req/5min)
@@ -115,9 +115,12 @@ function normalizePaper(data) {
     authors: (data.authors || []).map((a) => a.name),
     year: data.year || null,
     citationCount: data.citationCount || 0,
+    venue: data.venue || '',
+    abstract: data.abstract || '',
     doi: data.externalIds?.DOI || null,
     arxivId: data.externalIds?.ArXiv || null,
     url: data.url || null,
+    openAccessPdfUrl: data.openAccessPdf?.url || null,
   };
 }
 

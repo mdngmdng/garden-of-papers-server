@@ -18,6 +18,7 @@ const papersRouter = require('./routes/papers');
 const analyzeRouter = require('./routes/analyze');
 const extensionBridgeRouter = require('./routes/extensionBridge');
 const workspaceSnapshotsRouter = require('./routes/workspaceSnapshots');
+const atlasRouter = require('./routes/atlas');
 
 const app = express();
 
@@ -62,6 +63,9 @@ app.use('/extension', extensionBridgeRouter);
 
 // Web client durable workspace snapshots (single-document MongoDB CAS)
 app.use('/api', workspaceSnapshotsRouter);
+
+// CHI/TVCG/UIST seed-paper handoff from Topic Atlas.
+app.use('/atlas', atlasRouter);
 
 const server = http.createServer(app);
 
