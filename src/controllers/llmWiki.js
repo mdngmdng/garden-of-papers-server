@@ -45,6 +45,16 @@ exports.chat = async (req, res) => {
   }
 };
 
+exports.clearChat = async (req, res) => {
+  try {
+    return res.status(200).json(
+      await llmWikiService.clearChat(req.params.id),
+    );
+  } catch (error) {
+    return sendError(res, error);
+  }
+};
+
 exports.latestLog = async (req, res) => {
   try {
     const log = await llmWikiService.latestLog(req.params.id);

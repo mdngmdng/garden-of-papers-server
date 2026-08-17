@@ -14,6 +14,7 @@ const MAX_SOURCE_CHARACTERS = 120_000;
 const MAX_CHAT_CONTEXT_CHARACTERS = 180_000;
 const MAX_SHARED_CHAT_MESSAGES = 100;
 const MAX_CHAT_HISTORY_MESSAGES = 12;
+const WIKI_FORMAT_VERSION = 2;
 
 class LLMWikiError extends Error {
   constructor(message, status = 400, code = 'invalid_request') {
@@ -339,6 +340,16 @@ function workspaceIndexPath(workspace) {
   );
 }
 
+function workspacePostItsPath(workspace) {
+  return path.posix.join(
+    'wiki',
+    'sources',
+    'gop-canvas',
+    slug(workspace.projectName, 'workspace'),
+    'post-its.md',
+  );
+}
+
 function noteMarkdown(note) {
   return [
     `### Note ${note.id}`,
@@ -437,6 +448,8 @@ function indexMarkdown(workspace) {
     '',
     `Papers: ${workspace.papers.length} · Notes: ${workspace.counts.notes} · Highlights: ${workspace.counts.highlights}`,
     '',
+    `- [[post-its|Post-it notes]] — attached ${workspace.counts.attachedNotes}, canvas ${workspace.counts.canvasNotes}`,
+    '',
     '## Papers',
     '',
     ...workspace.papers.map((paper) => {
@@ -450,6 +463,56 @@ function indexMarkdown(workspace) {
       ? workspace.unlinkedNotes.map(noteMarkdown).join('\n\n')
       : '_No unlinked notes_',
     '',
+  ].join('\n');
+}
+
+function postItsMarkdown(workspace) {
+  const attached = workspace.papers.flatMap((paper) =>
+    paper.notes.map((note) => ({ paper, note })),
+  );
+  const attachedSections = attached.flatMap(({ paper, note }) => [
+    `### ${paper.title} — ${note.id}`,
+    '',
+    '- Kind: attached to paper',
+    `- Parent paper: [[${path.posix.basename(paper.filePath, '.md')}|${paper.title}]]`,
+    `- PDF page: ${note.pageNumber ?? 'not attached to a page'}`,
+    note.pageRect ? `- PDF region: \`${JSON.stringify(note.pageRect)}\`` : '- PDF region: none',
+    `- Canvas position: \`${JSON.stringify(note.position)}\``,
+    `- Color: ${note.color || 'unknown'}`,
+    `- AI generated: ${note.aiGenerated ? 'yes' : 'no'}`,
+    '',
+    note.text || '_Empty post-it_',
+    '',
+  ]);
+  const canvasSections = workspace.unlinkedNotes.flatMap((note) => [
+    `### Canvas post-it — ${note.id}`,
+    '',
+    '- Kind: independent canvas post-it',
+    `- Canvas position: \`${JSON.stringify(note.position)}\``,
+    `- Color: ${note.color || 'unknown'}`,
+    `- AI generated: ${note.aiGenerated ? 'yes' : 'no'}`,
+    '',
+    note.text || '_Empty post-it_',
+    '',
+  ]);
+  return [
+    '---',
+    'type: gop-canvas-post-its',
+    `workspace: ${quote(workspace.projectName)}`,
+    `source_revision: ${workspace.revision}`,
+    `synced_at: ${quote(workspace.syncedAt)}`,
+    '---',
+    '',
+    `# Post-it notes — ${workspace.projectName}`,
+    '',
+    `Attached: ${attached.length} · Canvas: ${workspace.unlinkedNotes.length}`,
+    '',
+    `## Attached to papers (${attached.length})`,
+    '',
+    ...(attachedSections.length ? attachedSections : ['_No attached post-its_', '']),
+    `## Independent canvas post-its (${workspace.unlinkedNotes.length})`,
+    '',
+    ...(canvasSections.length ? canvasSections : ['_No canvas post-its_', '']),
   ].join('\n');
 }
 
@@ -530,6 +593,28 @@ function logMarkdown(workspace, diff) {
     `- PDF text characters transferred: ${paper.sourceText.length}`,
     '',
   ]);
+  const noteDetails = [
+    ...workspace.papers.flatMap((paper) => paper.notes.map((note) => ({
+      kind: 'attached',
+      paperTitle: paper.title,
+      note,
+    }))),
+    ...workspace.unlinkedNotes.map((note) => ({
+      kind: 'canvas',
+      paperTitle: '',
+      note,
+    })),
+  ].flatMap(({ kind, paperTitle, note }) => [
+    `### Post-it ${note.id}`,
+    '',
+    `- Kind: ${kind}`,
+    paperTitle ? `- Parent paper: ${paperTitle}` : '- Parent paper: none',
+    `- PDF page: ${note.pageNumber ?? 'none'}`,
+    note.pageRect ? `- PDF region: \`${JSON.stringify(note.pageRect)}\`` : '- PDF region: none',
+    `- Canvas position: \`${JSON.stringify(note.position)}\``,
+    `- Text characters transferred: ${note.text.length}`,
+    '',
+  ]);
   return [
     '---',
     'type: gop-llm-wiki-sync-log',
@@ -574,6 +659,9 @@ function logMarkdown(workspace, diff) {
     '## Data transferred by paper',
     '',
     ...paperDetails,
+    '## Data transferred by post-it',
+    '',
+    ...(noteDetails.length ? noteDetails : ['_No post-its_', '']),
     '## Verification',
     '',
     '- [x] PDF identifiers and source locations recorded',
@@ -619,9 +707,16 @@ function defaultCollection() {
 }
 
 function counts(workspace) {
+  const attachedNotes = workspace.papers.reduce(
+    (sum, paper) => sum + paper.notes.length,
+    0,
+  );
+  const canvasNotes = workspace.unlinkedNotes.length;
   return {
     papers: workspace.papers.length,
-    notes: workspace.papers.reduce((sum, paper) => sum + paper.notes.length, 0),
+    notes: attachedNotes + canvasNotes,
+    attachedNotes,
+    canvasNotes,
     highlights: workspace.papers.reduce((sum, paper) => sum + paper.highlights.length, 0),
     positions: workspace.papers.length,
   };
@@ -637,6 +732,8 @@ function publicStatus(document) {
     latestLogPath: document.latestLog?.filePath || '',
     latestLogMarkdown: document.latestLog?.markdown || '',
     wikiRoot: document.wikiRoot,
+    workspaceIndexPath: workspaceIndexPath(document),
+    postItsPath: workspacePostItsPath(document),
     papers: (document.papers || []).map((paper) => ({
       id: paper.id,
       title: paper.title,
@@ -761,7 +858,8 @@ function chatContext(document, question) {
     sections.push(markdown.slice(0, remaining));
     remaining -= markdown.length;
   }
-  return `# Complete paper catalog\n${catalog}\n\n# Most relevant Wiki documents\n${sections.join('\n\n---\n\n')}`;
+  const postIts = postItsMarkdown(document);
+  return `# Complete paper catalog\n${catalog}\n\n# Workspace post-it notes\n${postIts}\n\n# Most relevant Wiki documents\n${sections.join('\n\n---\n\n')}`;
 }
 
 function chatHistory(document) {
@@ -823,7 +921,11 @@ function createLLMWikiService({
     workspace.wikiRoot = markdownStore.root;
     const diff = diffWorkspace(previous, workspace);
 
-    if (previous && !hasChanges(diff)) {
+    if (
+      previous
+      && previous.formatVersion === WIKI_FORMAT_VERSION
+      && !hasChanges(diff)
+    ) {
       const unchanged = {
         ...previous,
         revision: workspace.revision,
@@ -855,6 +957,7 @@ function createLLMWikiService({
         paperMarkdown(workspace, paper),
       )),
       markdownStore.write(workspaceIndexPath(workspace), indexMarkdown(workspace)),
+      markdownStore.write(workspacePostItsPath(workspace), postItsMarkdown(workspace)),
     ]);
 
     const log = logMarkdown(workspace, diff);
@@ -870,6 +973,7 @@ function createLLMWikiService({
     const document = {
       ...workspace,
       _id: workspaceId,
+      formatVersion: WIKI_FORMAT_VERSION,
       latestDiff: diff,
       latestLog: { filePath: logPath, markdown: log },
       updatedAt: now(),
@@ -968,7 +1072,20 @@ function createLLMWikiService({
     };
   }
 
-  return { chat, latestLog, status, sync };
+  async function clearChat(workspaceIdValue) {
+    const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
+    const snapshots = await collection();
+    const document = await snapshots.findOne({ _id: workspaceId });
+    if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
+    const clearedAt = now();
+    await snapshots.updateOne(
+      { _id: workspaceId },
+      { $set: { chatMessages: [], chatUpdatedAt: clearedAt } },
+    );
+    return { workspaceId, messages: [], clearedAt: iso(clearedAt) };
+  }
+
+  return { chat, clearChat, latestLog, status, sync };
 }
 
 module.exports = {

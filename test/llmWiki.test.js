@@ -157,6 +157,8 @@ test('syncs PDF, metadata, notes, highlights, positions, and a Markdown audit lo
   assert.deepEqual(result.counts, {
     papers: 1,
     notes: 1,
+    attachedNotes: 1,
+    canvasNotes: 0,
     highlights: 1,
     positions: 1,
   });
@@ -237,6 +239,50 @@ test('returns board-shared chat history and grounds follow-up questions in it', 
   await service.chat('garden', '그중 첫 번째 저자는?');
   assert.match(modelInput(), /Shared recent conversation/);
   assert.match(modelInput(), /ILoveSketch 저자가 누구야/);
+});
+
+test('clears the complete shared chat history for the board', async () => {
+  const { collection, service } = fixture();
+  await service.sync('garden', workspace());
+  await service.chat('garden', 'ILoveSketch 저자가 누구야?');
+
+  const result = await service.clearChat('garden');
+
+  assert.deepEqual(result.messages, []);
+  assert.deepEqual(collection.document.chatMessages, []);
+  assert.deepEqual((await service.status('garden')).messages, []);
+});
+
+test('organizes attached and independent canvas post-its with their locations', async () => {
+  const { markdownStore, service } = fixture();
+  const state = workspace();
+  state.objects.push({
+    id: 'canvas-note-1',
+    type: 'GX.MARONote',
+    text: 'Independent canvas thought.',
+    color: '#fff09b',
+    x: 880,
+    y: 640,
+    width: 120,
+    height: 120,
+    zIndex: 8,
+    createdAt: '2026-08-17T00:00:00.000Z',
+    updatedAt: '2026-08-17T00:00:00.000Z',
+  });
+
+  const result = await service.sync('garden', state);
+  const postIts = [...markdownStore.files.entries()]
+    .find(([filePath]) => filePath.endsWith('/post-its.md'));
+
+  assert.equal(result.counts.notes, 2);
+  assert.equal(result.counts.attachedNotes, 1);
+  assert.equal(result.counts.canvasNotes, 1);
+  assert.ok(postIts);
+  assert.match(postIts[1], /attached to paper/);
+  assert.match(postIts[1], /PDF page: 5/);
+  assert.match(postIts[1], /Independent canvas thought/);
+  assert.match(postIts[1], /"x":880/);
+  assert.match(result.latestLogMarkdown, /Data transferred by post-it/);
 });
 
 test('queues a missing stored PDF for Bridge collection and exposes its ingestion status', async () => {
