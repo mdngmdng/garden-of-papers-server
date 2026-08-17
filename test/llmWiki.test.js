@@ -116,7 +116,7 @@ function workspace({ revision = 1, includePaper = true, includeNote = true, x = 
   };
 }
 
-function fixture() {
+function fixture(options = {}) {
   const collection = new MemoryCollection();
   const markdownStore = new MemoryMarkdownStore();
   let sourceLoads = 0;
@@ -130,10 +130,10 @@ function fixture() {
       sourceLoads += 1;
       return 'ILoveSketch full PDF text from the cached TEI document.';
     },
-    openAIRequest: async ({ input }) => {
+    openAIRequest: options.openAIRequest || (async ({ input }) => {
       modelInput = input;
       return 'ILoveSketch의 저자는 Seok-Hyung Bae, Ravin Balakrishnan, Karan Singh입니다.';
-    },
+    }),
     pdfBridgeRegistrar: async (request) => {
       bridgeRequests.push(request);
       return { status: 'ok' };
@@ -242,6 +242,56 @@ test('returns board-shared chat history and grounds follow-up questions in it', 
   await service.chat('garden', '그중 첫 번째 저자는?');
   assert.match(modelInput(), /Shared recent conversation/);
   assert.match(modelInput(), /ILoveSketch 저자가 누구야/);
+});
+
+test('accepts chat immediately and stores the answer behind the persisted question', async () => {
+  let releaseAnswer;
+  const answerPending = new Promise((resolve) => {
+    releaseAnswer = resolve;
+  });
+  const { collection, service } = fixture({
+    openAIRequest: async () => answerPending,
+  });
+  await service.sync('garden', workspace());
+
+  const receipt = await service.enqueueChat(
+    'garden',
+    'ILoveSketch 저자가 누구야?',
+    'request-1',
+  );
+
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.messages.at(-1).id, 'request-1');
+  assert.equal(collection.document.chatMessages.length, 1);
+  assert.equal(collection.document.chatMessages[0].role, 'user');
+
+  releaseAnswer('저자는 세 명입니다.');
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (collection.document.chatMessages.length === 2) break;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  assert.equal(collection.document.chatMessages.length, 2);
+  assert.equal(collection.document.chatMessages[0].id, 'request-1');
+  assert.equal(collection.document.chatMessages[1].role, 'assistant');
+  assert.equal(collection.document.chatMessages[1].replyTo, 'request-1');
+});
+
+test('deduplicates a retried queued question by its request id', async () => {
+  let releaseAnswer;
+  const answerPending = new Promise((resolve) => {
+    releaseAnswer = resolve;
+  });
+  const { collection, service } = fixture({
+    openAIRequest: async () => answerPending,
+  });
+  await service.sync('garden', workspace());
+
+  await service.enqueueChat('garden', '같은 질문', 'request-1');
+  await service.enqueueChat('garden', '같은 질문', 'request-1');
+
+  assert.equal(collection.document.chatMessages.length, 1);
+  releaseAnswer('답변');
 });
 
 test('clears the complete shared chat history for the board', async () => {

@@ -37,8 +37,12 @@ exports.sync = async (req, res) => {
 
 exports.chat = async (req, res) => {
   try {
-    return res.status(200).json(
-      await llmWikiService.chat(req.params.id, req.body?.question),
+    return res.status(202).json(
+      await llmWikiService.enqueueChat(
+        req.params.id,
+        req.body?.question,
+        req.body?.requestId,
+      ),
     );
   } catch (error) {
     return sendError(res, error);
