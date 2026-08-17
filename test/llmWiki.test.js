@@ -21,6 +21,16 @@ class MemoryCollection {
       ...(this.document || { _id: query._id }),
       ...structuredClone(update.$set),
     };
+    for (const [field, operation] of Object.entries(update.$push || {})) {
+      const current = Array.isArray(this.document[field]) ? this.document[field] : [];
+      const values = Array.isArray(operation?.$each)
+        ? structuredClone(operation.$each)
+        : [structuredClone(operation)];
+      const combined = [...current, ...values];
+      this.document[field] = Number.isInteger(operation?.$slice)
+        ? combined.slice(operation.$slice)
+        : combined;
+    }
     return { matchedCount: this.document ? 1 : 0, upsertedCount: 1 };
   }
 }
@@ -196,7 +206,7 @@ test('does not let an older workspace revision overwrite a newer Wiki snapshot',
 });
 
 test('grounds chat in the complete catalog and the selected paper Markdown', async () => {
-  const { modelInput, service } = fixture();
+  const { collection, modelInput, service } = fixture();
   await service.sync('garden', workspace());
   const response = await service.chat('garden', 'ILoveSketch 저자가 누구야?');
 
@@ -204,4 +214,21 @@ test('grounds chat in the complete catalog and the selected paper Markdown', asy
   assert.match(modelInput(), /Complete paper catalog/);
   assert.match(modelInput(), /Karan Singh/);
   assert.equal(response.sources[0].title, 'ILoveSketch');
+  assert.equal(response.messages.length, 2);
+  assert.equal(collection.document.chatMessages.length, 2);
+});
+
+test('returns board-shared chat history and grounds follow-up questions in it', async () => {
+  const { modelInput, service } = fixture();
+  await service.sync('garden', workspace());
+  await service.chat('garden', 'ILoveSketch 저자가 누구야?');
+  const status = await service.status('garden');
+
+  assert.equal(status.messages.length, 2);
+  assert.equal(status.messages[0].role, 'user');
+  assert.match(status.messages[1].text, /Seok-Hyung Bae/);
+
+  await service.chat('garden', '그중 첫 번째 저자는?');
+  assert.match(modelInput(), /Shared recent conversation/);
+  assert.match(modelInput(), /ILoveSketch 저자가 누구야/);
 });

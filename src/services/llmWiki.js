@@ -10,6 +10,8 @@ const DATABASE = 'GardenOfPapersSystem';
 const COLLECTION = 'LLMWikiSnapshots';
 const MAX_SOURCE_CHARACTERS = 120_000;
 const MAX_CHAT_CONTEXT_CHARACTERS = 180_000;
+const MAX_SHARED_CHAT_MESSAGES = 100;
+const MAX_CHAT_HISTORY_MESSAGES = 12;
 
 class LLMWikiError extends Error {
   constructor(message, status = 400, code = 'invalid_request') {
@@ -589,12 +591,30 @@ function publicStatus(document) {
     latestLogPath: document.latestLog?.filePath || '',
     latestLogMarkdown: document.latestLog?.markdown || '',
     wikiRoot: document.wikiRoot,
+    messages: publicChatMessages(document.chatMessages),
     analysis: {
       provider: 'OpenAI',
       model: config.openai.model,
       ready: Boolean(config.openai.apiKey),
     },
   };
+}
+
+function publicChatMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages.slice(-MAX_SHARED_CHAT_MESSAGES).map((message) => ({
+    id: cleanText(message?.id, 128),
+    role: message?.role === 'assistant' ? 'assistant' : 'user',
+    text: cleanText(message?.text, 100_000),
+    createdAt: iso(message?.createdAt),
+    sources: Array.isArray(message?.sources)
+      ? message.sources.slice(0, 12).map((source) => ({
+        id: cleanText(source?.id, 256),
+        title: cleanText(source?.title, 1_000),
+        filePath: cleanText(source?.filePath, 4_000),
+      }))
+      : [],
+  })).filter((message) => message.id && message.text);
 }
 
 function outputText(payload) {
@@ -688,6 +708,15 @@ function chatContext(document, question) {
     remaining -= markdown.length;
   }
   return `# Complete paper catalog\n${catalog}\n\n# Most relevant Wiki documents\n${sections.join('\n\n---\n\n')}`;
+}
+
+function chatHistory(document) {
+  const messages = publicChatMessages(document.chatMessages)
+    .slice(-MAX_CHAT_HISTORY_MESSAGES);
+  if (!messages.length) return '(no previous conversation)';
+  return messages.map((message) =>
+    `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.text}`,
+  ).join('\n\n');
 }
 
 function createLLMWikiService({
@@ -824,6 +853,11 @@ function createLLMWikiService({
     const document = await (await collection()).findOne({ _id: workspaceId });
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
     const selected = selectPapers(document.papers, question);
+    const sources = selected.map((paper) => ({
+      id: paper.id,
+      title: paper.title,
+      filePath: paper.filePath,
+    }));
     const answer = await openAIRequest({
       instructions: [
         'You answer questions about a Garden of Papers workspace.',
@@ -832,16 +866,45 @@ function createLLMWikiService({
         'When the data is insufficient, say exactly what is missing. Do not claim that authors are unknown when the catalog lists them.',
         'Cite supporting paper titles and page numbers from notes or highlights when available.',
       ].join(' '),
-      input: `${chatContext(document, question)}\n\n# User question\n${question}`,
+      input: `${chatContext(document, question)}\n\n# Shared recent conversation\n${chatHistory(document)}\n\n# User question\n${question}`,
     });
+    const createdAt = iso(now());
+    const userMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      text: question,
+      createdAt,
+      sources: [],
+    };
+    const assistantMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      text: answer,
+      createdAt,
+      sources,
+    };
+    await (await collection()).updateOne(
+      { _id: workspaceId },
+      {
+        $push: {
+          chatMessages: {
+            $each: [userMessage, assistantMessage],
+            $slice: -MAX_SHARED_CHAT_MESSAGES,
+          },
+        },
+        $set: { chatUpdatedAt: now() },
+      },
+    );
+    const messages = publicChatMessages([
+      ...(document.chatMessages || []),
+      userMessage,
+      assistantMessage,
+    ]);
     return {
       answer,
       syncedAt: iso(document.syncedAt),
-      sources: selected.map((paper) => ({
-        id: paper.id,
-        title: paper.title,
-        filePath: paper.filePath,
-      })),
+      sources,
+      messages,
     };
   }
 
