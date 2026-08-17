@@ -18,6 +18,7 @@ const papersRouter = require('./routes/papers');
 const analyzeRouter = require('./routes/analyze');
 const extensionBridgeRouter = require('./routes/extensionBridge');
 const workspaceSnapshotsRouter = require('./routes/workspaceSnapshots');
+const llmWikiRouter = require('./routes/llmWiki');
 
 const app = express();
 
@@ -62,6 +63,9 @@ app.use('/extension', extensionBridgeRouter);
 
 // Web client durable workspace snapshots (single-document MongoDB CAS)
 app.use('/api', workspaceSnapshotsRouter);
+
+// Automatic canvas -> Markdown wiki sync and workspace-grounded chat.
+app.use('/api/llm-wiki', llmWikiRouter);
 
 const server = http.createServer(app);
 

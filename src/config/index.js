@@ -1,5 +1,6 @@
 require('dotenv').config();
 const fs = require('fs');
+const path = require('path');
 
 function resolveGrobidUrl(value) {
   const configured = value || 'http://localhost:8070';
@@ -46,6 +47,13 @@ module.exports = {
   s2ApiKey: process.env.S2_API_KEY || '',
   serpApiKey: process.env.SERPAPI_KEY || '',
   geminiApiKey: process.env.GEMINI_API_KEY || '',
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '',
+    model: process.env.OPENAI_MODEL || 'gpt-5.6',
+  },
+  llmWikiRoot:
+    process.env.GOP_LLM_WIKI_ROOT
+    || path.resolve(__dirname, '../../../gop-llm-wiki'),
   asta: {
     apiKey: process.env.ASTA_TOOL_KEY || '',
     endpoint:
