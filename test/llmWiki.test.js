@@ -161,6 +161,9 @@ test('syncs PDF, metadata, notes, highlights, positions, and a Markdown audit lo
     canvasNotes: 0,
     highlights: 1,
     positions: 1,
+    relationships: 0,
+    searchNodes: 0,
+    searchResults: 0,
   });
   assert.equal(sourceLoads(), 1);
   assert.equal(result.diff.papers.added[0], 'paper-ilovesketch');
@@ -283,6 +286,124 @@ test('organizes attached and independent canvas post-its with their locations', 
   assert.match(postIts[1], /Independent canvas thought/);
   assert.match(postIts[1], /"x":880/);
   assert.match(result.latestLogMarkdown, /Data transferred by post-it/);
+});
+
+test('persists citation arrows, search nodes, and generated Markdown in MongoDB', async () => {
+  const { collection, markdownStore, modelInput, service } = fixture();
+  const state = workspace();
+  state.objects.push(
+    {
+      id: 'paper-related',
+      type: 'GX.MAROScientificPaper',
+      title: 'EverybodyLovesSketch',
+      authors: ['Seok-Hyung Bae'],
+      year: '2009',
+      venue: 'UIST',
+      abstract: 'A broader-audience 3D sketching system.',
+      fileId: '',
+      pageIndex: 0,
+      pageCount: 8,
+      x: 520,
+      y: 200,
+      width: 342,
+      height: 444,
+      zIndex: 4,
+      highlights: [],
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '2026-08-17T00:00:00.000Z',
+    },
+    {
+      id: 'citation-link-1',
+      type: 'GX.MAROLink',
+      startPaperId: 'paper-ilovesketch',
+      endPaperId: 'paper-related',
+      label: 'extends interaction technique',
+      relationshipInfo: 'The later paper adapts the sketching interaction.',
+      citationContextParagraph: 'EverybodyLovesSketch extends ILoveSketch.',
+      referenceText: 'EverybodyLovesSketch: 3D sketching for a broader audience.',
+      citationHitId: 'b12',
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      zIndex: 2,
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '2026-08-17T00:00:00.000Z',
+    },
+    {
+      id: 'search-node-1',
+      type: 'GX.MAROBlankPaper',
+      paperKind: 'search',
+      query: '3D sketching interfaces',
+      searchType: 'normal',
+      resultCount: 1,
+      aiSearchEnabled: true,
+      x: 900,
+      y: 100,
+      width: 342,
+      height: 444,
+      zIndex: 8,
+      searchSnapshot: {
+        version: 1,
+        query: '3D sketching interfaces',
+        contextKey: '',
+        results: [{
+          paperId: 'search-result-1',
+          title: 'Sketching With Hands',
+          authors: ['A. Researcher'],
+          year: 2024,
+          venue: 'CHI',
+          citationCount: 7,
+          url: 'https://example.org/result',
+          abstract: 'A hand-based sketching interface.',
+          relevanceExplanation: 'Directly studies spatial sketching.',
+        }],
+        total: 1,
+        nextOffset: 1,
+        hasMore: false,
+        retrievalQuery: 'spatial 3D sketching interaction',
+        rankingProvider: 'OpenAI',
+        notice: '',
+        savedAt: '2026-08-17T00:00:00.000Z',
+        layer: {
+          version: 1,
+          id: 'layer-1',
+          name: '검색 · 3D sketching interfaces',
+          visible: true,
+          nodes: [{
+            paperId: 'search-result-1',
+            x: 70,
+            y: 0,
+            width: 214,
+            height: 252,
+            reviewState: 'understood',
+          }],
+        },
+      },
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '2026-08-17T00:00:00.000Z',
+    },
+  );
+
+  const result = await service.sync('garden', state);
+  await service.chat('garden', '인용 관계와 검색 결과를 알려줘');
+  const relationships = markdownStore.files.get(result.relationshipsPath);
+  const searchResults = markdownStore.files.get(result.searchResultsPath);
+
+  assert.equal(result.counts.relationships, 1);
+  assert.equal(result.counts.searchNodes, 1);
+  assert.equal(result.counts.searchResults, 1);
+  assert.match(relationships, /ILoveSketch → EverybodyLovesSketch/);
+  assert.match(relationships, /extends interaction technique/);
+  assert.match(searchResults, /3D sketching interfaces/);
+  assert.match(searchResults, /Sketching With Hands/);
+  assert.match(searchResults, /"x":1312/);
+  assert.match(modelInput(), /Citation and canvas relationships/);
+  assert.match(modelInput(), /Search nodes and saved results/);
+  assert.ok(collection.document.markdownDocuments.length >= 6);
+  assert.ok(collection.document.markdownDocuments.every((item) => item.markdown));
+  assert.match(result.latestLogMarkdown, /Relationships added \/ updated \/ deleted/);
+  assert.match(result.latestLogMarkdown, /Search nodes transferred/);
 });
 
 test('queues a missing stored PDF for Bridge collection and exposes its ingestion status', async () => {
