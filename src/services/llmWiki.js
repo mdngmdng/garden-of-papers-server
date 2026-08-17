@@ -1294,9 +1294,9 @@ function createLLMWikiService({
     const snapshots = await collection();
     const previous = await snapshots.findOne({ _id: workspaceId });
     const workspace = normalizeWorkspace(state, workspaceId);
-    if (previous && workspace.revision < previous.revision) {
-      return publicStatus(previous);
-    }
+    // WorkspaceSnapshots is the authoritative source. A browser may briefly
+    // expose a larger optimistic revision before MongoDB assigns the canonical
+    // revision, so numeric ordering cannot be used to reject a saved snapshot.
     workspace.syncedAt = iso(now());
     workspace.papers = await hydratePapers(
       workspace,

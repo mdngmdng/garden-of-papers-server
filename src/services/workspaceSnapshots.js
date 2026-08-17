@@ -81,6 +81,7 @@ function publicState(document) {
 function createWorkspaceSnapshotService(
   getCollection = defaultCollection,
   now = () => new Date(),
+  onWorkspaceSaved = null,
 ) {
   let indexesReady = null;
 
@@ -99,6 +100,18 @@ function createWorkspaceSnapshotService(
     }
     await indexesReady;
     return value;
+  }
+
+  function notifyWorkspaceSaved(state) {
+    if (typeof onWorkspaceSaved !== 'function') return;
+    Promise.resolve()
+      .then(() => onWorkspaceSaved(structuredClone(state)))
+      .catch((error) => {
+        console.error(
+          `[LLM Wiki] Automatic sync failed for ${state?.projectName || 'workspace'}:`,
+          error?.message || error,
+        );
+      });
   }
 
   async function list(ownerNameValue) {
@@ -235,7 +248,11 @@ function createWorkspaceSnapshotService(
       },
       { returnDocument: 'after' },
     );
-    if (updated) return { state: publicState(updated), replayed: false };
+    if (updated) {
+      const savedState = publicState(updated);
+      notifyWorkspaceSaved(savedState);
+      return { state: savedState, replayed: false };
+    }
 
     const latest = await snapshots.findOne({ _id: projectName });
     if (latest?.lastMutationId === mutationId) {
@@ -252,9 +269,18 @@ function createWorkspaceSnapshotService(
   return { ensure, list, load, save };
 }
 
+function syncSavedWorkspaceToWiki(state) {
+  const { llmWikiService } = require('./llmWiki');
+  return llmWikiService.sync(state.id, state);
+}
+
 module.exports = {
   MAX_SNAPSHOT_BYTES,
   WorkspaceSnapshotError,
   createWorkspaceSnapshotService,
-  workspaceSnapshotService: createWorkspaceSnapshotService(),
+  workspaceSnapshotService: createWorkspaceSnapshotService(
+    defaultCollection,
+    () => new Date(),
+    syncSavedWorkspaceToWiki,
+  ),
 };

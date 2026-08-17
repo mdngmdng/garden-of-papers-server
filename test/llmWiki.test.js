@@ -207,13 +207,13 @@ test('removes generated paper files when a paper is deleted from the canvas', as
   assert.equal(markdownStore.files.has(paperPath), false);
 });
 
-test('does not let an older workspace revision overwrite a newer Wiki snapshot', async () => {
+test('accepts a canonical saved workspace after an optimistic revision ran ahead', async () => {
   const { collection, service } = fixture();
   await service.sync('garden', workspace({ revision: 2, x: 500 }));
   const result = await service.sync('garden', workspace({ revision: 1, x: 100 }));
 
-  assert.equal(result.revision, 2);
-  assert.equal(collection.document.papers[0].position.x, 500);
+  assert.equal(result.revision, 1);
+  assert.equal(collection.document.papers[0].position.x, 100);
 });
 
 test('grounds chat in the complete catalog and the selected paper Markdown', async () => {

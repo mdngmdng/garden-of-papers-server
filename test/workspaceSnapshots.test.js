@@ -74,15 +74,36 @@ class MemorySnapshotCollection {
   }
 }
 
-function fixture() {
+function fixture(onWorkspaceSaved = null) {
   const collection = new MemorySnapshotCollection();
   let timestamp = Date.parse('2026-08-03T00:00:00.000Z');
   const service = createWorkspaceSnapshotService(
     () => collection,
     () => new Date(timestamp += 1_000),
+    onWorkspaceSaved,
   );
   return { collection, service };
 }
+
+test('triggers Wiki synchronization from every successful canonical save', async () => {
+  const synchronized = [];
+  const { service } = fixture(async (state) => synchronized.push(state));
+  await service.ensure(workspace());
+  const edited = workspace();
+  edited.objects.push({ id: 'note-1', type: 'GX.MARONote', text: 'saved' });
+
+  await service.save({
+    projectName: 'garden',
+    baseRevision: 0,
+    mutationId: 'writer:wiki-sync',
+    state: edited,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(synchronized.length, 1);
+  assert.equal(synchronized[0].revision, 1);
+  assert.equal(synchronized[0].objects[0].text, 'saved');
+});
 
 test('stores and updates a whole workspace as one revisioned document', async () => {
   const { collection, service } = fixture();
