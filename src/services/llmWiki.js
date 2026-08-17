@@ -6,6 +6,7 @@ const { getClient } = require('./mongo');
 const grobid = require('./grobid');
 const s3 = require('./s3');
 const pdfBridge = require('./pdfBridge');
+const pdfText = require('./pdfText');
 
 const DATABASE = 'GardenOfPapersSystem';
 const COLLECTION = 'LLMWikiSnapshots';
@@ -220,9 +221,22 @@ async function defaultSourceTextLoader(workspaceId, paper) {
   } catch {
     const pdfKey = `papers/${workspaceId}/${paper.pdf.fileId}.pdf`;
     const pdfBuffer = await s3.downloadPdfBuffer(pdfKey);
-    const teiXml = await grobid.processFulltext(pdfBuffer);
-    await s3.uploadTeiXml(teiKey, teiXml);
-    return teiBodyText(teiXml);
+    try {
+      const teiXml = await grobid.processFulltext(pdfBuffer);
+      await s3.uploadTeiXml(teiKey, teiXml);
+      paper.sourceStatus = 'grobid-tei';
+      return teiBodyText(teiXml);
+    } catch (grobidError) {
+      const fallbackText = cleanText(
+        await pdfText.extractPdfText(pdfBuffer),
+        MAX_SOURCE_CHARACTERS,
+      );
+      if (fallbackText) {
+        paper.sourceStatus = 'pdfjs-text';
+        return fallbackText;
+      }
+      throw grobidError;
+    }
   }
 }
 
@@ -267,7 +281,9 @@ async function hydratePapers(
             await sourceTextLoader(workspace.id, paper),
             MAX_SOURCE_CHARACTERS,
           );
-          paper.sourceStatus = paper.sourceText ? 'grobid-tei' : 'empty';
+          paper.sourceStatus = paper.sourceText
+            ? (paper.sourceStatus === 'pdfjs-text' ? 'pdfjs-text' : 'grobid-tei')
+            : 'empty';
         } catch (error) {
           if (isMissingStoredPdf(error)) {
             try {
