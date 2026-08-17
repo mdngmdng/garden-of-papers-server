@@ -122,6 +122,7 @@ function fixture() {
   let sourceLoads = 0;
   let modelInput = '';
   let timestamp = Date.parse('2026-08-17T00:00:00.000Z');
+  const bridgeRequests = [];
   const service = createLLMWikiService({
     getCollection: () => collection,
     markdownStore,
@@ -133,6 +134,10 @@ function fixture() {
       modelInput = input;
       return 'ILoveSketch의 저자는 Seok-Hyung Bae, Ravin Balakrishnan, Karan Singh입니다.';
     },
+    pdfBridgeRegistrar: async (request) => {
+      bridgeRequests.push(request);
+      return { status: 'ok' };
+    },
     now: () => new Date(timestamp += 1_000),
   });
   return {
@@ -141,6 +146,7 @@ function fixture() {
     service,
     sourceLoads: () => sourceLoads,
     modelInput: () => modelInput,
+    bridgeRequests,
   };
 }
 
@@ -231,4 +237,30 @@ test('returns board-shared chat history and grounds follow-up questions in it', 
   await service.chat('garden', '그중 첫 번째 저자는?');
   assert.match(modelInput(), /Shared recent conversation/);
   assert.match(modelInput(), /ILoveSketch 저자가 누구야/);
+});
+
+test('queues a missing stored PDF for Bridge collection and exposes its ingestion status', async () => {
+  const collection = new MemoryCollection();
+  const bridgeRequests = [];
+  const service = createLLMWikiService({
+    getCollection: () => collection,
+    markdownStore: new MemoryMarkdownStore(),
+    sourceTextLoader: async () => {
+      const error = new Error('The specified key does not exist.');
+      error.name = 'NoSuchKey';
+      throw error;
+    },
+    pdfBridgeRegistrar: async (request) => {
+      bridgeRequests.push(request);
+      return { status: 'ok' };
+    },
+    openAIRequest: async () => 'unused',
+  });
+
+  const result = await service.sync('garden', workspace());
+
+  assert.equal(bridgeRequests.length, 1);
+  assert.equal(bridgeRequests[0].fileId, 'pdf-1');
+  assert.equal(result.papers[0].sourceStatus, 'waiting-for-pdf-bridge');
+  assert.equal(result.papers[0].sourceTextCharacters, 0);
 });

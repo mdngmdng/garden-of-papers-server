@@ -5,6 +5,7 @@ const config = require('../config');
 const { getClient } = require('./mongo');
 const grobid = require('./grobid');
 const s3 = require('./s3');
+const pdfBridge = require('./pdfBridge');
 
 const DATABASE = 'GardenOfPapersSystem';
 const COLLECTION = 'LLMWikiSnapshots';
@@ -234,7 +235,19 @@ function positionHash(paper) {
   return hash(paper.position);
 }
 
-async function hydratePapers(workspace, previous, sourceTextLoader) {
+function isMissingStoredPdf(error) {
+  return error?.name === 'NoSuchKey'
+    || error?.Code === 'NoSuchKey'
+    || error?.$metadata?.httpStatusCode === 404
+    || /specified key does not exist|file not found/i.test(String(error?.message || ''));
+}
+
+async function hydratePapers(
+  workspace,
+  previous,
+  sourceTextLoader,
+  pdfBridgeRegistrar,
+) {
   const previousById = new Map((previous?.papers || []).map((paper) => [paper.id, paper]));
   const hydrated = new Array(workspace.papers.length);
   let cursor = 0;
@@ -256,7 +269,24 @@ async function hydratePapers(workspace, previous, sourceTextLoader) {
           );
           paper.sourceStatus = paper.sourceText ? 'grobid-tei' : 'empty';
         } catch (error) {
-          paper.sourceStatus = `error: ${cleanText(error?.message, 300) || 'PDF text unavailable'}`;
+          if (isMissingStoredPdf(error)) {
+            try {
+              const result = await pdfBridgeRegistrar({
+                projectName: workspace.id,
+                fileId: paper.pdf.fileId,
+                pdfUrl: paper.pdf.pdfSourceUrl || paper.pdf.resourceLink || paper.pdf.pdfUrl,
+                scholarUrl: paper.pdf.resourceLink,
+                paperTitle: paper.title,
+              });
+              paper.sourceStatus = result?.status === 'ready'
+                ? 'pdf-ready-retry-required'
+                : 'waiting-for-pdf-bridge';
+            } catch (bridgeError) {
+              paper.sourceStatus = `bridge-error: ${cleanText(bridgeError?.message, 260) || 'registration failed'}`;
+            }
+          } else {
+            paper.sourceStatus = `error: ${cleanText(error?.message, 300) || 'PDF text unavailable'}`;
+          }
         }
       } else if (!paper.sourceText) {
         paper.sourceStatus = 'no-pdf-file';
@@ -591,6 +621,14 @@ function publicStatus(document) {
     latestLogPath: document.latestLog?.filePath || '',
     latestLogMarkdown: document.latestLog?.markdown || '',
     wikiRoot: document.wikiRoot,
+    papers: (document.papers || []).map((paper) => ({
+      id: paper.id,
+      title: paper.title,
+      fileId: paper.pdf?.fileId || '',
+      sourceStatus: paper.sourceStatus || 'unknown',
+      sourceTextCharacters: paper.sourceText?.length || 0,
+      wikiFilePath: paper.filePath || '',
+    })),
     messages: publicChatMessages(document.chatMessages),
     analysis: {
       provider: 'OpenAI',
@@ -723,6 +761,7 @@ function createLLMWikiService({
   getCollection = defaultCollection,
   markdownStore = createMarkdownStore(),
   sourceTextLoader = defaultSourceTextLoader,
+  pdfBridgeRegistrar = pdfBridge.registerPendingRequest,
   openAIRequest = defaultOpenAIRequest,
   now = () => new Date(),
 } = {}) {
@@ -758,7 +797,12 @@ function createLLMWikiService({
       return publicStatus(previous);
     }
     workspace.syncedAt = iso(now());
-    workspace.papers = await hydratePapers(workspace, previous, sourceTextLoader);
+    workspace.papers = await hydratePapers(
+      workspace,
+      previous,
+      sourceTextLoader,
+      pdfBridgeRegistrar,
+    );
     workspace.counts = counts(workspace);
     workspace.wikiRoot = markdownStore.root;
     const diff = diffWorkspace(previous, workspace);
