@@ -42,6 +42,7 @@ exports.chat = async (req, res) => {
         req.params.id,
         req.body?.question,
         req.body?.requestId,
+        req.body?.contextPaperIds,
       ),
     );
   } catch (error) {

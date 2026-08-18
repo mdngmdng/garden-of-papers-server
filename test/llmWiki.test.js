@@ -126,14 +126,15 @@ function fixture(options = {}) {
   const service = createLLMWikiService({
     getCollection: () => collection,
     markdownStore,
-    sourceTextLoader: async () => {
+    sourceTextLoader: options.sourceTextLoader || (async () => {
       sourceLoads += 1;
       return 'ILoveSketch full PDF text from the cached TEI document.';
-    },
-    openAIRequest: options.openAIRequest || (async ({ input }) => {
-      modelInput = input;
-      return 'ILoveSketch의 저자는 Seok-Hyung Bae, Ravin Balakrishnan, Karan Singh입니다.';
     }),
+    openAIRequest: async (request) => {
+      modelInput = request.input;
+      if (options.openAIRequest) return options.openAIRequest(request);
+      return 'ILoveSketch의 저자는 Seok-Hyung Bae, Ravin Balakrishnan, Karan Singh입니다.';
+    },
     pdfBridgeRegistrar: async (request) => {
       bridgeRequests.push(request);
       return { status: 'ok' };
@@ -227,6 +228,85 @@ test('grounds chat in the complete catalog and the selected paper Markdown', asy
   assert.equal(response.sources[0].title, 'ILoveSketch');
   assert.equal(response.messages.length, 2);
   assert.equal(collection.document.chatMessages.length, 2);
+});
+
+test('retrieves a named paper contribution from 50 PDFs without sending every full text', async () => {
+  const contribution = [
+    'In summary, our work has the following primary contributions.',
+    'We present an immersive literature foraging system and an observational study.',
+  ].join(' ');
+  const { modelInput, service } = fixture({
+    sourceTextLoader: async (_workspaceId, paper) => paper.title.startsWith('LITFORAGER:')
+      ? `${'unrelated introduction material. '.repeat(1_500)} ${contribution}`
+      : 'unrelated background material. '.repeat(1_000),
+    openAIRequest: async () =>
+      'LITFORAGER의 핵심 기여는 immersive literature foraging system입니다.',
+  });
+  const state = workspace({ includePaper: false, includeNote: false });
+  state.objects = Array.from({ length: 50 }, (_, index) => ({
+    id: `paper-${index}`,
+    type: 'GX.MAROScientificPaper',
+    title: index === 37
+      ? 'LITFORAGER: Exploring Multimodal Literature Foraging Strategies in Immersive Sensemaking'
+      : `Background Research Paper ${String(index).padStart(2, '0')}`,
+    authors: [`Author ${index}`],
+    year: '2025',
+    venue: 'CHI',
+    abstract: index === 37 ? 'A system for immersive literature foraging.' : 'Background research.',
+    fileId: `pdf-${index}`,
+    pageIndex: 0,
+    pageCount: 10,
+    x: index * 10,
+    y: 0,
+    width: 342,
+    height: 444,
+    zIndex: index,
+    highlights: [],
+    createdAt: '2026-08-17T00:00:00.000Z',
+    updatedAt: '2026-08-17T00:00:00.000Z',
+  }));
+
+  await service.sync('garden', state);
+  const response = await service.chat('garden', 'litforager가 주장하는 핵심 기여가 뭐야?');
+
+  assert.match(modelInput(), /following primary contributions/);
+  assert.equal(response.sources[0].title.startsWith('LITFORAGER:'), true);
+  assert.equal(response.sources.length, 1);
+  assert.ok(modelInput().length < 100_000);
+});
+
+test('uses the currently selected paper when the question omits its title', async () => {
+  const { modelInput, service } = fixture({
+    sourceTextLoader: async () =>
+      'The selected paper makes a primary contribution to interactive 3D sketching.',
+    openAIRequest: async () =>
+      'ILoveSketch의 핵심 기여는 대화형 3D 스케치 방식입니다.',
+  });
+  await service.sync('garden', workspace());
+
+  const response = await service.chat(
+    'garden',
+    '이 논문의 핵심 기여가 뭐야?',
+    ['paper-ilovesketch'],
+  );
+
+  assert.match(modelInput(), /# Papers currently selected by the user/);
+  assert.match(modelInput(), /ILoveSketch \| id: paper-ilovesketch/);
+  assert.deepEqual(response.sources.map((source) => source.id), [
+    'paper-ilovesketch',
+  ]);
+});
+
+test('does not publish an in-list search-result PDF preview to the Wiki', async () => {
+  const { service, sourceLoads } = fixture();
+  const state = workspace({ includeNote: false });
+  state.objects[0].searchResultPreview = true;
+
+  const result = await service.sync('garden', state);
+
+  assert.equal(result.counts.papers, 0);
+  assert.equal(sourceLoads(), 0);
+  assert.deepEqual(result.papers, []);
 });
 
 test('returns board-shared chat history and grounds follow-up questions in it', async () => {
