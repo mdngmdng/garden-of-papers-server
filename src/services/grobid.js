@@ -272,15 +272,56 @@ function normalizeWs(s) {
   return s.replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeCitationText(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&(?:amp|#38);/gi, '&')
+    .replace(/&(?:apos|#39);/gi, "'")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function firstAuthorSurname(info) {
+  const author = info?.authors?.[0];
+  if (author) {
+    const lead = String(author).split(',', 1)[0];
+    return normalizeCitationText(lead).split(/\s+/).at(-1) || '';
+  }
+  const rawLead = String(info?.raw || '')
+    .split(/\b(?:19|20)\d{2}[a-z]?\b/i, 1)[0]
+    .split(/[,.;]/, 1)[0];
+  return normalizeCitationText(rawLead).split(/\s+/).at(-1) || '';
+}
+
 function xmlAttribute(attributes, name) {
   return attributes.match(new RegExp(`(?:^|\\s)${name}="([^"]*)"`))?.[1] || '';
 }
 
 function inferReferenceIdsFromMarker(markerText, refInfo) {
-  const markerNumbers = String(markerText || '').match(/\d+/g) || [];
-  return markerNumbers.flatMap((markerNumber) => {
-    const zeroBasedId = `b${Math.max(0, Number(markerNumber) - 1)}`;
-    return refInfo[zeroBasedId] ? [zeroBasedId] : [];
+  const marker = String(markerText || '');
+  const normalizedMarker = normalizeCitationText(marker);
+  const numericIds = /^[\s\[\](){}\d,;\-–—]+$/.test(marker)
+    ? (marker.match(/\d+/g) || []).flatMap((markerNumber) => {
+        const zeroBasedId = `b${Math.max(0, Number(markerNumber) - 1)}`;
+        return refInfo[zeroBasedId] ? [zeroBasedId] : [];
+      })
+    : [];
+  if (numericIds.length) return [...new Set(numericIds)];
+
+  // GROBID occasionally emits an author-year bibr node without a target.
+  // Recover it from the bibliography identity instead of treating a year such
+  // as 2017 as displayed reference number 2017.
+  return Object.entries(refInfo).flatMap(([refId, info]) => {
+    const year = String(info?.year || '').match(/\b(?:19|20)\d{2}[a-z]?\b/i)?.[0];
+    const surname = firstAuthorSurname(info);
+    return year
+      && surname
+      && normalizedMarker.includes(normalizeCitationText(year))
+      && normalizedMarker.includes(surname)
+      ? [refId]
+      : [];
   });
 }
 

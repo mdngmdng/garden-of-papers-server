@@ -50,3 +50,39 @@ test('preserves every reference target in a grouped citation', () => {
 
   assert.deepEqual(result.citationHits[0].refIds, ['b0', 'b1']);
 });
+
+test('recovers a targetless author-year marker from bibliography identity', () => {
+  const result = parseTeiToCitationHits(`
+    <TEI>
+      <text>
+        <body>
+          <p><ref type="bibr" coords="1,100,200,90,12">(Vaswani et al., 2017)</ref></p>
+        </body>
+        <back><listBibl>
+          <biblStruct xml:id="b0">
+            <analytic>
+              <author><persName><forename>Ashish</forename><surname>Vaswani</surname></persName></author>
+              <title level="a">Attention Is All You Need</title>
+            </analytic>
+            <monogr><imprint><date when="2017"/></imprint></monogr>
+          </biblStruct>
+        </listBibl></back>
+      </text>
+    </TEI>
+  `);
+
+  assert.deepEqual(result.citationHits[0].refIds, ['b0']);
+  assert.equal(result.citationHits[0].refTitle, 'Attention Is All You Need');
+});
+
+test('does not mistake an author-year publication year for a numeric reference id', () => {
+  const result = parseTeiToCitationHits(`
+    <TEI><text><body>
+      <p><ref type="bibr" coords="1,10,20,30,8">(Unknown, 2017)</ref></p>
+    </body><back><listBibl>
+      <biblStruct xml:id="b2016"><title>Unrelated numeric alias</title></biblStruct>
+    </listBibl></back></text></TEI>
+  `);
+
+  assert.deepEqual(result.citationHits[0].refIds, []);
+});
