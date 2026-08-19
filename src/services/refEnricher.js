@@ -35,6 +35,7 @@ async function enrichReferences(refInfo) {
         Object.assign(enriched, {
           googleScholarId: cached.googleScholarId,
           citesId: cached.citesId,
+          scholarMatchVerified: true,
           source: 'google_scholar',
         });
         results[refId] = enriched;
@@ -42,11 +43,12 @@ async function enrichReferences(refInfo) {
       }
 
       // 캐시 미스 → SerpAPI 호출
-      const scholarResult = await fetchScholarIdByTitle(ref.title);
+      const scholarResult = await fetchScholarIdByTitle(ref.title, ref);
       if (scholarResult) {
         Object.assign(enriched, {
           googleScholarId: scholarResult.resultId,
           citesId: scholarResult.citesId,
+          scholarMatchVerified: true,
           source: 'google_scholar',
         });
         await saveSerpCache(ref.title, scholarResult);
@@ -78,7 +80,10 @@ async function enrichReferences(refInfo) {
 
 async function findSerpCache(title) {
   const cache = getClient().db(CACHE_DB).collection(CACHE_COL);
-  return cache.findOne({ normalizedTitle: normalize(title) });
+  return cache.findOne({
+    normalizedTitle: normalize(title),
+    matchVersion: 2,
+  });
 }
 
 async function saveSerpCache(title, scholarResult) {
@@ -91,6 +96,10 @@ async function saveSerpCache(title, scholarResult) {
         originalTitle: title,
         googleScholarId: scholarResult.resultId,
         citesId: scholarResult.citesId,
+        matchedTitle: scholarResult.matchedTitle,
+        matchedAuthors: scholarResult.matchedAuthors,
+        matchedYear: scholarResult.matchedYear,
+        matchVersion: 2,
         cachedAt: new Date(),
       },
     },
