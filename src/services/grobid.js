@@ -1,6 +1,7 @@
 const axios = require('axios');
 const FormData = require('form-data');
 const config = require('../config');
+const { parseReferenceLine } = require('./pdfCitationFallback');
 
 /**
  * GROBID processFulltextDocument 호출
@@ -81,7 +82,7 @@ function parseTeiToCitationHits(teiXml) {
     }
 
     // Authors
-    const authors = parseAuthors(block);
+    let authors = parseAuthors(block);
 
     // DOI
     const doiMatch = block.match(/<idno\s+type="DOI"[^>]*>([\s\S]*?)<\/idno>/i);
@@ -89,13 +90,25 @@ function parseTeiToCitationHits(teiXml) {
 
     // Year
     const dateMatch = block.match(/<date[^>]*when="([^"]*?)"/);
-    const year = dateMatch ? dateMatch[1] : null;
+    let year = dateMatch ? dateMatch[1] : null;
 
     // Journal
     const journalMatch = block.match(/<title[^>]*level="j"[^>]*>([\s\S]*?)<\/title>/);
     const journal = journalMatch ? journalMatch[1].trim() : null;
 
-    refInfo[xmlId] = { title, raw: normalizeWs(raw), authors, doi, year, journal };
+    raw = normalizeWs(raw.replace(/<[^>]*>/g, ' '));
+    title = normalizeWs(title.replace(/<[^>]*>/g, ' '));
+    const rawIdentity = parseReferenceLine(xmlId, raw);
+    if (
+      rawIdentity.title
+      && (!title || !metadataTitleSupportedByRaw(title, raw))
+    ) {
+      title = rawIdentity.title;
+      authors = rawIdentity.authors.length ? rawIdentity.authors : authors;
+      year = rawIdentity.year || year;
+    }
+
+    refInfo[xmlId] = { title, raw, authors, doi, year, journal };
   }
 
   // (b) 본문 인용: <ref type="bibr" coords="..." target="#b0">text</ref>
@@ -270,6 +283,20 @@ function parseCoordsAttr(coords) {
 function normalizeWs(s) {
   if (!s) return s;
   return s.replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function metadataTitleSupportedByRaw(title, raw) {
+  const tokens = (value) => new Set(
+    normalizeCitationText(value)
+      .split(/\s+/)
+      .filter((token) => token.length > 1),
+  );
+  const titleTokens = tokens(title);
+  const rawTokens = tokens(raw);
+  if (!titleTokens.size || !rawTokens.size) return false;
+  let overlap = 0;
+  for (const token of titleTokens) if (rawTokens.has(token)) overlap += 1;
+  return overlap / titleTokens.size >= 0.7;
 }
 
 function normalizeCitationText(value) {

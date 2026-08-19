@@ -86,3 +86,25 @@ test('does not mistake an author-year publication year for a numeric reference i
 
   assert.deepEqual(result.citationHits[0].refIds, []);
 });
+
+test('keeps raw bibliography identity when GROBID title metadata conflicts', () => {
+  const result = parseTeiToCitationHits(`
+    <TEI><text><back><listBibl>
+      <biblStruct xml:id="b6">
+        <analytic>
+          <author><persName><forename>Unrelated</forename><surname>Author</surname></persName></author>
+          <title level="a">Wrong matched paper</title>
+        </analytic>
+        <monogr><imprint><date when="2024"/></imprint></monogr>
+        <note type="raw_reference">L. Eggli, C. Hsu, G. Elber, and B. Bruderlin. Inferring 3D models from freehand sketches and constraints. Computer-Aided Design, 1997.</note>
+      </biblStruct>
+    </listBibl></back></text></TEI>
+  `);
+
+  assert.equal(
+    result.refInfo.b6.title,
+    'Inferring 3D models from freehand sketches and constraints',
+  );
+  assert.equal(result.refInfo.b6.year, '1997');
+  assert.equal(result.refInfo.b6.authors[0], 'L. Eggli');
+});
