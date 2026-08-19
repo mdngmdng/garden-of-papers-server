@@ -30,11 +30,12 @@ async function enrichReferences(refInfo) {
       }
 
       // 캐시 먼저 확인 (유료 API 재호출 방지)
-      const cached = await findSerpCache(ref.title);
+      const cached = await findSerpCache(ref);
       if (cached) {
         Object.assign(enriched, {
           googleScholarId: cached.googleScholarId,
           citesId: cached.citesId,
+          scholarMatchVerified: true,
           source: 'google_scholar',
         });
         results[refId] = enriched;
@@ -42,11 +43,12 @@ async function enrichReferences(refInfo) {
       }
 
       // 캐시 미스 → SerpAPI 호출
-      const scholarResult = await fetchScholarIdByTitle(ref.title);
+      const scholarResult = await fetchScholarIdByTitle(ref.title, ref);
       if (scholarResult) {
         Object.assign(enriched, {
           googleScholarId: scholarResult.resultId,
           citesId: scholarResult.citesId,
+          scholarMatchVerified: true,
           source: 'google_scholar',
         });
         await saveSerpCache(ref.title, scholarResult);
@@ -76,9 +78,50 @@ async function enrichReferences(refInfo) {
 
 // ---- SerpAPI 캐시 ----
 
-async function findSerpCache(title) {
+function titleTokens(value) {
+  return new Set(normalize(value).split(/\s+/).filter((token) => token.length > 1));
+}
+
+function titleMatchScore(left, right) {
+  const leftTokens = titleTokens(left);
+  const rightTokens = titleTokens(right);
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  let overlap = 0;
+  for (const token of leftTokens) if (rightTokens.has(token)) overlap += 1;
+  return Math.min(overlap / leftTokens.size, overlap / rightTokens.size);
+}
+
+function surnameSet(authors) {
+  return new Set((authors || []).flatMap((author) => {
+    const tokens = String(author).toLowerCase().match(/[a-z0-9]+/g);
+    return tokens?.length ? [tokens.at(-1)] : [];
+  }));
+}
+
+function cachedReferenceMatches(reference, cached) {
+  if (titleMatchScore(reference.title, cached.matchedTitle) < 0.6) return false;
+  const expectedYear = Number(String(reference.year || '').match(/\b(?:19|20)\d{2}\b/)?.[0]) || null;
+  const matchedYear = Number(cached.matchedYear) || null;
+  if (expectedYear && matchedYear && Math.abs(expectedYear - matchedYear) > 1) return false;
+  const expectedAuthors = surnameSet(reference.authors);
+  const matchedAuthors = surnameSet(cached.matchedAuthors);
+  if (
+    expectedAuthors.size
+    && matchedAuthors.size
+    && ![...expectedAuthors].some((surname) => matchedAuthors.has(surname))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+async function findSerpCache(reference) {
   const cache = getClient().db(CACHE_DB).collection(CACHE_COL);
-  return cache.findOne({ normalizedTitle: normalize(title) });
+  const cached = await cache.findOne({
+    normalizedTitle: normalize(reference.title),
+    matchVersion: 3,
+  });
+  return cached && cachedReferenceMatches(reference, cached) ? cached : null;
 }
 
 async function saveSerpCache(title, scholarResult) {
@@ -91,6 +134,10 @@ async function saveSerpCache(title, scholarResult) {
         originalTitle: title,
         googleScholarId: scholarResult.resultId,
         citesId: scholarResult.citesId,
+        matchedTitle: scholarResult.matchedTitle,
+        matchedAuthors: scholarResult.matchedAuthors,
+        matchedYear: scholarResult.matchedYear,
+        matchVersion: 3,
         cachedAt: new Date(),
       },
     },
@@ -103,4 +150,4 @@ function normalize(title) {
   return title.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-module.exports = { enrichReferences };
+module.exports = { cachedReferenceMatches, enrichReferences };

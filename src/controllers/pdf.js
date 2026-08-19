@@ -5,6 +5,13 @@ const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
 const semanticIndexService = require('../services/semanticIndex');
 const pdfPreviewService = require('../services/pdfPreview');
+const { extractPdfCitationFallback } = require('../services/pdfCitationFallback');
+const {
+  citationDocumentMatchesPdfHash,
+  isCoordinateCitationDocument,
+  pdfContentSha256,
+  preferCitationDocument,
+} = require('../services/citationState');
 const config = require('../config');
 const { pipeline } = require('node:stream/promises');
 
@@ -149,34 +156,18 @@ function saveFileQuery(fileId) {
   }
 }
 
-function isCitationDocumentReady(document) {
-  return Boolean(
-    document
-    && Array.isArray(document.citationHits)
-    && (
-      document.citationStatus === 'ready'
-      || document.citationsExtractedAt
-      || document.citationHits.length > 0
-    ),
-  );
-}
-
 async function findCitationState(projectName, fileId) {
   const db = getClient().db(projectName);
   const query = saveFileQuery(fileId);
-  const savedPaper = await db.collection('SaveFile').findOne({
+  const savedPapers = await db.collection('SaveFile').find({
     $or: [query, { fileId }],
-  });
+  }).toArray();
   const metadata = await getPdfMetaCollection(projectName).findOne({ fileId });
   return {
     db,
     query,
     metadata,
-    document: isCitationDocumentReady(savedPaper)
-      ? savedPaper
-      : isCitationDocumentReady(metadata)
-        ? metadata
-        : null,
+    document: preferCitationDocument([...savedPapers, metadata]),
   };
 }
 
@@ -188,6 +179,93 @@ function citationPayload(fileId, document) {
     references: document.referenceList ?? document.references,
     referenceTitleList: document.referenceTitleList,
     extractedAt: document.citationsExtractedAt,
+    status: isCoordinateCitationDocument(document) ? 'ready' : 'fallback',
+  };
+}
+
+async function findReusableCitationDocument(projectName, fileId, pdfSha256) {
+  const db = getClient().db(projectName);
+  const candidates = [
+    ...await db.collection('PdfMeta').find({
+      fileId: { $ne: fileId },
+      $or: [
+        { pdfSha256 },
+        { citationRecoveredFrom: pdfSha256 },
+        { citationRecoveredFrom: `sha256:${pdfSha256}` },
+      ],
+    }).toArray(),
+    ...await db.collection('SaveFile').find({
+      fileId: { $ne: fileId },
+      $or: [
+        { pdfSha256 },
+        { citationRecoveredFrom: pdfSha256 },
+        { citationRecoveredFrom: `sha256:${pdfSha256}` },
+      ],
+    }).toArray(),
+  ].filter(
+    (candidate) =>
+      citationDocumentMatchesPdfHash(candidate, pdfSha256)
+      && isCoordinateCitationDocument(candidate),
+  );
+  return preferCitationDocument(candidates);
+}
+
+async function reuseCitationExtraction(projectName, fileId, pdfBuffer) {
+  const pdfSha256 = pdfContentSha256(pdfBuffer);
+  const reusable = await findReusableCitationDocument(
+    projectName,
+    fileId,
+    pdfSha256,
+  );
+  if (!reusable) return { pdfSha256, reused: false };
+
+  const db = getClient().db(projectName);
+  const query = saveFileQuery(fileId);
+  const fields = {
+    citationHits: reusable.citationHits,
+    pageSizeList: reusable.pageSizeList ?? reusable.pageSizes ?? [],
+    referenceList: reusable.referenceList ?? reusable.references ?? [],
+    referenceTitleList: reusable.referenceTitleList,
+    citationStatus: 'ready',
+    pdfSha256,
+    citationReusedFrom: reusable.fileId || String(reusable._id || ''),
+    citationsExtractedAt: reusable.citationsExtractedAt || new Date(),
+  };
+  const update = {
+    $set: fields,
+    $unset: {
+      citationError: '',
+      citationRetryable: '',
+      citationsFailedAt: '',
+    },
+  };
+  await Promise.all([
+    db.collection('SaveFile').updateMany(
+      { $or: [query, { fileId }] },
+      update,
+    ),
+    getPdfMetaCollection(projectName).updateOne(
+      { fileId },
+      { ...update, $set: { ...fields, fileId } },
+      { upsert: true },
+    ),
+  ]);
+  syncKeys.broadcastToProject(projectName, {
+    type: 'references_extraction',
+    fileId,
+    citationHits: fields.citationHits,
+    pageSizeList: fields.pageSizeList,
+    referenceList: fields.referenceList,
+    referenceTitleList: fields.referenceTitleList,
+  });
+  console.log(
+    `[GROBID] Reused citation coordinates for ${fileId} `
+    + `from ${fields.citationReusedFrom}`,
+  );
+  return {
+    pdfSha256,
+    reused: true,
+    referenceTitleList: fields.referenceTitleList,
   };
 }
 
@@ -396,6 +474,14 @@ exports.completePdfUpload = async (req, res) => {
 // GROBID 본문 인용 + 참고문헌 추출 → MongoDB 저장 → WebSocket 알림
 async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
   try {
+    const reusable = await reuseCitationExtraction(
+      projectName,
+      fileId,
+      pdfBuffer,
+    );
+    if (reusable.reused) {
+      return { referenceTitleList: reusable.referenceTitleList };
+    }
     console.log(`[GROBID] Extracting citations for ${fileId}...`);
     const { citationHits, pageSizes, refInfo, teiXml } = await grobidService.extractCitations(pdfBuffer);
     console.log(`[GROBID] Found ${citationHits.length} citation hits, ${Object.keys(refInfo).length} references for ${fileId}`);
@@ -431,7 +517,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
     } catch {
       query = { _id: fileId };
     }
-    await db.collection('SaveFile').updateOne(
+    await db.collection('SaveFile').updateMany(
       { $or: [query, { fileId }] },
       {
         $set: {
@@ -440,6 +526,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           referenceList,
           referenceTitleList,
           citationStatus: 'ready',
+          pdfSha256: reusable.pdfSha256,
           semanticIndexStatus: config.qwen.enabled ? 'processing' : 'disabled',
           citationsExtractedAt: new Date(),
         },
@@ -459,6 +546,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           referenceList,
           referenceTitleList,
           citationStatus: 'ready',
+          pdfSha256: reusable.pdfSha256,
           semanticIndexStatus: config.qwen.enabled ? 'processing' : 'disabled',
           citationsExtractedAt: new Date(),
         },
@@ -495,7 +583,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
         .then(async () => {
           const readyAt = new Date();
           await Promise.all([
-            db.collection('SaveFile').updateOne(
+            db.collection('SaveFile').updateMany(
               { $or: [query, { fileId }] },
               {
                 $set: {
@@ -524,7 +612,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
             error.message,
           );
           await Promise.all([
-            db.collection('SaveFile').updateOne(
+            db.collection('SaveFile').updateMany(
               { $or: [query, { fileId }] },
               {
                 $set: {
@@ -558,8 +646,8 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
     const enrichedReferenceList = Object.entries(enrichedRefs).map(
       ([refId, info]) => ({ refId, ...info }),
     );
-    await db.collection('SaveFile').updateOne(
-      query,
+    await db.collection('SaveFile').updateMany(
+      { $or: [query, { fileId }] },
       { $set: { referenceList: enrichedReferenceList, referencesEnrichedAt: new Date() } },
     );
     await getPdfMetaCollection(projectName).updateOne(
@@ -579,8 +667,48 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
 
     return { referenceTitleList };
   } catch (err) {
-    await markCitationFailure(projectName, fileId, err);
-    return null;
+    try {
+      const fallback = await extractPdfCitationFallback(pdfBuffer);
+      if (!fallback.referenceList.length) throw err;
+      const db = getClient().db(projectName);
+      const query = saveFileQuery(fileId);
+      const fallbackFields = {
+        ...fallback,
+        citationStatus: 'fallback',
+        pdfSha256: pdfContentSha256(pdfBuffer),
+        citationsExtractedAt: new Date(),
+        citationError: err instanceof Error ? err.message : String(err),
+        citationRetryable: true,
+      };
+      await Promise.all([
+        db.collection('SaveFile').updateMany(
+          { $or: [query, { fileId }] },
+          { $set: fallbackFields, $unset: { citationsFailedAt: '' } },
+        ),
+        getPdfMetaCollection(projectName).updateOne(
+          { fileId },
+          {
+            $set: { ...fallbackFields, fileId },
+            $unset: { citationsFailedAt: '' },
+          },
+          { upsert: true },
+        ),
+      ]);
+      syncKeys.broadcastToProject(projectName, {
+        type: 'references_extraction',
+        fileId,
+        ...fallback,
+      });
+      console.warn(
+        `[GROBID] Used PDF.js fallback for ${fileId}: `
+        + `${fallback.referenceList.length} references, `
+        + `${fallback.citationHits.length} citation markers`,
+      );
+      return { referenceTitleList: fallback.referenceTitleList };
+    } catch (fallbackError) {
+      await markCitationFailure(projectName, fileId, fallbackError);
+      return null;
+    }
   }
 }
 
@@ -595,7 +723,18 @@ exports.getCitations = async (req, res) => {
       fileid,
     );
 
-    if (!doc || !doc.citationHits) {
+    if (
+      !doc
+      || !doc.citationHits
+      || (
+        !isCoordinateCitationDocument(doc)
+        && metadata?.citationStatus === 'processing'
+      )
+      || (
+        !isCoordinateCitationDocument(doc)
+        && metadata?.citationStatus === 'failed'
+      )
+    ) {
       const status = metadata?.citationStatus === 'failed'
         ? 'failed'
         : 'processing';
@@ -627,7 +766,7 @@ exports.refreshCitations = async (req, res) => {
       document: cached,
       metadata,
     } = await findCitationState(projectName, fileid);
-    if (cached) {
+    if (cached && (!force || isCoordinateCitationDocument(cached))) {
       return res.json(citationPayload(fileid, cached));
     }
     if (citationJobs.has(jobKey)) {

@@ -1,6 +1,7 @@
 const axios = require('axios');
 const FormData = require('form-data');
 const config = require('../config');
+const { parseReferenceLine } = require('./pdfCitationFallback');
 
 /**
  * GROBID processFulltextDocument 호출
@@ -31,22 +32,20 @@ async function processFulltext(pdfBuffer) {
  * Unity GrobidClient.ParseTeiToCitationHits()와 동일한 로직
  */
 function parseTeiToCitationHits(teiXml) {
-  const TEI_NS = 'http://www.tei-c.org/ns/1.0';
-  const XML_NS = 'http://www.w3.org/XML/1998/namespace';
-
   // 간단한 XML 파서 대신 regex 기반으로 처리 (xml2js 의존성 없이)
   // 실제 TEI XML 구조에 맞춤
 
   // (0) 페이지 크기 파싱: <surface n="1" lrx="612" lry="792">
   const pageSizes = {};
-  const surfaceRegex = /<surface\s[^>]*n="(\d+)"[^>]*lrx="([\d.]+)"[^>]*lry="([\d.]+)"/g;
+  const surfaceRegex = /<surface\b([^>]*)>/g;
   let surfaceMatch;
   while ((surfaceMatch = surfaceRegex.exec(teiXml)) !== null) {
-    const page = parseInt(surfaceMatch[1], 10);
-    pageSizes[page] = {
-      widthPt: parseFloat(surfaceMatch[2]),
-      heightPt: parseFloat(surfaceMatch[3]),
-    };
+    const page = Number(xmlAttribute(surfaceMatch[1], 'n'));
+    const widthPt = Number(xmlAttribute(surfaceMatch[1], 'lrx'));
+    const heightPt = Number(xmlAttribute(surfaceMatch[1], 'lry'));
+    if (page > 0 && widthPt > 0 && heightPt > 0) {
+      pageSizes[page] = { widthPt, heightPt };
+    }
   }
 
   // (a) biblStruct 맵: xml:id -> { title, raw, doi, year, authors }
@@ -60,13 +59,13 @@ function parseTeiToCitationHits(teiXml) {
 
     // Title: analytic level="a" 우선, 없으면 monogr title
     let title = '';
-    const analyticBlock = block.match(/<analytic>([\s\S]*?)<\/analytic>/);
+    const analyticBlock = block.match(/<analytic\b[^>]*>([\s\S]*?)<\/analytic>/);
     if (analyticBlock) {
       const aTitleMatch = analyticBlock[1].match(/<title[^>]*level="a"[^>]*>([\s\S]*?)<\/title>/);
       if (aTitleMatch) title = aTitleMatch[1].trim();
     }
     if (!title) {
-      const monogrBlock = block.match(/<monogr>([\s\S]*?)<\/monogr>/);
+      const monogrBlock = block.match(/<monogr\b[^>]*>([\s\S]*?)<\/monogr>/);
       if (monogrBlock) {
         const mTitleMatch = monogrBlock[1].match(/<title[^>]*>([\s\S]*?)<\/title>/);
         if (mTitleMatch) title = mTitleMatch[1].trim();
@@ -83,7 +82,7 @@ function parseTeiToCitationHits(teiXml) {
     }
 
     // Authors
-    const authors = parseAuthors(block);
+    let authors = parseAuthors(block);
 
     // DOI
     const doiMatch = block.match(/<idno\s+type="DOI"[^>]*>([\s\S]*?)<\/idno>/i);
@@ -91,37 +90,49 @@ function parseTeiToCitationHits(teiXml) {
 
     // Year
     const dateMatch = block.match(/<date[^>]*when="([^"]*?)"/);
-    const year = dateMatch ? dateMatch[1] : null;
+    let year = dateMatch ? dateMatch[1] : null;
 
     // Journal
     const journalMatch = block.match(/<title[^>]*level="j"[^>]*>([\s\S]*?)<\/title>/);
     const journal = journalMatch ? journalMatch[1].trim() : null;
 
-    refInfo[xmlId] = { title, raw: normalizeWs(raw), authors, doi, year, journal };
+    raw = normalizeWs(raw.replace(/<[^>]*>/g, ' '));
+    title = normalizeWs(title.replace(/<[^>]*>/g, ' '));
+    const rawIdentity = parseReferenceLine(xmlId, raw);
+    if (
+      rawIdentity.title
+      && (!title || !metadataTitleSupportedByRaw(title, raw))
+    ) {
+      title = rawIdentity.title;
+      authors = rawIdentity.authors.length ? rawIdentity.authors : authors;
+      year = rawIdentity.year || year;
+    }
+
+    refInfo[xmlId] = { title, raw, authors, doi, year, journal };
   }
 
   // (b) 본문 인용: <ref type="bibr" coords="..." target="#b0">text</ref>
   //     속성 순서가 일정하지 않으므로 유연하게 파싱
   const citationHits = [];
-  const refRegex = /<ref\s+type="bibr"([^>]*)>([\s\S]*?)<\/ref>/g;
+  const refRegex = /<ref\b([^>]*?)(?<!\/)>([\s\S]*?)<\/ref>/g;
   let refMatch;
 
   while ((refMatch = refRegex.exec(teiXml)) !== null) {
     const attrs = refMatch[1];
+    if (xmlAttribute(attrs, 'type') !== 'bibr') continue;
     const markerText = (refMatch[2] || '').replace(/<[^>]*>/g, '').trim();
 
     // 속성에서 target과 coords를 개별 추출
-    const targetMatch = attrs.match(/target="([^"]*)"/);
-    const coordsMatch = attrs.match(/coords="([^"]*)"/);
-    const targetRaw = targetMatch ? targetMatch[1] : '';
-    const coordsStr = coordsMatch ? coordsMatch[1] : '';
-
-    // target은 여러 개일 수 있음 → 첫 번째 사용
-    const refId = targetRaw
-      .split(/\s+/)
+    const targetRaw = xmlAttribute(attrs, 'target');
+    const coordsStr = xmlAttribute(attrs, 'coords');
+    let refIds = targetRaw
+      .split(/[\s,;]+/)
       .filter(Boolean)
-      .map((s) => s.replace('#', ''))
-      .find(Boolean) || '';
+      .map((value) => value.replace(/^#/, ''));
+    if (!refIds.length) {
+      refIds = inferReferenceIdsFromMarker(markerText, refInfo);
+    }
+    const refId = refIds[0] || '';
 
     const info = refInfo[refId] || {};
 
@@ -130,6 +141,7 @@ function parseTeiToCitationHits(teiXml) {
     citationHits.push({
       markerText,
       refId,
+      refIds,
       refTitle: info.title || '',
       refRaw: info.raw || '',
       refAuthors: info.authors || [],
@@ -150,13 +162,13 @@ function composeBiblStructAsString(block) {
 
   // Title
   let title = '';
-  const analyticBlock = block.match(/<analytic>([\s\S]*?)<\/analytic>/);
+  const analyticBlock = block.match(/<analytic\b[^>]*>([\s\S]*?)<\/analytic>/);
   if (analyticBlock) {
     const m = analyticBlock[1].match(/<title[^>]*level="a"[^>]*>([\s\S]*?)<\/title>/);
     if (m) title = m[1].trim();
   }
   if (!title) {
-    const monogrBlock = block.match(/<monogr>([\s\S]*?)<\/monogr>/);
+    const monogrBlock = block.match(/<monogr\b[^>]*>([\s\S]*?)<\/monogr>/);
     if (monogrBlock) {
       const m = monogrBlock[1].match(/<title[^>]*>([\s\S]*?)<\/title>/);
       if (m) title = m[1].trim();
@@ -200,7 +212,7 @@ function composeBiblStructAsString(block) {
 
 function parseAuthors(block) {
   const authors = [];
-  const authorRegex = /<author>([\s\S]*?)<\/author>/g;
+  const authorRegex = /<author\b[^>]*>([\s\S]*?)<\/author>/g;
   let m;
   while ((m = authorRegex.exec(block)) !== null) {
     const authorBlock = m[1];
@@ -271,6 +283,73 @@ function parseCoordsAttr(coords) {
 function normalizeWs(s) {
   if (!s) return s;
   return s.replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function metadataTitleSupportedByRaw(title, raw) {
+  const tokens = (value) => new Set(
+    normalizeCitationText(value)
+      .split(/\s+/)
+      .filter((token) => token.length > 1),
+  );
+  const titleTokens = tokens(title);
+  const rawTokens = tokens(raw);
+  if (!titleTokens.size || !rawTokens.size) return false;
+  let overlap = 0;
+  for (const token of titleTokens) if (rawTokens.has(token)) overlap += 1;
+  return overlap / titleTokens.size >= 0.7;
+}
+
+function normalizeCitationText(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&(?:amp|#38);/gi, '&')
+    .replace(/&(?:apos|#39);/gi, "'")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function firstAuthorSurname(info) {
+  const author = info?.authors?.[0];
+  if (author) {
+    const lead = String(author).split(',', 1)[0];
+    return normalizeCitationText(lead).split(/\s+/).at(-1) || '';
+  }
+  const rawLead = String(info?.raw || '')
+    .split(/\b(?:19|20)\d{2}[a-z]?\b/i, 1)[0]
+    .split(/[,.;]/, 1)[0];
+  return normalizeCitationText(rawLead).split(/\s+/).at(-1) || '';
+}
+
+function xmlAttribute(attributes, name) {
+  return attributes.match(new RegExp(`(?:^|\\s)${name}="([^"]*)"`))?.[1] || '';
+}
+
+function inferReferenceIdsFromMarker(markerText, refInfo) {
+  const marker = String(markerText || '');
+  const normalizedMarker = normalizeCitationText(marker);
+  const numericIds = /^[\s\[\](){}\d,;\-–—]+$/.test(marker)
+    ? (marker.match(/\d+/g) || []).flatMap((markerNumber) => {
+        const zeroBasedId = `b${Math.max(0, Number(markerNumber) - 1)}`;
+        return refInfo[zeroBasedId] ? [zeroBasedId] : [];
+      })
+    : [];
+  if (numericIds.length) return [...new Set(numericIds)];
+
+  // GROBID occasionally emits an author-year bibr node without a target.
+  // Recover it from the bibliography identity instead of treating a year such
+  // as 2017 as displayed reference number 2017.
+  return Object.entries(refInfo).flatMap(([refId, info]) => {
+    const year = String(info?.year || '').match(/\b(?:19|20)\d{2}[a-z]?\b/i)?.[0];
+    const surname = firstAuthorSurname(info);
+    return year
+      && surname
+      && normalizedMarker.includes(normalizeCitationText(year))
+      && normalizedMarker.includes(surname)
+      ? [refId]
+      : [];
+  });
 }
 
 /**

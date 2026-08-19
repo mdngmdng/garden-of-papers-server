@@ -224,7 +224,79 @@ function collectResults(results, citationTitleList) {
  * @param {string} title - 논문 제목
  * @returns {{ resultId: string, citesId: string|null }} | null
  */
-async function fetchScholarIdByTitle(title) {
+const scholarTitleStopWords = new Set([
+  'a', 'an', 'and', 'as', 'at', 'by', 'for', 'from', 'in', 'of', 'on',
+  'the', 'to', 'using', 'with',
+]);
+
+function normalizeScholarTitle(value) {
+  return String(value || '')
+    .replace(/&(?:apos|#39);/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function scholarTitleMatchScore(left, right) {
+  const normalizedLeft = normalizeScholarTitle(left);
+  const normalizedRight = normalizeScholarTitle(right);
+  if (!normalizedLeft || !normalizedRight) return 0;
+  if (normalizedLeft === normalizedRight) return 1;
+  const tokens = (value) => new Set(
+    normalizeScholarTitle(value)
+      .split(/\s+/)
+      .filter((token) => token.length > 1 && !scholarTitleStopWords.has(token)),
+  );
+  const leftTokens = tokens(left);
+  const rightTokens = tokens(right);
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) intersection += 1;
+  }
+  const leftCoverage = intersection / leftTokens.size;
+  const rightCoverage = intersection / rightTokens.size;
+  if (leftCoverage < 0.6 || rightCoverage < 0.45) return 0;
+  return (leftCoverage + rightCoverage) / 2;
+}
+
+function authorSurnames(authors) {
+  return new Set((authors || []).flatMap((author) => {
+    const tokens = String(author).toLowerCase().match(/[a-z0-9]+/g);
+    return tokens?.length ? [tokens.at(-1)] : [];
+  }));
+}
+
+function selectScholarResultForReference(reference, results) {
+  const expectedDoi = String(reference?.doi || '').toLowerCase().trim();
+  const expectedYear = Number(String(reference?.year || '').match(/\b(?:19|20)\d{2}\b/)?.[0]) || null;
+  const expectedAuthors = authorSurnames(reference?.authors);
+  let best = null;
+
+  for (const raw of results || []) {
+    const candidate = normalizeScholarResult(raw);
+    if (!candidate.paperId) continue;
+    if (expectedDoi && JSON.stringify(raw).toLowerCase().includes(expectedDoi)) {
+      return { raw, candidate, score: 200 };
+    }
+    const titleScore = scholarTitleMatchScore(reference?.title, candidate.title);
+    if (!titleScore) continue;
+    if (expectedYear && candidate.year && Math.abs(expectedYear - candidate.year) > 1) {
+      continue;
+    }
+    let score = titleScore * 100;
+    if (expectedYear && candidate.year === expectedYear) score += 12;
+    const candidateAuthors = authorSurnames(candidate.authors);
+    if ([...expectedAuthors].some((surname) => candidateAuthors.has(surname))) {
+      score += 12;
+    }
+    if (!best || score > best.score) best = { raw, candidate, score };
+  }
+  return best?.score >= 65 ? best : null;
+}
+
+async function fetchScholarIdByTitle(title, reference = {}) {
   if (!title) return null;
   if (!config.serpApiKey) return null;
 
@@ -233,7 +305,7 @@ async function fetchScholarIdByTitle(title) {
       params: {
         engine: 'google_scholar',
         api_key: config.serpApiKey,
-        q: `"${title}"`, // 정확한 제목 매칭을 위해 따옴표
+        q: reference.doi || `"${title}"`,
       },
       timeout: 30000,
     });
@@ -241,11 +313,18 @@ async function fetchScholarIdByTitle(title) {
     const results = res.data.organic_results || [];
     if (results.length === 0) return null;
 
-    // 첫 번째 결과에서 ID 추출
-    const top = results[0];
+    const match = selectScholarResultForReference(
+      { ...reference, title },
+      results,
+    );
+    if (!match) return null;
+    const top = match.raw;
     return {
       resultId: top.result_id || null,
       citesId: top.inline_links?.cited_by?.cites_id || null,
+      matchedTitle: match.candidate.title,
+      matchedAuthors: match.candidate.authors,
+      matchedYear: match.candidate.year,
     };
   } catch (err) {
     console.warn(`[SerpAPI] Title search error ("${title.substring(0, 50)}"):`, err.message);
@@ -256,6 +335,7 @@ async function fetchScholarIdByTitle(title) {
 module.exports = {
   fetchCitedBy,
   fetchScholarIdByTitle,
+  selectScholarResultForReference,
   normalizeScholarResult,
   searchScholar,
   searchScholarCitations,
