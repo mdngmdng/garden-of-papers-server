@@ -5,6 +5,7 @@ const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
 const semanticIndexService = require('../services/semanticIndex');
 const pdfPreviewService = require('../services/pdfPreview');
+const { extractPdfCitationFallback } = require('../services/pdfCitationFallback');
 const {
   citationDocumentMatchesPdfHash,
   isCoordinateCitationDocument,
@@ -666,8 +667,48 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
 
     return { referenceTitleList };
   } catch (err) {
-    await markCitationFailure(projectName, fileId, err);
-    return null;
+    try {
+      const fallback = await extractPdfCitationFallback(pdfBuffer);
+      if (!fallback.referenceList.length) throw err;
+      const db = getClient().db(projectName);
+      const query = saveFileQuery(fileId);
+      const fallbackFields = {
+        ...fallback,
+        citationStatus: 'fallback',
+        pdfSha256: pdfContentSha256(pdfBuffer),
+        citationsExtractedAt: new Date(),
+        citationError: err instanceof Error ? err.message : String(err),
+        citationRetryable: true,
+      };
+      await Promise.all([
+        db.collection('SaveFile').updateMany(
+          { $or: [query, { fileId }] },
+          { $set: fallbackFields, $unset: { citationsFailedAt: '' } },
+        ),
+        getPdfMetaCollection(projectName).updateOne(
+          { fileId },
+          {
+            $set: { ...fallbackFields, fileId },
+            $unset: { citationsFailedAt: '' },
+          },
+          { upsert: true },
+        ),
+      ]);
+      syncKeys.broadcastToProject(projectName, {
+        type: 'references_extraction',
+        fileId,
+        ...fallback,
+      });
+      console.warn(
+        `[GROBID] Used PDF.js fallback for ${fileId}: `
+        + `${fallback.referenceList.length} references, `
+        + `${fallback.citationHits.length} citation markers`,
+      );
+      return { referenceTitleList: fallback.referenceTitleList };
+    } catch (fallbackError) {
+      await markCitationFailure(projectName, fileId, fallbackError);
+      return null;
+    }
   }
 }
 
