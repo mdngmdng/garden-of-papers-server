@@ -5,6 +5,10 @@ const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
 const semanticIndexService = require('../services/semanticIndex');
 const pdfPreviewService = require('../services/pdfPreview');
+const {
+  isCoordinateCitationDocument,
+  preferCitationDocument,
+} = require('../services/citationState');
 const config = require('../config');
 const { pipeline } = require('node:stream/promises');
 
@@ -149,34 +153,18 @@ function saveFileQuery(fileId) {
   }
 }
 
-function isCitationDocumentReady(document) {
-  return Boolean(
-    document
-    && Array.isArray(document.citationHits)
-    && (
-      document.citationStatus === 'ready'
-      || document.citationsExtractedAt
-      || document.citationHits.length > 0
-    ),
-  );
-}
-
 async function findCitationState(projectName, fileId) {
   const db = getClient().db(projectName);
   const query = saveFileQuery(fileId);
-  const savedPaper = await db.collection('SaveFile').findOne({
+  const savedPapers = await db.collection('SaveFile').find({
     $or: [query, { fileId }],
-  });
+  }).toArray();
   const metadata = await getPdfMetaCollection(projectName).findOne({ fileId });
   return {
     db,
     query,
     metadata,
-    document: isCitationDocumentReady(savedPaper)
-      ? savedPaper
-      : isCitationDocumentReady(metadata)
-        ? metadata
-        : null,
+    document: preferCitationDocument([...savedPapers, metadata]),
   };
 }
 
@@ -188,6 +176,7 @@ function citationPayload(fileId, document) {
     references: document.referenceList ?? document.references,
     referenceTitleList: document.referenceTitleList,
     extractedAt: document.citationsExtractedAt,
+    status: isCoordinateCitationDocument(document) ? 'ready' : 'fallback',
   };
 }
 
@@ -431,7 +420,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
     } catch {
       query = { _id: fileId };
     }
-    await db.collection('SaveFile').updateOne(
+    await db.collection('SaveFile').updateMany(
       { $or: [query, { fileId }] },
       {
         $set: {
@@ -495,7 +484,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
         .then(async () => {
           const readyAt = new Date();
           await Promise.all([
-            db.collection('SaveFile').updateOne(
+            db.collection('SaveFile').updateMany(
               { $or: [query, { fileId }] },
               {
                 $set: {
@@ -524,7 +513,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
             error.message,
           );
           await Promise.all([
-            db.collection('SaveFile').updateOne(
+            db.collection('SaveFile').updateMany(
               { $or: [query, { fileId }] },
               {
                 $set: {
@@ -558,8 +547,8 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
     const enrichedReferenceList = Object.entries(enrichedRefs).map(
       ([refId, info]) => ({ refId, ...info }),
     );
-    await db.collection('SaveFile').updateOne(
-      query,
+    await db.collection('SaveFile').updateMany(
+      { $or: [query, { fileId }] },
       { $set: { referenceList: enrichedReferenceList, referencesEnrichedAt: new Date() } },
     );
     await getPdfMetaCollection(projectName).updateOne(
@@ -595,7 +584,18 @@ exports.getCitations = async (req, res) => {
       fileid,
     );
 
-    if (!doc || !doc.citationHits) {
+    if (
+      !doc
+      || !doc.citationHits
+      || (
+        !isCoordinateCitationDocument(doc)
+        && metadata?.citationStatus === 'processing'
+      )
+      || (
+        !isCoordinateCitationDocument(doc)
+        && metadata?.citationStatus === 'failed'
+      )
+    ) {
       const status = metadata?.citationStatus === 'failed'
         ? 'failed'
         : 'processing';
@@ -627,7 +627,7 @@ exports.refreshCitations = async (req, res) => {
       document: cached,
       metadata,
     } = await findCitationState(projectName, fileid);
-    if (cached) {
+    if (cached && (!force || isCoordinateCitationDocument(cached))) {
       return res.json(citationPayload(fileid, cached));
     }
     if (citationJobs.has(jobKey)) {
