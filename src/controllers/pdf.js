@@ -6,7 +6,9 @@ const syncKeys = require('../services/syncKeys');
 const semanticIndexService = require('../services/semanticIndex');
 const pdfPreviewService = require('../services/pdfPreview');
 const {
+  citationDocumentMatchesPdfHash,
   isCoordinateCitationDocument,
+  pdfContentSha256,
   preferCitationDocument,
 } = require('../services/citationState');
 const config = require('../config');
@@ -177,6 +179,92 @@ function citationPayload(fileId, document) {
     referenceTitleList: document.referenceTitleList,
     extractedAt: document.citationsExtractedAt,
     status: isCoordinateCitationDocument(document) ? 'ready' : 'fallback',
+  };
+}
+
+async function findReusableCitationDocument(projectName, fileId, pdfSha256) {
+  const db = getClient().db(projectName);
+  const candidates = [
+    ...await db.collection('PdfMeta').find({
+      fileId: { $ne: fileId },
+      $or: [
+        { pdfSha256 },
+        { citationRecoveredFrom: pdfSha256 },
+        { citationRecoveredFrom: `sha256:${pdfSha256}` },
+      ],
+    }).toArray(),
+    ...await db.collection('SaveFile').find({
+      fileId: { $ne: fileId },
+      $or: [
+        { pdfSha256 },
+        { citationRecoveredFrom: pdfSha256 },
+        { citationRecoveredFrom: `sha256:${pdfSha256}` },
+      ],
+    }).toArray(),
+  ].filter(
+    (candidate) =>
+      citationDocumentMatchesPdfHash(candidate, pdfSha256)
+      && isCoordinateCitationDocument(candidate),
+  );
+  return preferCitationDocument(candidates);
+}
+
+async function reuseCitationExtraction(projectName, fileId, pdfBuffer) {
+  const pdfSha256 = pdfContentSha256(pdfBuffer);
+  const reusable = await findReusableCitationDocument(
+    projectName,
+    fileId,
+    pdfSha256,
+  );
+  if (!reusable) return { pdfSha256, reused: false };
+
+  const db = getClient().db(projectName);
+  const query = saveFileQuery(fileId);
+  const fields = {
+    citationHits: reusable.citationHits,
+    pageSizeList: reusable.pageSizeList ?? reusable.pageSizes ?? [],
+    referenceList: reusable.referenceList ?? reusable.references ?? [],
+    referenceTitleList: reusable.referenceTitleList,
+    citationStatus: 'ready',
+    pdfSha256,
+    citationReusedFrom: reusable.fileId || String(reusable._id || ''),
+    citationsExtractedAt: reusable.citationsExtractedAt || new Date(),
+  };
+  const update = {
+    $set: fields,
+    $unset: {
+      citationError: '',
+      citationRetryable: '',
+      citationsFailedAt: '',
+    },
+  };
+  await Promise.all([
+    db.collection('SaveFile').updateMany(
+      { $or: [query, { fileId }] },
+      update,
+    ),
+    getPdfMetaCollection(projectName).updateOne(
+      { fileId },
+      { ...update, $set: { ...fields, fileId } },
+      { upsert: true },
+    ),
+  ]);
+  syncKeys.broadcastToProject(projectName, {
+    type: 'references_extraction',
+    fileId,
+    citationHits: fields.citationHits,
+    pageSizeList: fields.pageSizeList,
+    referenceList: fields.referenceList,
+    referenceTitleList: fields.referenceTitleList,
+  });
+  console.log(
+    `[GROBID] Reused citation coordinates for ${fileId} `
+    + `from ${fields.citationReusedFrom}`,
+  );
+  return {
+    pdfSha256,
+    reused: true,
+    referenceTitleList: fields.referenceTitleList,
   };
 }
 
@@ -385,6 +473,14 @@ exports.completePdfUpload = async (req, res) => {
 // GROBID 본문 인용 + 참고문헌 추출 → MongoDB 저장 → WebSocket 알림
 async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
   try {
+    const reusable = await reuseCitationExtraction(
+      projectName,
+      fileId,
+      pdfBuffer,
+    );
+    if (reusable.reused) {
+      return { referenceTitleList: reusable.referenceTitleList };
+    }
     console.log(`[GROBID] Extracting citations for ${fileId}...`);
     const { citationHits, pageSizes, refInfo, teiXml } = await grobidService.extractCitations(pdfBuffer);
     console.log(`[GROBID] Found ${citationHits.length} citation hits, ${Object.keys(refInfo).length} references for ${fileId}`);
@@ -429,6 +525,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           referenceList,
           referenceTitleList,
           citationStatus: 'ready',
+          pdfSha256: reusable.pdfSha256,
           semanticIndexStatus: config.qwen.enabled ? 'processing' : 'disabled',
           citationsExtractedAt: new Date(),
         },
@@ -448,6 +545,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           referenceList,
           referenceTitleList,
           citationStatus: 'ready',
+          pdfSha256: reusable.pdfSha256,
           semanticIndexStatus: config.qwen.enabled ? 'processing' : 'disabled',
           citationsExtractedAt: new Date(),
         },

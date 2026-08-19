@@ -1,3 +1,5 @@
+const crypto = require('node:crypto');
+
 function citationDocumentSummary(document) {
   const hits = Array.isArray(document?.citationHits)
     ? document.citationHits
@@ -74,9 +76,22 @@ function preferCitationDocument(documents) {
     );
 }
 
+function pdfContentSha256(pdfBuffer) {
+  return crypto.createHash('sha256').update(pdfBuffer).digest('hex');
+}
+
+function citationDocumentMatchesPdfHash(document, sha256) {
+  if (!document || !sha256) return false;
+  return document.pdfSha256 === sha256
+    || document.citationRecoveredFrom === sha256
+    || document.citationRecoveredFrom === `sha256:${sha256}`;
+}
+
 module.exports = {
   citationDocumentSummary,
   compareCitationDocuments,
   isCoordinateCitationDocument,
+  citationDocumentMatchesPdfHash,
+  pdfContentSha256,
   preferCitationDocument,
 };

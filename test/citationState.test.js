@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 
 const {
   citationDocumentSummary,
+  citationDocumentMatchesPdfHash,
   isCoordinateCitationDocument,
+  pdfContentSha256,
   preferCitationDocument,
 } = require('../src/services/citationState');
 
@@ -59,4 +61,21 @@ test('requires both positioned hits and PDF page geometry', () => {
     pageSizes: 1,
     references: 1,
   });
+});
+
+test('matches identical PDF copies using canonical and recovered hashes', () => {
+  const hash = pdfContentSha256(Buffer.from('same-pdf'));
+  assert.equal(hash.length, 64);
+  assert.equal(citationDocumentMatchesPdfHash({ pdfSha256: hash }, hash), true);
+  assert.equal(
+    citationDocumentMatchesPdfHash(
+      { citationRecoveredFrom: `sha256:${hash}` },
+      hash,
+    ),
+    true,
+  );
+  assert.equal(
+    citationDocumentMatchesPdfHash({ pdfSha256: 'different' }, hash),
+    false,
+  );
 });
