@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "node --watch src/app.js",
+    "gateway": "node scripts/local-gateway.js",
     "test": "node --test",
     "backfill:pdf-previews": "node scripts/backfill-pdf-previews.js",
     "docker:up": "docker compose up -d --build",

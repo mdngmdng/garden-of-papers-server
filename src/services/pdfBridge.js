@@ -4,6 +4,10 @@ const DATABASE = 'GardenOfPapersSystem';
 const COLLECTION = 'PdfBridgeRequests';
 const EXPIRY_MS = 60 * 60 * 1000;
 
+function pendingRequestId(projectName, fileId) {
+  return `${Buffer.byteLength(projectName, 'utf8')}:${projectName}:${fileId}`;
+}
+
 function bridgeCollection() {
   return getClient().db(DATABASE).collection(COLLECTION);
 }
@@ -33,13 +37,23 @@ async function registerPendingRequest(request) {
     .findOne({ fileId: normalized.fileId });
   const requests = bridgeCollection();
   if (metadata?.size && metadata.uploadedAt) {
-    await requests.deleteOne({ _id: normalized.fileId });
+    await requests.deleteMany({
+      projectName: normalized.projectName,
+      fileId: normalized.fileId,
+    });
     return { status: 'ready' };
   }
 
   const now = new Date();
+  // Remove a legacy, globally keyed document for this same project before
+  // writing the project-scoped key. A matching fileId in another project is
+  // deliberately left untouched.
+  await requests.deleteOne({
+    _id: normalized.fileId,
+    projectName: normalized.projectName,
+  });
   await requests.updateOne(
-    { _id: normalized.fileId },
+    { _id: pendingRequestId(normalized.projectName, normalized.fileId) },
     {
       $set: {
         ...normalized,
@@ -54,12 +68,15 @@ async function registerPendingRequest(request) {
   return { status: 'ok' };
 }
 
-async function pendingRequests() {
+async function pendingRequests(projectNameValue = '') {
   const requests = bridgeCollection();
   const now = new Date();
   await requests.deleteMany({ expiresAt: { $lte: now } });
+  const projectName = String(projectNameValue || '').trim();
+  const query = { status: 'pending', expiresAt: { $gt: now } };
+  if (projectName) query.projectName = projectName;
   const pending = await requests
-    .find({ status: 'pending', expiresAt: { $gt: now } })
+    .find(query)
     .sort({ updatedAt: 1 })
     .toArray();
   return pending.map((request) => ({
@@ -72,11 +89,18 @@ async function pendingRequests() {
   }));
 }
 
-async function removePendingRequest(fileIdValue) {
+async function removePendingRequest(fileIdValue, options = {}) {
   const fileId = String(fileIdValue || '').trim();
+  const projectName = String(options.projectName || '').trim();
   const requests = bridgeCollection();
-  const pending = await requests.findOne({ _id: fileId });
+  const query = projectName ? { projectName, fileId } : { fileId };
+  const pending = await requests.findOne(query);
   if (!pending) return { status: 'ok', deleted: false };
+
+  if (options.force) {
+    const result = await requests.deleteOne({ _id: pending._id });
+    return { status: 'ok', deleted: result.deletedCount > 0 };
+  }
 
   const metadata = await getClient()
     .db(pending.projectName)
@@ -94,6 +118,7 @@ async function removePendingRequest(fileIdValue) {
 }
 
 module.exports = {
+  pendingRequestId,
   pendingRequests,
   registerPendingRequest,
   removePendingRequest,

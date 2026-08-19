@@ -1,4 +1,5 @@
 const pdfBridge = require('../services/pdfBridge');
+const projectLeases = require('../services/projectLeases');
 
 // POST /extension/register — Unity registers a pending PDF request
 exports.register = async (req, res) => {
@@ -22,10 +23,36 @@ exports.register = async (req, res) => {
 // GET /extension/pending — Extension polls for pending requests
 exports.pending = async (req, res) => {
   try {
-    return res.json(await pdfBridge.pendingRequests());
+    return res.json(await pdfBridge.pendingRequests(req.query.projectName));
   } catch (error) {
     console.error('[ExtBridge] Pending list failed:', error.message);
     return res.status(503).json({ error: 'Could not load pending PDF requests' });
+  }
+};
+
+// POST /extension/projects/claim — Atomically claim or renew one project.
+exports.claimProject = async (req, res) => {
+  try {
+    return res.json(await projectLeases.claim(req.body || {}));
+  } catch (error) {
+    const status = error.status || 503;
+    return res.status(status).json({
+      ok: false,
+      error: status === 503 ? 'Could not claim project' : error.message,
+    });
+  }
+};
+
+// POST /extension/projects/release — Release only the caller's own lease.
+exports.releaseProject = async (req, res) => {
+  try {
+    return res.json(await projectLeases.release(req.body || {}));
+  } catch (error) {
+    const status = error.status || 503;
+    return res.status(status).json({
+      ok: false,
+      error: status === 503 ? 'Could not release project' : error.message,
+    });
   }
 };
 
@@ -34,16 +61,32 @@ exports.pending = async (req, res) => {
 exports.remove = async (req, res) => {
   const { fileId } = req.params;
   try {
-    const result = await pdfBridge.removePendingRequest(fileId);
+    const projectName = String(req.query.projectName || '').trim();
+    const force = req.query.force === 'true' || req.query.force === '1';
+
+    if (force) {
+      // Renewing the lease is also an atomic ownership check. A different
+      // active client receives 409 and cannot discard this project's work.
+      await projectLeases.claim({
+        projectName,
+        clientId: req.query.clientId,
+      });
+    }
+
+    const result = await pdfBridge.removePendingRequest(fileId, {
+      force,
+      projectName,
+    });
     const status = result.status === 'pending' ? 409 : 200;
     console.log(`[ExtBridge] Remove ${result.deleted ? 'completed' : 'skipped'}: ${fileId}`);
     return res.status(status).json(result);
   } catch (error) {
     console.error(`[ExtBridge] Completion check failed: ${fileId}:`, error.message);
-    return res.status(503).json({
-      status: 'pending',
+    const status = error.status || 503;
+    return res.status(status).json({
+      status: status === 409 ? 'conflict' : 'error',
       deleted: false,
-      error: 'Could not verify PDF upload',
+      error: status === 503 ? 'Could not remove PDF request' : error.message,
     });
   }
 };
