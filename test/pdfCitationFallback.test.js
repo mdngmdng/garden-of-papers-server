@@ -4,6 +4,7 @@ const {
   detectCitationHits,
   extractAuthorYearReferences,
   extractNumberedReferences,
+  findBibliographyBoundary,
   recoverIncompleteGrobidExtraction,
 } = require('../src/services/pdfCitationFallback');
 
@@ -121,6 +122,37 @@ test('keeps fallback citation markers linked to their exact reference ids', () =
     ['1', '4', '5'],
   ]);
   assert.equal(hits[0].context, 'Literature review remains challenging [31].');
+});
+
+test('stops citation detection at a same-page References heading', () => {
+  const text = [
+    'MRTouch builds on prior mixed-reality interaction [18].',
+    '8 CONCLUSION',
+    'The system supports touch input.',
+    'REFERENCES',
+    '[18] F. Fitzpatrick. A cited bibliography entry. 1983.',
+    '[19] G. Burdea. Virtual environments. 1992.',
+  ].join('\n');
+
+  const hits = detectCitationHits(7, text);
+
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].markerText, '[18]');
+  assert.match(hits[0].context, /mixed-reality interaction/);
+});
+
+test('locates the exact bibliography boundary without discarding same-page body text', () => {
+  const body = 'The conclusion cites prior work [18].\n';
+  const pages = [{
+    pageIndex: 7,
+    text: `${body}REFERENCES\n[18] F. Fitzpatrick. A cited entry.`,
+  }];
+
+  assert.deepEqual(findBibliographyBoundary(pages), {
+    pageIndex: 7,
+    startChar: body.length,
+    inferred: false,
+  });
 });
 
 test('recovers publisher-spaced and full-width numeric citation markers', () => {

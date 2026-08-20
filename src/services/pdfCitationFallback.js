@@ -8,6 +8,41 @@ const authorYearPattern =
 const narrativeAuthorYearPattern =
   /\b([A-Z][\p{L}'’.-]+(?:\s+(?:et\s+al\.|and\s+[A-Z][\p{L}'’.-]+))?)\s*\(\s*((?:19|20)\d{2}[a-z]?)\s*\)/gu;
 
+function bibliographyHeadingStart(text) {
+  const heading = /(?:^|\n)[ \t]*(?:(?:(?:\d+(?:\.\d+)*)|(?:[ivxlcdm]+))\.?[ \t]+)?(?:references|bibliography)[ \t]*(?=\n|(?:\[|［)\s*\d|$)/iu.exec(
+    String(text || ''),
+  );
+  if (!heading) return -1;
+  return (heading.index || 0) + (heading[0].startsWith('\n') ? 1 : 0);
+}
+
+function findBibliographyBoundary(pages) {
+  const trailingPages = (pages || []).slice(Math.max(0, pages.length - 12));
+  for (const page of trailingPages) {
+    const startChar = bibliographyHeadingStart(page.text);
+    if (startChar >= 0) {
+      return { pageIndex: page.pageIndex, startChar, inferred: false };
+    }
+  }
+
+  const joined = trailingPages.map((page) => page.text).join('\n');
+  const inferredStart = inferBibliographyStart(joined);
+  if (inferredStart < 0) return null;
+  let cursor = 0;
+  for (const page of trailingPages) {
+    const end = cursor + page.text.length;
+    if (inferredStart <= end) {
+      return {
+        pageIndex: page.pageIndex,
+        startChar: Math.max(0, inferredStart - cursor),
+        inferred: true,
+      };
+    }
+    cursor = end + 1;
+  }
+  return null;
+}
+
 function expandNumericCitation(value) {
   const ids = new Set();
   for (const part of String(value || '').split(/[,;]/)) {
@@ -338,9 +373,13 @@ function authorYearReferenceIds(markerText, references) {
 }
 
 function detectCitationHits(pageIndex, text, references = []) {
+  const bibliographyStart = bibliographyHeadingStart(text);
+  const bodyText = bibliographyStart >= 0
+    ? text.slice(0, bibliographyStart)
+    : text;
   const hits = [];
   numericMarkerPattern.lastIndex = 0;
-  for (const match of text.matchAll(numericMarkerPattern)) {
+  for (const match of bodyText.matchAll(numericMarkerPattern)) {
     const refIds = expandNumericCitation(match[1]);
     if (!refIds.length) continue;
     const startChar = match.index || 0;
@@ -350,7 +389,7 @@ function detectCitationHits(pageIndex, text, references = []) {
       refIds,
       pageIndex,
       boxes: [],
-      context: citationContext(text, startChar, match[0].length),
+      context: citationContext(bodyText, startChar, match[0].length),
       startChar,
       length: match[0].length,
       source: 'pdf-text',
@@ -358,7 +397,7 @@ function detectCitationHits(pageIndex, text, references = []) {
   }
   const addAuthorYearHits = (pattern) => {
     pattern.lastIndex = 0;
-    for (const match of text.matchAll(pattern)) {
+    for (const match of bodyText.matchAll(pattern)) {
       const refIds = [...new Set(authorYearReferenceIds(match[0], references))];
       if (!refIds.length) continue;
       const startChar = match.index || 0;
@@ -368,7 +407,7 @@ function detectCitationHits(pageIndex, text, references = []) {
         refIds,
         pageIndex,
         boxes: [],
-        context: citationContext(text, startChar, match[0].length),
+        context: citationContext(bodyText, startChar, match[0].length),
         startChar,
         length: match[0].length,
         source: 'pdf-text',
@@ -421,9 +460,19 @@ async function extractPdfCitationFallback(pdfBuffer) {
   const referenceList = numberedReferences.length
     ? numberedReferences
     : extractAuthorYearReferences(pages);
-  const citationHits = pages.flatMap((page) =>
-    detectCitationHits(page.pageIndex, page.text, referenceList),
-  );
+  const bibliographyBoundary = findBibliographyBoundary(pages);
+  const citationHits = pages.flatMap((page) => {
+    if (
+      bibliographyBoundary &&
+      page.pageIndex > bibliographyBoundary.pageIndex
+    ) {
+      return [];
+    }
+    const bodyText = bibliographyBoundary?.pageIndex === page.pageIndex
+      ? page.text.slice(0, bibliographyBoundary.startChar)
+      : page.text;
+    return detectCitationHits(page.pageIndex, bodyText, referenceList);
+  });
   const refKeys = referenceList.map((reference) => reference.refId);
   const refValues = referenceList.map((reference) => ({
     array: [reference.title || '', ...(reference.authors || [])],
@@ -520,12 +569,14 @@ function recoverIncompleteGrobidExtraction(grobid, fallback) {
 
 module.exports = {
   alignFallbackHitsToReferences,
+  bibliographyHeadingStart,
   detectCitationHits,
   expandNumericCitation,
   extractAuthorYearReferences,
   extractNumberedReferences,
   extractPdfCitationFallback,
   extractPdfTextPages,
+  findBibliographyBoundary,
   parseReferenceLine,
   recoverIncompleteGrobidExtraction,
 };
