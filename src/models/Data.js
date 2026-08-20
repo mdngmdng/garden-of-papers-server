@@ -24,6 +24,8 @@ const dataSchema = new mongoose.Schema({
     value: [{ array: [String] }],
   },
   abovePageIndex: Number,
+  paperWidth: Number,
+  paperHeight: Number,
   referenceTextArray: [String],
   highlightTexts: [{
     item1: [Number],

@@ -241,7 +241,8 @@ exports.updateData = async (req, res) => {
     type, pos, textValue, paperName, year, resourceLink, fileId, pdfSourceUrl, publicationVenue,
     resultId, citesId, citationCount, referenceTitleList, citationTitleList,
     scholarCitationStatus, scholarCitationNextOffset, scholarCitationError,
-    abovePageIndex, referenceTextArray, highlightTexts, copiedOrigianlPaperId,
+    abovePageIndex, paperWidth, paperHeight,
+    referenceTextArray, highlightTexts, copiedOrigianlPaperId,
     lastPageNavigationTime, paperIndex, parentPaperId, color, noteType,
     textAlignmentIndex, fontSizeIndex, startPaperId, endPaperId, labelPosIndex,
     scaleFactor, ptCurveIds, ptArray, parentPageIndex,
@@ -290,6 +291,12 @@ exports.updateData = async (req, res) => {
       update.scholarCitationError = scholarCitationError;
     }
     update.abovePageIndex = abovePageIndex;
+    if (Number.isFinite(paperWidth) && paperWidth > 0) {
+      update.paperWidth = paperWidth;
+    }
+    if (Number.isFinite(paperHeight) && paperHeight > 0) {
+      update.paperHeight = paperHeight;
+    }
     if (referenceTextArray !== null && referenceTextArray.length !== 0) update.referenceTextArray = referenceTextArray;
     if (highlightTexts !== null && highlightTexts.length !== 0) update.highlightTexts = highlightTexts;
     if (copiedOrigianlPaperId !== '') update.copiedOrigianlPaperId = copiedOrigianlPaperId;
