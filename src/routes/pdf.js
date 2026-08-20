@@ -10,6 +10,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.get('/pdf_metadata/:projectName/:fileid', pdfController.getMetadata);
 router.post('/pdf_upload_url/:projectName', pdfController.createUploadUrl);
 router.post('/complete_pdf_upload/:projectName', pdfController.completePdfUpload);
+router.post('/reuse_pdf/:projectName', pdfController.reusePdf);
 router.post('/upload_pdf/:projectName', upload.single('file'), pdfController.uploadPdf);
 router.get('/list_pdfs/:projectName', pdfController.listPdfs);
 router.get('/download_pdf/:projectName/:fileid', pdfController.downloadPdf);

@@ -5,6 +5,7 @@ const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
 const semanticIndexService = require('../services/semanticIndex');
 const pdfPreviewService = require('../services/pdfPreview');
+const pdfStorage = require('../services/pdfStorage');
 const {
   extractPdfCitationFallback,
   recoverIncompleteGrobidExtraction,
@@ -26,16 +27,24 @@ const citationJobs = new Map();
 const citationQueue = [];
 let activeCitationJobs = 0;
 
-function s3Key(projectName, fileId) {
-  return `papers/${projectName}/${fileId}.pdf`;
-}
-
 function isValidFileId(value) {
   return typeof value === 'string' && /^[a-zA-Z0-9._-]{1,200}$/.test(value);
 }
 
 function getPdfMetaCollection(projectName) {
   return getClient().db(projectName).collection('PdfMeta');
+}
+
+function pdfIdentityFromBody(body = {}) {
+  const candidate = body.identity ?? body.pdfIdentity;
+  if (!candidate) return {};
+  if (typeof candidate === 'object') return candidate;
+  try {
+    const parsed = JSON.parse(candidate);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function isMissingPdfError(error) {
@@ -120,7 +129,9 @@ function queueCitationExtraction(projectName, fileId, pdfBuffer) {
     : undefined;
   const job = enqueueCitationJob(jobKey, async () => {
     const data = bufferedPdf
-      ?? await s3Service.downloadPdfBuffer(s3Key(projectName, fileId));
+      ?? await s3Service.downloadPdfBuffer(
+        await pdfStorage.resolvePdfS3Key(projectName, fileId),
+      );
     await extractAndSaveCitations(projectName, fileId, data);
   })
     .catch((error) => markCitationFailure(projectName, fileId, error))
@@ -302,7 +313,9 @@ exports.getMetadata = async (req, res) => {
     }
 
     // 2. 캐시 미스 → S3에서 조회 후 캐싱
-    const metadata = await s3Service.headPdf(s3Key(projectName, fileid));
+    const metadata = await s3Service.headPdf(
+      await pdfStorage.resolvePdfS3Key(projectName, fileid),
+    );
     await getPdfMetaCollection(projectName).updateOne(
       { fileId: fileid },
       { $set: { fileId: fileid, size: metadata.size } },
@@ -318,6 +331,49 @@ exports.getMetadata = async (req, res) => {
   }
 };
 
+// POST /reuse_pdf/:projectName
+// Resolve a paper from the cross-board library before the browser downloads it
+// from a publisher again. The target board receives its own lightweight file
+// id while every board points at the same content-addressed S3 object.
+exports.reusePdf = async (req, res) => {
+  const { projectName } = req.params;
+  const { fileId } = req.body ?? {};
+  const identity = pdfIdentityFromBody(req.body);
+  if (!isValidFileId(fileId) || !pdfStorage.paperIdentityKeys(identity).length) {
+    return res.status(400).json({ error: 'Invalid shared PDF lookup request' });
+  }
+
+  try {
+    const reused = await pdfStorage.reusePdfIntoProject({
+      projectName,
+      fileId,
+      identity,
+    });
+    if (!reused) return res.status(404).json({ reused: false });
+    const metadata = reused.metadata ?? {};
+    const citationsReady = isCoordinateCitationDocument(metadata);
+    if (!citationsReady) {
+      await getPdfMetaCollection(projectName).updateOne(
+        { fileId },
+        { $set: { citationStatus: 'processing' } },
+      );
+      queueCitationExtraction(projectName, fileId);
+    }
+    pdfPreviewService.queuePdfPreview(projectName, fileId, 0);
+    return res.json({
+      reused: true,
+      fileId,
+      size: reused.size,
+      pdfSha256: reused.pdfSha256,
+      citationStatus: citationsReady ? 'ready' : 'processing',
+      ...(citationsReady ? citationPayload(fileId, metadata) : {}),
+    });
+  } catch (error) {
+    console.error('Error reusing shared PDF:', error);
+    return res.status(500).json({ error: 'Could not search the shared PDF library' });
+  }
+};
+
 // POST /upload_pdf/:projectName
 exports.uploadPdf = async (req, res) => {
   if (!req.file) {
@@ -327,11 +383,20 @@ exports.uploadPdf = async (req, res) => {
   const { fileId } = req.body;
   const { projectName } = req.params;
   const pdfData = req.file.buffer;
+  const identity = pdfIdentityFromBody(req.body);
+
+  if (!isValidFileId(fileId)) {
+    return res.status(400).json({ error: 'Invalid PDF file id' });
+  }
 
   try {
-    // 1. S3에 PDF 업로드
-    const key = s3Key(projectName, fileId);
-    await s3Service.uploadPdf(key, pdfData);
+    // Store one content-addressed object shared by every board.
+    const stored = await pdfStorage.storeSharedPdf({
+      projectName,
+      fileId,
+      pdfBuffer: pdfData,
+      identity,
+    });
 
     // 2. 크기를 MongoDB에 캐싱
     await getPdfMetaCollection(projectName).updateOne(
@@ -339,7 +404,10 @@ exports.uploadPdf = async (req, res) => {
       {
         $set: {
           fileId,
-          size: pdfData.length,
+          size: stored.size,
+          pdfSha256: stored.pdfSha256,
+          s3Key: stored.s3Key,
+          sharedStorage: true,
           citationStatus: 'processing',
           uploadedAt: new Date(),
         },
@@ -365,6 +433,8 @@ exports.uploadPdf = async (req, res) => {
     // PDF는 바로 사용할 수 있게 응답하고, 무거운 GROBID 처리는 백그라운드에서 실행한다.
     res.status(201).json({
       message: 'PDF uploaded successfully to S3',
+      fileId,
+      pdfSha256: stored.pdfSha256,
       citationStatus: 'processing',
     });
 
@@ -397,7 +467,7 @@ exports.createUploadUrl = async (req, res) => {
       ? contentType
       : 'application/pdf';
     const uploadUrl = await s3Service.createPdfUploadUrl(
-      s3Key(projectName, fileId),
+      pdfStorage.stagingPdfS3Key(projectName, fileId),
       normalizedContentType,
     );
     res.json({
@@ -418,6 +488,7 @@ exports.completePdfUpload = async (req, res) => {
   const { projectName } = req.params;
   const { fileId, size } = req.body ?? {};
   const expectedSize = Number(size);
+  const identity = pdfIdentityFromBody(req.body);
 
   if (
     !isValidFileId(fileId) ||
@@ -429,16 +500,28 @@ exports.completePdfUpload = async (req, res) => {
   }
 
   try {
-    const metadata = await s3Service.headPdf(s3Key(projectName, fileId));
+    const stagingKey = pdfStorage.stagingPdfS3Key(projectName, fileId);
+    const metadata = await s3Service.headPdf(stagingKey);
     if (metadata.size !== expectedSize) {
       return res.status(409).json({ error: 'Uploaded PDF size does not match' });
     }
+    const pdfBuffer = await s3Service.downloadPdfBuffer(stagingKey);
+    const stored = await pdfStorage.storeSharedPdf({
+      projectName,
+      fileId,
+      pdfBuffer,
+      identity,
+    });
+    await s3Service.deletePdf(stagingKey).catch(() => {});
     await getPdfMetaCollection(projectName).updateOne(
       { fileId },
       {
         $set: {
           fileId,
-          size: metadata.size,
+          size: stored.size,
+          pdfSha256: stored.pdfSha256,
+          s3Key: stored.s3Key,
+          sharedStorage: true,
           citationStatus: 'processing',
           uploadedAt: new Date(),
         },
@@ -461,10 +544,12 @@ exports.completePdfUpload = async (req, res) => {
     );
     res.status(201).json({
       message: 'PDF uploaded successfully to S3',
+      fileId,
+      pdfSha256: stored.pdfSha256,
       citationStatus: 'processing',
     });
-    queueCitationExtraction(projectName, fileId);
-    pdfPreviewService.queuePdfPreview(projectName, fileId, 0);
+    queueCitationExtraction(projectName, fileId, pdfBuffer);
+    pdfPreviewService.queuePdfPreview(projectName, fileId, 0, pdfBuffer);
   } catch (error) {
     if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
       return res.status(404).json({ error: 'Uploaded PDF was not found' });
@@ -828,7 +913,9 @@ exports.refreshCitations = async (req, res) => {
     }
 
     try {
-      await s3Service.headPdf(s3Key(projectName, fileid));
+      await s3Service.headPdf(
+        await pdfStorage.resolvePdfS3Key(projectName, fileid),
+      );
     } catch (error) {
       if (isMissingPdfError(error)) {
         res.setHeader('Retry-After', '2');
@@ -958,7 +1045,7 @@ exports.downloadPdf = async (req, res) => {
   }, 5_000);
 
   try {
-    const key = s3Key(projectName, fileid);
+    const key = await pdfStorage.resolvePdfS3Key(projectName, fileid);
     const range = typeof req.headers.range === 'string'
       ? req.headers.range
       : undefined;

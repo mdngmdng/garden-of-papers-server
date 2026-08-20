@@ -5,6 +5,7 @@ const config = require('../config');
 const { getClient } = require('./mongo');
 const grobid = require('./grobid');
 const s3 = require('./s3');
+const pdfStorage = require('./pdfStorage');
 const pdfBridge = require('./pdfBridge');
 const pdfText = require('./pdfText');
 
@@ -417,7 +418,10 @@ async function defaultSourceTextLoader(workspaceId, paper) {
   try {
     return teiBodyText(await s3.downloadTeiXml(teiKey));
   } catch {
-    const pdfKey = `papers/${workspaceId}/${paper.pdf.fileId}.pdf`;
+    const pdfKey = await pdfStorage.resolvePdfS3Key(
+      workspaceId,
+      paper.pdf.fileId,
+    );
     const pdfBuffer = await s3.downloadPdfBuffer(pdfKey);
     try {
       const teiXml = await grobid.processFulltext(pdfBuffer);

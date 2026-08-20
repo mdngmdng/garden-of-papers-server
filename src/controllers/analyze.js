@@ -1,6 +1,7 @@
 const { analyzeRelations, generateClusterLabels, findRelevantSentences, findClosestSentence, summarizePaper, storytelling, generatePlacementReasons } = require('../services/gemini');
 const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
+const pdfStorage = require('../services/pdfStorage');
 const semanticIndexService = require('../services/semanticIndex');
 const {
   CitationGraphAnalysisError,
@@ -463,7 +464,7 @@ exports.highlights = async (req, res) => {
           // TEI XML이 없으면 PDF에서 GROBID 추출
           console.log(`[Highlights] ${marker}: No cached TEI XML, extracting from PDF...`);
           const { processFulltext } = require('../services/grobid');
-          const s3Key = `papers/${projectName}/${fileId}.pdf`;
+          const s3Key = await pdfStorage.resolvePdfS3Key(projectName, fileId);
           const s3Res = await s3Service.downloadPdf(s3Key);
           const chunks = [];
           for await (const chunk of s3Res.Body) chunks.push(chunk);
@@ -567,7 +568,10 @@ async function loadPaperSearchSentences(projectName, doc, fallbackFileId) {
       `[ClosestSentence] Cached TEI unavailable for ${storageFileId}; `
       + 'using local PDF text extraction',
     );
-    const pdfKey = `papers/${projectName}/${storageFileId}.pdf`;
+    const pdfKey = await pdfStorage.resolvePdfS3Key(
+      projectName,
+      storageFileId,
+    );
     const pdfBuffer = await s3Service.downloadPdfBuffer(pdfKey);
     const pages = await extractPdfTextPages(pdfBuffer);
     return {
@@ -618,7 +622,7 @@ exports.citationGraph = async (req, res) => {
       return res.status(422).json({ error: 'Cited paper PDF is not available yet' });
     }
     const pdfBuffer = await s3Service.downloadPdfBuffer(
-      `papers/${projectName}/${storageFileId}.pdf`,
+      await pdfStorage.resolvePdfS3Key(projectName, storageFileId),
     );
     const pages = await extractPdfTextPages(pdfBuffer);
     const result = await analyzeCitationGraph({
@@ -959,7 +963,7 @@ exports.summarize = async (req, res) => {
     } catch {
       console.log(`[Summarize] No cached TEI, extracting from PDF...`);
       const { processFulltext } = require('../services/grobid');
-      const s3Key = `papers/${projectName}/${fileId}.pdf`;
+      const s3Key = await pdfStorage.resolvePdfS3Key(projectName, fileId);
       const s3Res = await s3Service.downloadPdf(s3Key);
       const chunks = [];
       for await (const chunk of s3Res.Body) chunks.push(chunk);
