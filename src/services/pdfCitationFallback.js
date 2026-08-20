@@ -1,4 +1,8 @@
-const numericMarkerPattern = /\[(\d+(?:\s*[-–—,;]\s*\d+)*)\]/g;
+// Some publisher PDFs encode the brackets and every number as separate text
+// runs. PDF.js reconstructs those markers as "[ 21 ]" or "[ 5 , 14 ]".
+// Accept whitespace (including line breaks) and full-width brackets so the
+// fallback is not tied to one publisher's text encoding.
+const numericMarkerPattern = /(?:\[|［)\s*(\d+(?:\s*[-–—,;]\s*\d+)*)\s*(?:\]|］)/g;
 const authorYearPattern =
   /\(([^()]{1,300}?\b(?:19|20)\d{2}[a-z]?[^()]{0,120})\)/gi;
 const narrativeAuthorYearPattern =
@@ -73,7 +77,9 @@ function extractNumberedReferences(pages) {
     ? joined.slice((heading.index || 0) + heading[0].length)
     : joined.slice(inferredStart);
   const bracketMarkers = [
-    ...bibliography.matchAll(/(?:^|\n|[ \t])\[(\d{1,4})\]\s*/g),
+    ...bibliography.matchAll(
+      /(?:^|\n|[ \t])(?:\[|［)\s*(\d{1,4})\s*(?:\]|］)\s*/g,
+    ),
   ];
   const plainCandidates = [
     ...bibliography.matchAll(/(?:^|\n)[ \t]*(\d{1,4})[.)][ \t]+/g),
@@ -226,7 +232,11 @@ function extractAuthorYearReferences(pages) {
 }
 
 function inferBibliographyStart(text) {
-  const candidates = [...text.matchAll(/(?:^|\n|[ \t])\[(\d{1,4})\]\s*/g)];
+  const candidates = [
+    ...text.matchAll(
+      /(?:^|\n|[ \t])(?:\[|［)\s*(\d{1,4})\s*(?:\]|］)\s*/g,
+    ),
+  ];
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     if (Number(candidates[index][1]) !== 1) continue;
     const followingIds = new Set(
@@ -370,7 +380,7 @@ function detectCitationHits(pageIndex, text, references = []) {
   return hits;
 }
 
-async function extractPdfCitationFallback(pdfBuffer) {
+async function extractPdfTextPages(pdfBuffer) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(pdfBuffer),
@@ -379,7 +389,6 @@ async function extractPdfCitationFallback(pdfBuffer) {
   });
   const document = await loadingTask.promise;
   const pages = [];
-  const pageSizeList = [];
   try {
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
@@ -393,16 +402,21 @@ async function extractPdfCitationFallback(pdfBuffer) {
         widthPt: viewport.width,
         heightPt: viewport.height,
       });
-      pageSizeList.push({
-        page: pageNumber,
-        widthPt: viewport.width,
-        heightPt: viewport.height,
-      });
       page.cleanup();
     }
   } finally {
     await document.destroy();
   }
+  return pages;
+}
+
+async function extractPdfCitationFallback(pdfBuffer) {
+  const pages = await extractPdfTextPages(pdfBuffer);
+  const pageSizeList = pages.map((page) => ({
+    page: page.pageIndex + 1,
+    widthPt: page.widthPt,
+    heightPt: page.heightPt,
+  }));
   const numberedReferences = extractNumberedReferences(pages);
   const referenceList = numberedReferences.length
     ? numberedReferences
@@ -422,11 +436,96 @@ async function extractPdfCitationFallback(pdfBuffer) {
   };
 }
 
+function referenceInfoFromFallback(referenceList) {
+  return Object.fromEntries((referenceList || []).map((reference) => [
+    String(reference.refId || reference.id || ''),
+    {
+      title: reference.title || '',
+      raw: reference.raw || '',
+      authors: Array.isArray(reference.authors) ? reference.authors : [],
+      doi: reference.doi || null,
+      year: reference.year || null,
+      journal: reference.journal || reference.venue || null,
+    },
+  ]).filter(([id]) => id));
+}
+
+function referenceAlias(referenceId, refInfo) {
+  const normalized = String(referenceId || '').replace(/^#/, '');
+  if (refInfo[normalized]) return normalized;
+  const printedNumber = Number(normalized);
+  if (!Number.isInteger(printedNumber) || printedNumber < 1) return normalized;
+  return [
+    `b${printedNumber - 1}`,
+    `bib${printedNumber - 1}`,
+    `b${printedNumber}`,
+    `bib${printedNumber}`,
+  ].find((candidate) => refInfo[candidate]) || normalized;
+}
+
+function alignFallbackHitsToReferences(citationHits, refInfo) {
+  return (citationHits || []).map((hit) => {
+    const refIds = [...new Set(
+      (hit.refIds || []).map((refId) => referenceAlias(refId, refInfo)),
+    )];
+    return {
+      ...hit,
+      refId: refIds[0] || '',
+      refIds,
+    };
+  });
+}
+
+function recoverIncompleteGrobidExtraction(grobid, fallback) {
+  const grobidRefInfo = grobid?.refInfo || {};
+  const fallbackRefInfo = referenceInfoFromFallback(fallback?.referenceList);
+  const refInfo = Object.keys(grobidRefInfo).length
+    ? { ...grobidRefInfo }
+    : fallbackRefInfo;
+  const grobidPageSizes = grobid?.pageSizes || {};
+  const fallbackPageSizes = Object.fromEntries(
+    (fallback?.pageSizeList || []).map((size) => [
+      String(size.page),
+      { widthPt: size.widthPt, heightPt: size.heightPt },
+    ]),
+  );
+  const pageSizes = Object.keys(grobidPageSizes).length
+    ? grobidPageSizes
+    : fallbackPageSizes;
+  const grobidHits = Array.isArray(grobid?.citationHits)
+    ? grobid.citationHits
+    : [];
+  const positionedGrobidHits = grobidHits.filter(
+    (hit) => Array.isArray(hit.boxes) && hit.boxes.length > 0,
+  );
+  const fallbackHits = alignFallbackHitsToReferences(
+    fallback?.citationHits,
+    refInfo,
+  );
+  const needsFallbackHits = !grobidHits.length
+    || !positionedGrobidHits.length
+    || !Object.keys(grobidPageSizes).length;
+  const useFallbackHits = needsFallbackHits && fallbackHits.length > 0;
+
+  return {
+    citationHits: useFallbackHits ? fallbackHits : grobidHits,
+    pageSizes,
+    refInfo,
+    usedFallback: needsFallbackHits
+      || useFallbackHits
+      || !Object.keys(grobidRefInfo).length
+      || !Object.keys(grobidPageSizes).length,
+  };
+}
+
 module.exports = {
+  alignFallbackHitsToReferences,
   detectCitationHits,
   expandNumericCitation,
   extractAuthorYearReferences,
   extractNumberedReferences,
   extractPdfCitationFallback,
+  extractPdfTextPages,
   parseReferenceLine,
+  recoverIncompleteGrobidExtraction,
 };

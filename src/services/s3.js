@@ -69,6 +69,18 @@ async function createPdfUploadUrl(key, contentType = 'application/pdf') {
   );
 }
 
+async function createPdfDownloadUrl(key) {
+  return getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket,
+      Key: key,
+      ResponseContentType: 'application/pdf',
+    }),
+    { expiresIn: 15 * 60 },
+  );
+}
+
 async function downloadPdf(key, range, { abortSignal } = {}) {
   const input = { Bucket, Key: key };
   if (range) input.Range = range;
@@ -159,6 +171,7 @@ module.exports = {
   uploadPdf,
   uploadPdfPreview,
   createPdfUploadUrl,
+  createPdfDownloadUrl,
   downloadPdf,
   downloadPdfBuffer,
   downloadPdfPreview,

@@ -46,6 +46,13 @@ const dataSchema = new mongoose.Schema({
   citationSentenceRangeLength: Number,
   relationshipInfo: String,
   referenceText: String,
+  citationHitId: String,
+  citationContexts: [mongoose.Schema.Types.Mixed],
+  semanticPreparationStatus: String,
+  semanticPreparationError: String,
+  citationGraphSelection: mongoose.Schema.Types.Mixed,
+  citationGraphNoteId: String,
+  citationGraphModel: String,
   linkHighlightTexts: [{
     item1: [Number],
     item2: [Number],

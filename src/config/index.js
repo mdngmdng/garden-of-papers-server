@@ -50,6 +50,14 @@ module.exports = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '',
     model: process.env.OPENAI_MODEL || 'gpt-5.6',
+    citationGraphModel:
+      process.env.OPENAI_CITATION_GRAPH_MODEL || 'gpt-5.6-sol',
+    embeddingModel:
+      process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
+    embeddingDimensions: Math.max(
+      0,
+      Number(process.env.OPENAI_EMBEDDING_DIMENSIONS || 1_024),
+    ),
   },
   llmWikiRoot:
     process.env.GOP_LLM_WIKI_ROOT

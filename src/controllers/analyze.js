@@ -3,6 +3,12 @@ const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
 const semanticIndexService = require('../services/semanticIndex');
 const {
+  CitationGraphAnalysisError,
+  analyzeCitationGraph,
+  sentenceRecordsFromPages,
+} = require('../services/citationGraphAnalysis');
+const { extractPdfTextPages } = require('../services/pdfCitationFallback');
+const {
   findCitationHit,
   findCitationHits,
   findMatchingReference,
@@ -532,23 +538,111 @@ async function findPaperDocument(db, paperId, fileId) {
   );
 }
 
-async function loadPaperTeiXml(projectName, doc, fallbackFileId) {
+async function loadCachedPaperTeiXml(projectName, doc, fallbackFileId) {
   const storageFileId = String(doc.fileId || fallbackFileId || doc._id);
   const teiKey = `tei/${projectName}/${storageFileId}.xml`;
+  return {
+    storageFileId,
+    teiXml: await s3Service.downloadTeiXml(teiKey),
+  };
+}
+
+async function loadPaperSearchSentences(projectName, doc, fallbackFileId) {
+  const storageFileId = String(doc.fileId || fallbackFileId || doc._id);
   try {
+    const cached = await loadCachedPaperTeiXml(
+      projectName,
+      doc,
+      fallbackFileId,
+    );
     return {
       storageFileId,
-      teiXml: await s3Service.downloadTeiXml(teiKey),
+      sentenceRecords: extractSentences(cached.teiXml).map((text) => ({
+        text,
+        pageIndex: undefined,
+      })),
     };
-  } catch {
-    const { processFulltext } = require('../services/grobid');
+  } catch (teiError) {
+    console.log(
+      `[ClosestSentence] Cached TEI unavailable for ${storageFileId}; `
+      + 'using local PDF text extraction',
+    );
     const pdfKey = `papers/${projectName}/${storageFileId}.pdf`;
     const pdfBuffer = await s3Service.downloadPdfBuffer(pdfKey);
-    const teiXml = await processFulltext(pdfBuffer);
-    await s3Service.uploadTeiXml(teiKey, teiXml);
-    return { storageFileId, teiXml };
+    const pages = await extractPdfTextPages(pdfBuffer);
+    return {
+      storageFileId,
+      pages,
+      sentenceRecords: sentenceRecordsFromPages(pages).map((sentence) => ({
+        text: sentence.text,
+        pageIndex: sentence.pageNumber - 1,
+      })),
+    };
   }
 }
+
+// POST /analyze/citation-graph
+// 한 번의 OpenAI 분석으로 인용 맥락 메모와 인용된 논문의 실제 근거 구절을 함께 생성한다.
+exports.citationGraph = async (req, res) => {
+  const {
+    projectName,
+    paperId,
+    fileId,
+    paperTitle = '',
+    authors = [],
+    year = '',
+    venue = '',
+    abstract = '',
+    sourceContext,
+    citationContext,
+    markerText = '',
+  } = req.body;
+  if (
+    !projectName
+    || (!paperId && !fileId)
+    || !(String(sourceContext || '').trim() || String(citationContext || '').trim())
+  ) {
+    return res.status(400).json({
+      error: 'projectName, cited paper id, and selected citation context are required',
+    });
+  }
+
+  try {
+    const db = getClient().db(projectName);
+    const doc = await findPaperDocument(db, paperId, fileId);
+    if (!doc) {
+      return res.status(404).json({ error: 'Cited paper was not found' });
+    }
+    const storageFileId = String(doc.fileId || fileId || doc._id || '');
+    if (!storageFileId) {
+      return res.status(422).json({ error: 'Cited paper PDF is not available yet' });
+    }
+    const pdfBuffer = await s3Service.downloadPdfBuffer(
+      `papers/${projectName}/${storageFileId}.pdf`,
+    );
+    const pages = await extractPdfTextPages(pdfBuffer);
+    const result = await analyzeCitationGraph({
+      sourceContext,
+      citationContext,
+      markerText,
+      pages,
+      paper: {
+        id: String(paperId || doc._id),
+        title: doc.paperName || paperTitle || 'Untitled',
+        authors: Array.isArray(authors) ? authors : [],
+        year: doc.year || year || '',
+        venue: doc.publicationVenue || venue || '',
+        abstract,
+      },
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error('[CitationGraph] Error:', error.message);
+    return res.status(
+      error instanceof CitationGraphAnalysisError ? error.status : 500,
+    ).json({ error: error.message });
+  }
+};
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -672,21 +766,30 @@ exports.closestSentence = async (req, res) => {
           error: 'The cited paper could not be matched to the citing paper reference list',
         });
       }
-      const source = await loadPaperTeiXml(
-        projectName,
-        sourceDoc,
-        sourceFileId,
-      );
-      const matchingHits = findCitationHits(sourceDoc, resolvedMarker);
-      const occurrenceIndex = Math.max(
-        0,
-        matchingHits.findIndex((hit) => hit === citationHit),
-      );
-      citationContext = extractCitationContext(
-        source.teiXml,
-        resolvedMarker,
-        occurrenceIndex,
-      );
+      citationContext = String(citationHit?.context || '').trim();
+      if (!citationContext) {
+        try {
+          const source = await loadCachedPaperTeiXml(
+            projectName,
+            sourceDoc,
+            sourceFileId,
+          );
+          const matchingHits = findCitationHits(sourceDoc, resolvedMarker);
+          const occurrenceIndex = Math.max(
+            0,
+            matchingHits.findIndex((hit) => hit === citationHit),
+          );
+          citationContext = extractCitationContext(
+            source.teiXml,
+            resolvedMarker,
+            occurrenceIndex,
+          );
+        } catch (teiError) {
+          console.log(
+            '[ClosestSentence] Citation hit has no context and cached TEI is unavailable',
+          );
+        }
+      }
       if (!citationContext) {
         return res.status(422).json({
           error: 'Citation context could not be recovered from the citing paper',
@@ -694,8 +797,8 @@ exports.closestSentence = async (req, res) => {
       }
     }
 
-    const target = await loadPaperTeiXml(projectName, doc, fileId);
-    const sentences = extractSentences(target.teiXml);
+    const target = await loadPaperSearchSentences(projectName, doc, fileId);
+    const sentences = target.sentenceRecords.map((sentence) => sentence.text);
     if (sentences.length === 0) {
       return res.status(404).json({
         error: 'No searchable sentences were extracted from the cited paper',
@@ -820,6 +923,7 @@ exports.closestSentence = async (req, res) => {
           : undefined,
       sentence: sentences[index],
       sentenceIndex: index,
+      matchedPageIndex: target.sentenceRecords[index]?.pageIndex,
       matchProvider: match.provider,
       matchConfidence: Number.isFinite(match.confidence)
         ? match.confidence

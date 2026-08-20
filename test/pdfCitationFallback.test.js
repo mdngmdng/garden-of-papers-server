@@ -4,6 +4,7 @@ const {
   detectCitationHits,
   extractAuthorYearReferences,
   extractNumberedReferences,
+  recoverIncompleteGrobidExtraction,
 } = require('../src/services/pdfCitationFallback');
 
 test('recovers compact LITFORAGER bibliography metadata without GROBID', () => {
@@ -120,4 +121,49 @@ test('keeps fallback citation markers linked to their exact reference ids', () =
     ['1', '4', '5'],
   ]);
   assert.equal(hits[0].context, 'Literature review remains challenging [31].');
+});
+
+test('recovers publisher-spaced and full-width numeric citation markers', () => {
+  const text = 'Prior work [ 21 ] is extended by several systems ［ 5 , 14 ］.';
+  const hits = detectCitationHits(1, text);
+
+  assert.deepEqual(hits.map((hit) => hit.markerText), [
+    '[ 21 ]',
+    '［ 5 , 14 ］',
+  ]);
+  assert.deepEqual(hits.map((hit) => hit.refIds), [
+    ['21'],
+    ['5', '14'],
+  ]);
+});
+
+test('extracts bibliography entries with spaced reference brackets', () => {
+  const references = extractNumberedReferences([{
+    pageIndex: 7,
+    text: 'References\n[ 1 ] A. Author. First paper. 2020.\n［ 2 ］ B. Author. Second paper. 2021.',
+  }]);
+
+  assert.deepEqual(references.map((reference) => reference.refId), ['1', '2']);
+});
+
+test('completes an unpositioned GROBID result with PDF text hits', () => {
+  const recovered = recoverIncompleteGrobidExtraction(
+    {
+      citationHits: [],
+      pageSizes: {},
+      refInfo: {
+        b0: { title: 'First paper', authors: [], raw: '' },
+        b20: { title: 'Twenty-first paper', authors: [], raw: '' },
+      },
+    },
+    {
+      citationHits: detectCitationHits(1, 'Prior work [ 21 ].'),
+      pageSizeList: [{ page: 2, widthPt: 612, heightPt: 792 }],
+      referenceList: [],
+    },
+  );
+
+  assert.equal(recovered.usedFallback, true);
+  assert.deepEqual(recovered.citationHits[0].refIds, ['b20']);
+  assert.deepEqual(recovered.pageSizes[2], { widthPt: 612, heightPt: 792 });
 });

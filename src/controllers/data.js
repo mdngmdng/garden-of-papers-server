@@ -249,6 +249,7 @@ exports.updateData = async (req, res) => {
     citationSentenceRangeStartChar, citationSentenceRangeLength,
     relationshipInfo, referenceText, citationHitId, citationContexts,
     semanticPreparationStatus, semanticPreparationError,
+    citationGraphSelection, citationGraphNoteId, citationGraphModel,
     linkHighlightTexts, summaryNoteId,
     translations, citationHits, pageSizeList, referenceList, citationStatus,
     pdfPagePreview,
@@ -319,6 +320,15 @@ exports.updateData = async (req, res) => {
     }
     if (semanticPreparationError !== undefined) {
       update.semanticPreparationError = semanticPreparationError;
+    }
+    if (citationGraphSelection && typeof citationGraphSelection === 'object') {
+      update.citationGraphSelection = citationGraphSelection;
+    }
+    if (citationGraphNoteId !== undefined) {
+      update.citationGraphNoteId = citationGraphNoteId;
+    }
+    if (citationGraphModel !== undefined) {
+      update.citationGraphModel = citationGraphModel;
     }
     if (linkHighlightTexts !== null && linkHighlightTexts !== undefined && linkHighlightTexts.length !== 0) update.linkHighlightTexts = linkHighlightTexts;
     if (summaryNoteId && summaryNoteId !== '') update.summaryNoteId = summaryNoteId;

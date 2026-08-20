@@ -5,7 +5,10 @@ const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
 const semanticIndexService = require('../services/semanticIndex');
 const pdfPreviewService = require('../services/pdfPreview');
-const { extractPdfCitationFallback } = require('../services/pdfCitationFallback');
+const {
+  extractPdfCitationFallback,
+  recoverIncompleteGrobidExtraction,
+} = require('../services/pdfCitationFallback');
 const {
   citationDocumentMatchesPdfHash,
   isCoordinateCitationDocument,
@@ -483,7 +486,44 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
       return { referenceTitleList: reusable.referenceTitleList };
     }
     console.log(`[GROBID] Extracting citations for ${fileId}...`);
-    const { citationHits, pageSizes, refInfo, teiXml } = await grobidService.extractCitations(pdfBuffer);
+    const grobidExtraction = await grobidService.extractCitations(pdfBuffer);
+    let {
+      citationHits,
+      pageSizes,
+      refInfo,
+      teiXml,
+    } = grobidExtraction;
+    const hasPositionedHits = citationHits.some(
+      (hit) => Array.isArray(hit.boxes) && hit.boxes.length > 0,
+    );
+    let citationStatus = 'ready';
+    if (
+      !citationHits.length
+      || !hasPositionedHits
+      || !Object.keys(pageSizes).length
+      || !Object.keys(refInfo).length
+    ) {
+      try {
+        const fallback = await extractPdfCitationFallback(pdfBuffer);
+        const recovered = recoverIncompleteGrobidExtraction(
+          grobidExtraction,
+          fallback,
+        );
+        citationHits = recovered.citationHits;
+        pageSizes = recovered.pageSizes;
+        refInfo = recovered.refInfo;
+        citationStatus = recovered.usedFallback ? 'fallback' : 'ready';
+        console.warn(
+          `[GROBID] Completed incomplete TEI with PDF.js for ${fileId}: `
+          + `${citationHits.length} citation hits, ${Object.keys(refInfo).length} references`,
+        );
+      } catch (fallbackError) {
+        citationStatus = hasPositionedHits ? 'ready' : 'fallback';
+        console.warn(
+          `[GROBID] PDF.js completion failed for ${fileId}: ${fallbackError.message}`,
+        );
+      }
+    }
     console.log(`[GROBID] Found ${citationHits.length} citation hits, ${Object.keys(refInfo).length} references for ${fileId}`);
 
     // Dictionary → 배열 변환 (Unity JsonUtility 호환)
@@ -525,7 +565,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           pageSizeList,
           referenceList,
           referenceTitleList,
-          citationStatus: 'ready',
+          citationStatus,
           pdfSha256: reusable.pdfSha256,
           semanticIndexStatus: config.qwen.enabled ? 'processing' : 'disabled',
           citationsExtractedAt: new Date(),
@@ -545,7 +585,7 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           pageSizeList,
           referenceList,
           referenceTitleList,
-          citationStatus: 'ready',
+          citationStatus,
           pdfSha256: reusable.pdfSha256,
           semanticIndexStatus: config.qwen.enabled ? 'processing' : 'disabled',
           citationsExtractedAt: new Date(),
