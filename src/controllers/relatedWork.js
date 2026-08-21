@@ -1,11 +1,7 @@
-const {
-  getRelatedPaperRankingJob,
-  manuscriptText,
-} = require('../services/relatedWork');
+const { manuscriptText } = require('../services/relatedWork');
 const {
   cancelRelatedSearchJob,
   createRelatedSearchJob,
-  executeRelatedSearch,
   getRelatedSearchJob,
 } = require('../services/relatedSearchJobs');
 const { generateCollectedPaperContext } = require('../services/gemini');
@@ -74,57 +70,6 @@ exports.cancelJob = (req, res) => {
     });
   }
   return res.json({ status: 'cancelled' });
-};
-
-exports.ranking = (req, res) => {
-  noStore(res);
-  const job = getRelatedPaperRankingJob(req.params.jobId);
-  if (!job) {
-    return res.json({
-      status: 'missing',
-      rankingProvider: 'scholar',
-      results: [],
-      error: 'This ranking job has expired.',
-    });
-  }
-  return res.json({
-    status: job.status,
-    rankingProvider: job.provider,
-    results: job.results,
-    error: job.error,
-  });
-};
-
-// Compatibility endpoint for older clients. New clients use createJob/getJob
-// so long-running corpus retrieval is never tied to one proxy request.
-exports.search = async (req, res) => {
-  try {
-    const result = await executeRelatedSearch({
-      manuscript: req.body?.manuscript || {},
-      sourcePapers: Array.isArray(req.body?.sourcePapers)
-        ? req.body.sourcePapers
-        : [],
-      keyword: String(req.body?.keyword || '').trim(),
-      searchIntent: req.body?.searchIntent === 'claim_support'
-        ? 'claim_support'
-        : '',
-    });
-    const offset = safeOffset(req.body?.offset);
-    const limit = safeLimit(req.body?.limit);
-    const page = result.results.slice(offset, offset + limit);
-    noStore(res);
-    return res.json({
-      ...result,
-      offset,
-      results: page,
-      total: result.results.length,
-      nextOffset: offset + page.length,
-      hasMore: offset + page.length < result.results.length,
-    });
-  } catch (error) {
-    console.error('[RelatedWork] Compatibility search failed:', error.message);
-    return res.status(502).json({ error: error.message });
-  }
 };
 
 exports.collect = async (req, res) => {

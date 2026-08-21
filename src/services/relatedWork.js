@@ -1,10 +1,4 @@
-const crypto = require('node:crypto');
-const qwen = require('./qwen');
-const { withQwenLock } = require('./semanticIndex');
-
 const MAX_MANUSCRIPT_CHARACTERS = 18_000;
-const MAX_RANKING_JOBS = 100;
-const RANKING_JOB_TTL_MS = 15 * 60 * 1_000;
 const GENERIC_SEARCH_TERMS = new Set([
   'literature',
   'manuscript',
@@ -20,8 +14,6 @@ const GENERIC_SEARCH_TERMS = new Set([
   'work',
   'works',
 ]);
-const rankingJobs = new Map();
-
 function normalizeManuscript(manuscript = {}) {
   const title = String(manuscript.title || '').trim();
   const sections = Array.isArray(manuscript.sections)
@@ -135,22 +127,6 @@ function relatedSearchQueries(primaryQuery, manuscript, keyword = '') {
     query.length >= 2 && queries.indexOf(query) === index);
 }
 
-function paperDocument(result) {
-  const evidence = Array.isArray(result.evidenceSnippets)
-    ? result.evidenceSnippets.slice(0, 2).join('\n')
-    : '';
-  return [
-    result.title ? `Title: ${result.title}` : '',
-    result.authors?.length ? `Authors: ${result.authors.join(', ')}` : '',
-    result.year ? `Year: ${result.year}` : '',
-    result.venue ? `Venue: ${result.venue}` : '',
-    result.abstract ? `Abstract or search excerpt: ${result.abstract}` : '',
-    evidence ? `Matching full-text evidence: ${evidence}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
 function normalizedTitle(value) {
   return String(value || '')
     .toLowerCase()
@@ -224,141 +200,13 @@ function mergePaperCandidates(candidateGroups) {
   return [...new Set(merged.values())];
 }
 
-function dotProduct(left, right) {
-  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
-    throw new Error('Qwen paper embedding dimensions do not match');
-  }
-  let score = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    score += left[index] * right[index];
-  }
-  return score;
-}
-
-async function rankRelatedPapers(context, results) {
-  if (!Array.isArray(results) || results.length < 2) {
-    return {
-      provider: results.length ? 'scholar-single-result' : 'scholar',
-      results: results.map((result) => ({ ...result })),
-    };
-  }
-  const documents = results.map(paperDocument);
-  return withQwenLock(async () => {
-    const documentEmbeddings = await qwen.embedPaperDocuments(documents);
-    const queryEmbedding = await qwen.embedPaperQuery(context);
-    if (documentEmbeddings.dimensions !== queryEmbedding.dimensions) {
-      throw new Error('Qwen paper query and document dimensions do not match');
-    }
-    const embedded = results
-      .map((result, index) => ({
-        result,
-        document: documents[index],
-        embeddingScore: dotProduct(
-          queryEmbedding.embedding,
-          documentEmbeddings.embeddings[index],
-        ),
-      }))
-      .sort((left, right) => right.embeddingScore - left.embeddingScore);
-    const reranked = await qwen.rerankPapers(
-      context,
-      embedded.map((candidate) => candidate.document),
-    );
-    return {
-      provider: 'qwen-reranker',
-      results: embedded
-        .map((candidate, index) => ({
-          ...candidate.result,
-          embeddingScore: candidate.embeddingScore,
-          relevanceScore: reranked.scores[index],
-        }))
-        .sort((left, right) => right.relevanceScore - left.relevanceScore),
-    };
-  });
-}
-
-function pruneRankingJobs(now = Date.now()) {
-  for (const [jobId, job] of rankingJobs) {
-    if (now - job.updatedAt > RANKING_JOB_TTL_MS) {
-      rankingJobs.delete(jobId);
-    }
-  }
-  while (rankingJobs.size >= MAX_RANKING_JOBS) {
-    const oldestJobId = rankingJobs.keys().next().value;
-    if (!oldestJobId) break;
-    rankingJobs.delete(oldestJobId);
-  }
-}
-
-function createRelatedPaperRankingJob(
-  context,
-  results,
-  ranker = rankRelatedPapers,
-) {
-  if (!Array.isArray(results) || results.length < 2) return '';
-  pruneRankingJobs();
-  const jobId = crypto.randomUUID();
-  const now = Date.now();
-  rankingJobs.set(jobId, {
-    id: jobId,
-    status: 'pending',
-    provider: 'qwen-pending',
-    results: [],
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  setImmediate(async () => {
-    const job = rankingJobs.get(jobId);
-    if (!job) return;
-    job.status = 'running';
-    job.updatedAt = Date.now();
-    try {
-      const ranked = await ranker(context, results);
-      Object.assign(job, {
-        status: 'ready',
-        provider: ranked.provider,
-        results: ranked.results,
-        updatedAt: Date.now(),
-      });
-    } catch (error) {
-      console.warn(`[RelatedWork] Qwen ranking job failed: ${error.message}`);
-      Object.assign(job, {
-        status: 'failed',
-        provider: 'scholar',
-        error: 'Qwen ranking was unavailable; Scholar order was preserved.',
-        updatedAt: Date.now(),
-      });
-    }
-  });
-
-  return jobId;
-}
-
-function getRelatedPaperRankingJob(jobId) {
-  pruneRankingJobs();
-  const job = rankingJobs.get(String(jobId || ''));
-  if (!job) return null;
-  return {
-    id: job.id,
-    status: job.status,
-    provider: job.provider,
-    results: job.status === 'ready' ? job.results : [],
-    error: job.error || '',
-  };
-}
-
 module.exports = {
   normalizeManuscript,
   manuscriptText,
   fallbackSearchPlan,
   compactSearchQuery,
   relatedSearchQueries,
-  paperDocument,
   normalizedTitle,
   candidateIdentity,
   mergePaperCandidates,
-  dotProduct,
-  rankRelatedPapers,
-  createRelatedPaperRankingJob,
-  getRelatedPaperRankingJob,
 };

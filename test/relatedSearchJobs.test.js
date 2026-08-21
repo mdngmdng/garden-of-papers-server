@@ -17,7 +17,7 @@ const manuscript = {
   ],
 };
 
-test('runs Asta, Scholar enrichment, Qwen ranking, and explanations in order', async () => {
+test('runs Asta, Scholar enrichment, and explanations in retrieval order', async () => {
   const stages = [];
   const result = await executeRelatedSearch(
     { manuscript, keyword: 'manipulate notes using bare-hand gestures' },
@@ -48,10 +48,6 @@ test('runs Asta, Scholar enrichment, Qwen ranking, and explanations in order', a
         evidenceSnippets: [],
         retrievalProvider: 'serpapi-google-scholar',
       }],
-      ranker: async (_context, papers) => ({
-        provider: 'qwen-reranker',
-        results: [...papers].reverse(),
-      }),
       explainer: async () => ['first explanation', 'second explanation'],
     },
   );
@@ -60,17 +56,15 @@ test('runs Asta, Scholar enrichment, Qwen ranking, and explanations in order', a
     'planning',
     'asta_search',
     'scholar_supplement',
-    'ranking',
     'explaining',
   ]);
-  assert.equal(result.results[0].title, 'Scholar Paper');
+  assert.equal(result.results[0].title, 'Asta Paper');
   assert.equal(result.results[0].relevanceExplanation, 'first explanation');
-  assert.equal(result.provider, 'asta+serpapi-google-scholar+qwen-reranker');
+  assert.equal(result.provider, 'asta+serpapi-google-scholar');
 });
 
-test('ranks an [x] search against the claim and uses manuscript text only as local context', async () => {
+test('keeps claim-support intent through planning and explanations', async () => {
   let plannerIntent = '';
-  let rankingQuery = '';
   let explanationIntent = '';
   const result = await executeRelatedSearch(
     {
@@ -105,10 +99,6 @@ test('ranks an [x] search against the claim and uses manuscript text only as loc
         }],
       },
       scholarRetriever: async () => [],
-      ranker: async (context, papers) => {
-        rankingQuery = context;
-        return { provider: 'qwen-reranker', results: papers };
-      },
       explainer: async (_profile, _keyword, papers, _relationships, intent) => {
         explanationIntent = intent;
         return papers.map(() => ({
@@ -121,9 +111,6 @@ test('ranks an [x] search against the claim and uses manuscript text only as loc
 
   assert.equal(plannerIntent, 'claim_support');
   assert.equal(explanationIntent, 'claim_support');
-  assert.match(rankingQuery, /Claim requiring evidence: Direct manipulation/);
-  assert.match(rankingQuery, /Mere topical, domain, or interface similarity is weak/);
-  assert.match(rankingQuery, /Local manuscript context \(disambiguation only/);
   assert.equal(result.searchMode, 'claim_support');
 });
 
@@ -135,7 +122,7 @@ test('stores completed search jobs and pages results ten at a time', async () =>
   const jobId = createRelatedSearchJob(
     { manuscript, keyword: '' },
     async (_input, report) => {
-      report({ stage: 'ranking', percent: 60, message: 'Ranking…' });
+      report({ stage: 'explaining', percent: 72, message: 'Explaining…' });
       return { results, total: results.length, provider: 'test' };
     },
   );
@@ -151,7 +138,7 @@ test('stores completed search jobs and pages results ten at a time', async () =>
   assert.equal(second.hasMore, false);
 });
 
-test('keeps every ranked candidate instead of truncating results at forty', async () => {
+test('keeps every retrieved candidate instead of truncating results at forty', async () => {
   const explainedBatchSizes = [];
   const astaResults = Array.from({ length: 45 }, (_, index) => ({
     paperId: `asta-${index}`,
@@ -175,10 +162,6 @@ test('keeps every ranked candidate instead of truncating results at forty', asyn
         searchRelatedPapers: async () => astaResults,
       },
       scholarRetriever: async () => [],
-      ranker: async (_context, papers) => ({
-        provider: 'qwen-reranker',
-        results: [...papers].reverse(),
-      }),
       explainer: async (_profile, _keyword, papers) => {
         explainedBatchSizes.push(papers.length);
         return papers.map(() => ({
@@ -191,19 +174,18 @@ test('keeps every ranked candidate instead of truncating results at forty', asyn
 
   assert.equal(result.results.length, 45);
   assert.equal(result.total, 45);
-  assert.equal(result.results[0].paperId, 'asta-44');
-  assert.equal(result.results.at(-1).paperId, 'asta-0');
+  assert.equal(result.results[0].paperId, 'asta-0');
+  assert.equal(result.results.at(-1).paperId, 'asta-44');
   assert.deepEqual(explainedBatchSizes, [20, 20, 5]);
   assert.equal(result.results.every((paper) => paper.relationshipLabel === 'similar'), true);
 });
 
-test('uses a linked PDF as Qwen context and sends only planned queries to Asta', async () => {
+test('uses a linked PDF for planning and sends only planned queries to Asta', async () => {
   const sourceText = [
     'The source paper claims that spatial gestures reduce task completion time.',
     'Its controlled experiment reports a significant improvement over controllers.',
   ].join(' ');
   let astaQueries = [];
-  let qwenContext = '';
   const result = await executeRelatedSearch(
     {
       manuscript: {},
@@ -256,10 +238,6 @@ test('uses a linked PDF as Qwen context and sends only planned queries to Asta',
         },
       },
       scholarRetriever: async () => [],
-      ranker: async (context, papers) => {
-        qwenContext = context;
-        return { provider: 'qwen-reranker', results: papers };
-      },
       explainer: async () => [
         {
           relationship: 'contract',
@@ -280,8 +258,6 @@ test('uses a linked PDF as Qwen context and sends only planned queries to Asta',
     'Studies finding no benefit from spatial gestures.',
   ]);
   assert.equal(astaQueries.some((query) => query.includes(sourceText)), false);
-  assert.match(qwenContext, /reduce task completion time/);
-  assert.match(qwenContext, /Required semantic relationships/);
   assert.equal(result.results.length, 1);
   assert.equal(result.results[0].relationshipLabel, 'contract');
   assert.deepEqual(result.results[0].relationshipLabelsBySource, {

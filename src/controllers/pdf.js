@@ -3,7 +3,6 @@ const s3Service = require('../services/s3');
 const grobidService = require('../services/grobid');
 const { enrichReferences } = require('../services/refEnricher');
 const syncKeys = require('../services/syncKeys');
-const semanticIndexService = require('../services/semanticIndex');
 const pdfPreviewService = require('../services/pdfPreview');
 const pdfStorage = require('../services/pdfStorage');
 const {
@@ -16,7 +15,6 @@ const {
   pdfContentSha256,
   preferCitationDocument,
 } = require('../services/citationState');
-const config = require('../config');
 const { pipeline } = require('node:stream/promises');
 
 const MAX_PDF_BYTES = 250 * 1024 * 1024;
@@ -652,13 +650,15 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           referenceTitleList,
           citationStatus,
           pdfSha256: reusable.pdfSha256,
-          semanticIndexStatus: config.qwen.enabled ? 'processing' : 'disabled',
           citationsExtractedAt: new Date(),
         },
         $unset: {
           citationError: '',
           citationRetryable: '',
           citationsFailedAt: '',
+          semanticIndexStatus: '',
+          semanticIndexReadyAt: '',
+          semanticIndexError: '',
         },
       },
     );
@@ -672,13 +672,15 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
           referenceTitleList,
           citationStatus,
           pdfSha256: reusable.pdfSha256,
-          semanticIndexStatus: config.qwen.enabled ? 'processing' : 'disabled',
           citationsExtractedAt: new Date(),
         },
         $unset: {
           citationError: '',
           citationRetryable: '',
           citationsFailedAt: '',
+          semanticIndexStatus: '',
+          semanticIndexReadyAt: '',
+          semanticIndexError: '',
         },
       },
       { upsert: true },
@@ -700,69 +702,6 @@ async function extractAndSaveCitations(projectName, fileId, pdfBuffer) {
       referenceTitleList,
     });
     console.log(`[GROBID] Notified clients for ${fileId}`);
-
-    if (config.qwen.enabled) {
-      const sentences = grobidService.extractSentences(teiXml);
-      semanticIndexService
-        .ensureSemanticIndex(projectName, fileId, sentences)
-        .then(async () => {
-          const readyAt = new Date();
-          await Promise.all([
-            db.collection('SaveFile').updateMany(
-              { $or: [query, { fileId }] },
-              {
-                $set: {
-                  semanticIndexStatus: 'ready',
-                  semanticIndexReadyAt: readyAt,
-                },
-                $unset: { semanticIndexError: '' },
-              },
-            ),
-            getPdfMetaCollection(projectName).updateOne(
-              { fileId },
-              {
-                $set: {
-                  semanticIndexStatus: 'ready',
-                  semanticIndexReadyAt: readyAt,
-                },
-                $unset: { semanticIndexError: '' },
-              },
-            ),
-          ]);
-          console.log(`[SemanticIndex] Precomputed index for ${fileId}`);
-        })
-        .catch(async (error) => {
-          console.error(
-            `[SemanticIndex] Precompute failed for ${fileId}:`,
-            error.message,
-          );
-          await Promise.all([
-            db.collection('SaveFile').updateMany(
-              { $or: [query, { fileId }] },
-              {
-                $set: {
-                  semanticIndexStatus: 'failed',
-                  semanticIndexError: error.message,
-                },
-              },
-            ),
-            getPdfMetaCollection(projectName).updateOne(
-              { fileId },
-              {
-                $set: {
-                  semanticIndexStatus: 'failed',
-                  semanticIndexError: error.message,
-                },
-              },
-            ),
-          ]).catch((metadataError) => {
-            console.error(
-              `[SemanticIndex] Could not save failure state for ${fileId}:`,
-              metadataError.message,
-            );
-          });
-        });
-    }
 
     // Mark extraction ready before paid metadata enrichment. Reference counts
     // and citation overlays therefore appear as soon as GROBID completes.

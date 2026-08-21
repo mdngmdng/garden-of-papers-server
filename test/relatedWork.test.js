@@ -2,12 +2,8 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   compactSearchQuery,
-  createRelatedPaperRankingJob,
-  dotProduct,
   fallbackSearchPlan,
-  getRelatedPaperRankingJob,
   manuscriptText,
-  paperDocument,
   relatedSearchQueries,
 } = require('../src/services/relatedWork');
 
@@ -63,23 +59,6 @@ test('preserves manuscript section ids for collection placement', () => {
   assert.match(text, /Section: Related Work/);
 });
 
-test('creates paper-level ranking documents from Scholar results', () => {
-  const document = paperDocument({
-    title: 'Spatial Notes',
-    authors: ['A. Researcher'],
-    year: 2025,
-    venue: 'CHI',
-    abstract: 'A hand-gesture note system for immersive environments.',
-  });
-  assert.match(document, /Title: Spatial Notes/);
-  assert.match(document, /Abstract or search excerpt:/);
-});
-
-test('computes normalized embedding similarity with a dot product', () => {
-  assert.equal(dotProduct([1, 0, 0], [0.25, 0.5, 0.75]), 0.25);
-  assert.throws(() => dotProduct([1], [1, 2]), /dimensions/);
-});
-
 test('compacts an overlong Scholar query and removes generic terms', () => {
   const compact = compactSearchQuery(
     'related work literature review academic writing research synthesis graph visualization interactive systems paper landscape LLM AI assisted writing',
@@ -102,33 +81,4 @@ test('keeps the focused keyword first and creates a shorter fallback query', () 
     'text direct manipulation academic writing graph visualization LLM knowledge organization',
   );
   assert.equal(queries[1], 'text direct manipulation academic writing graph');
-});
-
-test('completes Qwen ranking outside the initial search request', async () => {
-  const results = [
-    { paperId: 'a', title: 'A' },
-    { paperId: 'b', title: 'B' },
-  ];
-  const jobId = createRelatedPaperRankingJob(
-    'context',
-    results,
-    async () => ({
-      provider: 'qwen-reranker',
-      results: [...results].reverse(),
-    }),
-  );
-  assert.match(jobId, /^[0-9a-f-]{36}$/);
-  assert.match(
-    getRelatedPaperRankingJob(jobId).status,
-    /pending|running|ready/,
-  );
-
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(getRelatedPaperRankingJob(jobId), {
-    id: jobId,
-    status: 'ready',
-    provider: 'qwen-reranker',
-    results: [...results].reverse(),
-    error: '',
-  });
 });

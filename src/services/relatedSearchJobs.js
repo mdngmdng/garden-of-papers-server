@@ -8,7 +8,6 @@ const {
   fallbackSearchPlan,
   manuscriptText,
   mergePaperCandidates,
-  rankRelatedPapers,
   relatedSearchQueries,
 } = require('./relatedWork');
 const {
@@ -222,32 +221,6 @@ async function retrieveScholarCandidates(queries, stopAfterFirst, signal) {
   return mergePaperCandidates(pages);
 }
 
-function rankingContext(
-  plan,
-  keyword,
-  manuscript,
-  relationships,
-  searchIntent,
-) {
-  if (searchIntent === 'claim_support' && keyword) {
-    return [
-      'Task: rank candidate papers as scholarly evidence for a specific manuscript claim.',
-      `Claim requiring evidence: ${keyword}`,
-      'Highest priority: the paper must report findings, methods, data, or arguments that directly substantiate the claim. Mere topical, domain, or interface similarity is weak relevance and must rank lower.',
-      relationships ? `Required semantic relationships:\n${relationships}` : '',
-      `Planned evidence target: ${plan.paperDescription || ''}`,
-      `Local manuscript context (disambiguation only; do not broaden away from the claim): ${manuscriptText(manuscript)}`,
-    ].filter(Boolean).join('\n');
-  }
-  return [
-    keyword ? `Focused research need: ${keyword}` : 'Whole-manuscript related-work search',
-    relationships ? `Required semantic relationships:\n${relationships}` : '',
-    `Desired papers: ${plan.paperDescription || ''}`,
-    `Draft research profile: ${plan.researchProfile || ''}`,
-    `Source document evidence: ${manuscriptText(manuscript)}`,
-  ].filter(Boolean).join('\n');
-}
-
 async function explainCandidateBatches(
   explainer,
   researchProfile,
@@ -380,39 +353,15 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
   }
 
   onProgress(progress(
-    'ranking',
-    66,
-    `Reranking ${candidates.length} candidate papers against the draft with local Qwen…`,
-  ));
-  let rankedResults = candidates;
-  let qwenRanked = false;
-  try {
-    const ranked = await (options.ranker || rankRelatedPapers)(
-      rankingContext(
-        plan,
-        keyword,
-        manuscript,
-        relationships,
-        searchIntent,
-      ),
-      candidates,
-    );
-    rankedResults = ranked.results;
-    qwenRanked = ranked.provider === 'qwen-reranker';
-  } catch (error) {
-    warnings.push(`Qwen reranking was unavailable; retrieval order was preserved: ${error.message}`);
-  }
-
-  onProgress(progress(
     'explaining',
-    84,
+    72,
     'Classifying semantic relationships and writing evidence-grounded explanations…',
   ));
   const assessments = await explainCandidateBatches(
     options.explainer || explainRelatedPaperResults,
     plan.researchProfile,
     keyword,
-    rankedResults,
+    candidates,
     relationships,
     warnings,
     searchIntent,
@@ -421,7 +370,7 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
   const requestedLabels = [...new Set(
     sourcePapers.map((source) => source.relationship).filter(Boolean),
   )];
-  rankedResults = rankedResults.flatMap((paper, index) => {
+  const explainedResults = candidates.flatMap((paper, index) => {
     const assessment = assessments[index];
     const explanation = typeof assessment === 'string'
       ? assessment
@@ -457,11 +406,10 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
         ? 'serpapi-google-scholar'
         : 'serpapi-google-scholar-fallback'
       : '',
-    qwenRanked ? 'qwen-reranker' : '',
   ].filter(Boolean);
   return {
-    results: rankedResults,
-    total: rankedResults.length,
+    results: explainedResults,
+    total: explainedResults.length,
     provider: providers.join('+') || 'related-work',
     searchMode: searchIntent || (keyword ? 'keyword' : 'manuscript'),
     retrievalQuery: plan.paperDescription,

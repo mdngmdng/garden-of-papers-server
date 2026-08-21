@@ -2,7 +2,6 @@ const { analyzeRelations, generateClusterLabels, findRelevantSentences, findClos
 const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
 const pdfStorage = require('../services/pdfStorage');
-const semanticIndexService = require('../services/semanticIndex');
 const {
   CitationGraphAnalysisError,
   analyzeCitationGraph,
@@ -15,7 +14,6 @@ const {
   findMatchingReference,
 } = require('../services/citationContext');
 const { getClient } = require('../services/mongo');
-const config = require('../config');
 
 // --- Layout 유틸리티 ---
 
@@ -813,59 +811,15 @@ exports.closestSentence = async (req, res) => {
     console.log(
       `[ClosestSentence] ${paperId || fileId}: comparing ${sentences.length} sentences`,
     );
-    let match;
-    try {
-      match = await semanticIndexService.findClosestSentence({
-        projectName,
-        fileId: target.storageFileId,
-        context: citationContext,
-        sentences,
-      });
-      if (
-        match.needsGeminiFallback
-        && config.geminiApiKey
-        && match.candidateIndices.length > 0
-      ) {
-        const candidateSentences = match.candidateIndices.map(
-          (candidateIndex) => sentences[candidateIndex],
-        );
-        try {
-          const geminiMatch = await findClosestSentence(
-            citationContext,
-            resolvedMarker,
-            title,
-            candidateSentences,
-          );
-          const originalIndex = match.candidateIndices[geminiMatch.index];
-          if (Number.isInteger(originalIndex)) {
-            match = {
-              ...match,
-              index: originalIndex,
-              provider: 'gemini-fallback',
-            };
-          }
-        } catch (fallbackError) {
-          console.warn(
-            `[ClosestSentence] Gemini fallback failed; using ${match.provider}: `
-            + fallbackError.message,
-          );
-        }
-      }
-    } catch (qwenError) {
-      console.warn(
-        `[ClosestSentence] Qwen unavailable; using Gemini: ${qwenError.message}`,
-      );
-      const geminiMatch = await findClosestSentence(
+    const match = {
+      ...(await findClosestSentence(
         citationContext,
         resolvedMarker,
         title,
         sentences,
-      );
-      match = {
-        ...geminiMatch,
-        provider: 'gemini',
-      };
-    }
+      )),
+      provider: 'gemini-chunked',
+    };
     const { index } = match;
     if (index < 0 || !sentences[index]) {
       return res.status(422).json({
@@ -877,37 +831,6 @@ exports.closestSentence = async (req, res) => {
       `[ClosestSentence] ${paperId || fileId}: selected sentence ${index} `
       + `with ${match.provider}`,
     );
-    if (Number.isFinite(match.confidence)) {
-      const readyAt = new Date();
-      Promise.all([
-        db.collection('SaveFile').updateOne(
-          { _id: doc._id },
-          {
-            $set: {
-              semanticIndexStatus: 'ready',
-              semanticIndexReadyAt: readyAt,
-            },
-            $unset: { semanticIndexError: '' },
-          },
-        ),
-        db.collection('PdfMeta').updateOne(
-          { fileId: target.storageFileId },
-          {
-            $set: {
-              semanticIndexStatus: 'ready',
-              semanticIndexReadyAt: readyAt,
-            },
-            $unset: { semanticIndexError: '' },
-          },
-          { upsert: true },
-        ),
-      ]).catch((metadataError) => {
-        console.warn(
-          `[ClosestSentence] Could not save semantic index state: `
-          + metadataError.message,
-        );
-      });
-    }
     return res.json({
       paperId: String(doc._id),
       fileId: target.storageFileId,
