@@ -14,10 +14,12 @@ const COLLECTION = 'LLMWikiSnapshots';
 const MAX_SOURCE_CHARACTERS = 120_000;
 // Keep generation prompts bounded even as a board grows. Retrieval scans only
 // the most relevant papers and sends evidence chunks instead of complete PDFs.
-const MAX_CHAT_CONTEXT_CHARACTERS = 72_000;
+const MAX_CHAT_CONTEXT_CHARACTERS = 96_000;
 const MAX_CHAT_HISTORY_CHARACTERS = 24_000;
-const MAX_RETRIEVED_PAPERS = 8;
-const MAX_RETRIEVED_CHUNKS = 16;
+const MAX_RETRIEVED_PAPERS = 16;
+const MAX_BROAD_RETRIEVED_PAPERS = 24;
+const MAX_RETRIEVED_CHUNKS = 24;
+const MAX_BROAD_RETRIEVED_CHUNKS = 32;
 const RETRIEVAL_CHUNK_CHARACTERS = 3_200;
 const RETRIEVAL_CHUNK_OVERLAP = 400;
 const MAX_SHARED_CHAT_MESSAGES = 100;
@@ -1166,7 +1168,7 @@ function publicChatMessages(messages) {
     text: cleanText(message?.text, 100_000),
     createdAt: iso(message?.createdAt),
     sources: Array.isArray(message?.sources)
-      ? message.sources.slice(0, 12).map((source) => ({
+      ? message.sources.slice(0, MAX_BROAD_RETRIEVED_PAPERS).map((source) => ({
         id: cleanText(source?.id, 256),
         title: cleanText(source?.title, 1_000),
         filePath: cleanText(source?.filePath, 4_000),
@@ -1246,6 +1248,18 @@ const QUERY_EXPANSIONS = [
     triggers: ['관련 연구', '선행 연구', 'related work', 'prior work'],
     terms: ['related work', 'prior work', 'previous work', 'literature'],
   },
+  {
+    triggers: ['검색', '탐색', 'search', 'retrieval', 'foraging'],
+    terms: ['search', 'retrieval', 'exploration', 'foraging', 'recommendation', 'query'],
+  },
+  {
+    triggers: ['학술문헌', '문헌', 'literature', 'scholarly'],
+    terms: ['literature', 'scholarly', 'academic', 'publication', 'research'],
+  },
+  {
+    triggers: ['맥락', '컨텍스트', 'context'],
+    terms: ['context', 'contextual', 'sensemaking', 'understanding'],
+  },
 ];
 
 const SEARCH_STOP_WORDS = new Set([
@@ -1283,6 +1297,11 @@ function queryTerms(question) {
     }
   }
   return [...terms];
+}
+
+function isBroadCoverageQuestion(question) {
+  return /(?:전체|모든|몇\s*(?:개|편)|목록|어떤\s*논문|뭐가|무엇이|how\s+many|which\s+papers?|list|all\s+(?:papers?|studies))/iu
+    .test(String(question || ''));
 }
 
 function paperAliases(paper) {
@@ -1336,6 +1355,7 @@ function rankPapers(
       ...paper.notes.map((note) => note.text),
       ...paper.highlights.map((highlight) => highlight.text),
     ].join(' '));
+    const fullText = normalizeSearchText(paper.sourceText);
     const contextual = contextIds.has(paper.id);
     let score = directAliases.length
       ? 1_000 + Math.max(...directAliases.map((alias) => alias.length))
@@ -1343,8 +1363,12 @@ function rankPapers(
         ? 900
         : 0;
     for (const term of terms) {
-      if (containsSearchPhrase(metadata, term) || metadata.includes(term)) score += 16;
-      score += termOccurrences(curatedEvidence, term, 3) * 3;
+      if (containsSearchPhrase(metadata, term) || metadata.includes(term)) score += 24;
+      score += termOccurrences(curatedEvidence, term, 4) * 6;
+      // Paper selection must inspect the complete extracted text. Previously
+      // only metadata/notes were searched, so relevant chunks in most PDFs
+      // were never eligible for retrieval on a large board.
+      score += termOccurrences(fullText, term, 4) * 2;
     }
     return { paper, score, direct: directAliases.length > 0 || contextual };
   }).sort((a, b) =>
@@ -1437,17 +1461,40 @@ function buildChatContext(document, question, contextPaperIds = []) {
     .filter((paper) => contextIds.has(paper.id))
     .map((paper) => `- ${paper.title} | id: ${paper.id}`)
     .join('\n');
-  const paperRanks = rankPapers(document.papers, question, contextPaperIds);
-  const candidates = paperRanks.flatMap((paperRank) => {
+  const broadCoverage = isBroadCoverageQuestion(question);
+  const paperRanks = rankPapers(
+    document.papers,
+    question,
+    contextPaperIds,
+    broadCoverage ? MAX_BROAD_RETRIEVED_PAPERS : MAX_RETRIEVED_PAPERS,
+  );
+  const byPaper = paperRanks.map((paperRank) => {
     const perPaperLimit = paperRank.direct ? 8 : 3;
-    return rankChunks(paperRank, question)
+    return {
+      paperRank,
+      chunks: rankChunks(paperRank, question)
       .slice(0, perPaperLimit)
-      .map((chunk) => ({ paperRank, chunk }));
-  }).sort((a, b) =>
-    Number(b.paperRank.direct) - Number(a.paperRank.direct)
-      || b.chunk.score - a.chunk.score
-      || b.paperRank.score - a.paperRank.score,
-  ).slice(0, MAX_RETRIEVED_CHUNKS);
+      .map((chunk) => ({ paperRank, chunk })),
+    };
+  });
+  const sortCandidates = (left, right) =>
+    Number(right.paperRank.direct) - Number(left.paperRank.direct)
+      || right.chunk.score - left.chunk.score
+      || right.paperRank.score - left.paperRank.score;
+  // Give every matching paper one evidence slot before adding extra passages
+  // from the strongest papers. This avoids a handful of PDFs consuming the
+  // entire context on count/list questions.
+  const primaryCandidates = byPaper
+    .flatMap((entry) => entry.chunks.slice(0, 1))
+    .sort(sortCandidates);
+  const supplementalCandidates = byPaper
+    .flatMap((entry) => entry.chunks.slice(1))
+    .sort(sortCandidates);
+  const candidates = [...primaryCandidates, ...supplementalCandidates]
+    .slice(
+      0,
+      broadCoverage ? MAX_BROAD_RETRIEVED_CHUNKS : MAX_RETRIEVED_CHUNKS,
+    );
 
   const evidence = [];
   const includedPapers = new Map();
@@ -1518,6 +1565,7 @@ const CHAT_INSTRUCTIONS = [
   'When the data is insufficient, say exactly what is missing. Do not claim that authors are unknown when the catalog lists them.',
   'Name the supporting paper title when using its evidence, and cite page numbers from notes or highlights when available.',
   'Use citation arrows and saved search results only when they directly support the requested answer, and distinguish collected papers from uncollected search results.',
+  'For count, list, or board-wide questions, evaluate the complete catalog and the evidence retrieved across every candidate paper; do not stop after the first few matches. State uncertainty when the evidence does not support an exact count.',
 ].join(' ');
 
 function chatHistory(document) {
@@ -1546,7 +1594,7 @@ function createLLMWikiService({
   now = () => new Date(),
 } = {}) {
   let indexesReady = null;
-  const syncQueues = new Map();
+  const syncJobs = new Map();
   const chatQueues = new Map();
 
   async function collection() {
@@ -1679,16 +1727,41 @@ function createLLMWikiService({
 
   async function sync(workspaceIdValue, state) {
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
-    const before = syncQueues.get(workspaceId) || Promise.resolve();
-    const operation = before
-      .catch(() => undefined)
-      .then(() => syncUnlocked(workspaceId, state));
-    syncQueues.set(workspaceId, operation);
-    try {
-      return await operation;
-    } finally {
-      if (syncQueues.get(workspaceId) === operation) syncQueues.delete(workspaceId);
+    let job = syncJobs.get(workspaceId);
+    if (!job) {
+      job = {
+        running: false,
+        pendingState: null,
+        waiters: [],
+      };
+      syncJobs.set(workspaceId, job);
     }
+    job.pendingState = state;
+    const result = new Promise((resolve, reject) => {
+      job.waiters.push({ resolve, reject });
+    });
+    if (!job.running) {
+      job.running = true;
+      void (async () => {
+        while (job.pendingState) {
+          // If many autosaves arrive while a large board is being indexed,
+          // keep only the newest canonical state. All callers waiting for the
+          // skipped revisions receive the result of that latest sync.
+          const nextState = job.pendingState;
+          job.pendingState = null;
+          const waiters = job.waiters.splice(0);
+          try {
+            const value = await syncUnlocked(workspaceId, nextState);
+            waiters.forEach((waiter) => waiter.resolve(value));
+          } catch (error) {
+            waiters.forEach((waiter) => waiter.reject(error));
+          }
+        }
+        job.running = false;
+        if (syncJobs.get(workspaceId) === job) syncJobs.delete(workspaceId);
+      })();
+    }
+    return result;
   }
 
   async function latestLog(workspaceIdValue) {

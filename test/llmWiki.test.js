@@ -275,6 +275,95 @@ test('retrieves a named paper contribution from 50 PDFs without sending every fu
   assert.ok(modelInput().length < 100_000);
 });
 
+test('searches full text across a large board and preserves paper diversity for broad questions', async () => {
+  const relevant = new Set([4, 18, 27]);
+  const { modelInput, service } = fixture({
+    sourceTextLoader: async (_workspaceId, paper) => {
+      const index = Number(paper.id.split('-').at(-1));
+      return relevant.has(index)
+        ? 'This work directly supports scholarly literature search, contextual retrieval, and research sensemaking.'
+        : 'This work studies an unrelated interaction technique and device evaluation.';
+    },
+    openAIRequest: async () =>
+      'Relevant Study 04, Relevant Study 18, Relevant Study 27의 세 편이 직접 다룹니다.',
+  });
+  const state = workspace({ includePaper: false, includeNote: false });
+  state.objects = Array.from({ length: 30 }, (_, index) => ({
+    id: `paper-${index}`,
+    type: 'GX.MAROScientificPaper',
+    title: relevant.has(index)
+      ? `Relevant Study ${String(index).padStart(2, '0')}`
+      : `Background Study ${String(index).padStart(2, '0')}`,
+    authors: [`Author ${index}`],
+    year: '2026',
+    venue: 'CHI',
+    abstract: 'An empirical investigation.',
+    fileId: `pdf-${index}`,
+    pageIndex: 0,
+    pageCount: 8,
+    x: index * 10,
+    y: 0,
+    width: 342,
+    height: 444,
+    zIndex: index,
+    highlights: [],
+    createdAt: '2026-08-17T00:00:00.000Z',
+    updatedAt: '2026-08-17T00:00:00.000Z',
+  }));
+
+  await service.sync('garden', state);
+  const response = await service.chat(
+    'garden',
+    '논문 검색이나 학술문헌 컨텍스트를 직접 다루는 논문은 몇 편이야?',
+  );
+
+  for (const index of relevant) {
+    assert.match(modelInput(), new RegExp(`Relevant Study ${String(index).padStart(2, '0')}`));
+  }
+  assert.deepEqual(response.sources.map((source) => source.title), [
+    'Relevant Study 04',
+    'Relevant Study 18',
+    'Relevant Study 27',
+  ]);
+  assert.ok(modelInput().length < 110_000);
+});
+
+test('coalesces queued large-board syncs to the newest saved revision', async () => {
+  const collection = new MemoryCollection();
+  let releaseFirstLoad;
+  let sourceLoads = 0;
+  const firstLoad = new Promise((resolve) => {
+    releaseFirstLoad = resolve;
+  });
+  const service = createLLMWikiService({
+    getCollection: () => collection,
+    markdownStore: new MemoryMarkdownStore(),
+    sourceTextLoader: async () => {
+      sourceLoads += 1;
+      if (sourceLoads === 1) await firstLoad;
+      return 'Cached full PDF text.';
+    },
+    openAIRequest: async () => 'unused',
+  });
+
+  const first = service.sync('garden', workspace({ revision: 1, x: 100 }));
+  while (sourceLoads === 0) await new Promise((resolve) => setImmediate(resolve));
+  const second = service.sync('garden', workspace({ revision: 2, x: 200 }));
+  const third = service.sync('garden', workspace({ revision: 3, x: 300 }));
+  releaseFirstLoad();
+
+  const [firstResult, secondResult, thirdResult] = await Promise.all([
+    first,
+    second,
+    third,
+  ]);
+  assert.equal(firstResult.revision, 1);
+  assert.equal(secondResult.revision, 3);
+  assert.equal(thirdResult.revision, 3);
+  assert.equal(collection.document.revision, 3);
+  assert.equal(collection.document.papers[0].position.x, 300);
+});
+
 test('uses the currently selected paper when the question omits its title', async () => {
   const { modelInput, service } = fixture({
     sourceTextLoader: async () =>

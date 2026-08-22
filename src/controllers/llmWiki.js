@@ -2,9 +2,19 @@ const {
   LLMWikiError,
   llmWikiService,
 } = require('../services/llmWiki');
+const {
+  WorkspaceSnapshotError,
+  workspaceSnapshotService,
+} = require('../services/workspaceSnapshots');
 
 function sendError(res, error) {
   if (error instanceof LLMWikiError) {
+    return res.status(error.status).json({
+      error: error.message,
+      code: error.code,
+    });
+  }
+  if (error instanceof WorkspaceSnapshotError) {
     return res.status(error.status).json({
       error: error.message,
       code: error.code,
@@ -27,8 +37,21 @@ exports.status = async (req, res) => {
 
 exports.sync = async (req, res) => {
   try {
+    const state = req.body?.state
+      || await workspaceSnapshotService.load(req.params.id);
+    const requestedRevision = Number(req.body?.revision);
+    if (
+      Number.isInteger(requestedRevision)
+      && requestedRevision > Number(state?.revision)
+    ) {
+      throw new LLMWikiError(
+        'The saved workspace revision is not ready yet',
+        409,
+        'workspace_not_ready',
+      );
+    }
     return res.status(200).json(
-      await llmWikiService.sync(req.params.id, req.body?.state),
+      await llmWikiService.sync(req.params.id, state),
     );
   } catch (error) {
     return sendError(res, error);
