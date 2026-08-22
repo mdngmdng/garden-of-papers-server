@@ -110,13 +110,41 @@ async function downloadPdfPreview(key, { abortSignal } = {}) {
   );
 }
 
+async function downloadPdfPreviewBuffer(key, { abortSignal } = {}) {
+  const res = await downloadPdfPreview(key, { abortSignal });
+  const chunks = [];
+  try {
+    for await (const chunk of res.Body) chunks.push(chunk);
+    return {
+      buffer: Buffer.concat(chunks),
+      contentType: res.ContentType || 'image/webp',
+      etag: res.ETag,
+    };
+  } catch (error) {
+    if (typeof res.Body?.destroy === 'function') res.Body.destroy();
+    throw error;
+  }
+}
+
 async function deletePdf(key) {
   await s3.send(new DeleteObjectCommand({ Bucket, Key: key }));
 }
 
 async function listPdfs(prefix) {
-  const res = await s3.send(new ListObjectsV2Command({ Bucket, Prefix: prefix }));
-  return (res.Contents || []).map((obj) => obj.Key);
+  const keys = [];
+  let continuationToken;
+  do {
+    const res = await s3.send(new ListObjectsV2Command({
+      Bucket,
+      Prefix: prefix,
+      ...(continuationToken
+        ? { ContinuationToken: continuationToken }
+        : {}),
+    }));
+    keys.push(...(res.Contents || []).map((obj) => obj.Key).filter(Boolean));
+    continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return keys;
 }
 
 async function headPdf(key) {
@@ -175,6 +203,7 @@ module.exports = {
   downloadPdf,
   downloadPdfBuffer,
   downloadPdfPreview,
+  downloadPdfPreviewBuffer,
   deletePdf,
   listPdfs,
   headPdf,

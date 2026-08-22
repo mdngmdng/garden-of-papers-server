@@ -6,9 +6,12 @@ const SHARED_DATABASE = '_GardenOfPapersShared';
 const LIBRARY_COLLECTION = 'PdfLibrary';
 const RESOLUTION_CACHE_TTL_MS = 5 * 60 * 1000;
 const NEGATIVE_LOOKUP_TTL_MS = 10 * 60 * 1000;
+const S3_INVENTORY_TTL_MS = 10 * 60 * 1000;
 const resolutionCache = new Map();
 const negativeLookupCache = new Map();
 const initializedClients = new WeakMap();
+let s3InventoryPromise;
+let s3InventoryExpiresAt = 0;
 
 function legacyPdfS3Key(projectName, fileId) {
   return `papers/${projectName}/${fileId}.pdf`;
@@ -166,6 +169,41 @@ function identityFromLegacyDocument(document = {}) {
     resourceLink: document.resourceLink,
     pdfSourceUrl: document.pdfSourceUrl,
   };
+}
+
+async function paperIdentityForFile(projectName, fileId, client) {
+  const document = await client.db(projectName).collection('SaveFile').findOne(
+    { fileId },
+    { projection: {
+      resultId: 1,
+      doi: 1,
+      paperName: 1,
+      title: 1,
+      authors: 1,
+      year: 1,
+      resourceLink: 1,
+      pdfSourceUrl: 1,
+    } },
+  );
+  return identityFromLegacyDocument(document);
+}
+
+async function s3PdfInventory(s3 = s3Service) {
+  if (!s3InventoryPromise || s3InventoryExpiresAt <= Date.now()) {
+    s3InventoryExpiresAt = Date.now() + S3_INVENTORY_TTL_MS;
+    s3InventoryPromise = Promise.resolve(s3.listPdfs('papers/')).catch((error) => {
+      s3InventoryPromise = undefined;
+      s3InventoryExpiresAt = 0;
+      throw error;
+    });
+  }
+  return s3InventoryPromise;
+}
+
+async function discoverPdfS3Key(fileId, s3 = s3Service) {
+  const suffix = `/${fileId}.pdf`;
+  const keys = await s3PdfInventory(s3);
+  return keys.find((key) => key.endsWith(suffix)) || '';
 }
 
 function metadataCacheKey(projectName, fileId) {
@@ -455,6 +493,7 @@ async function reusePdfIntoProject({
         citationError: '',
         citationRetryable: '',
         citationsFailedAt: '',
+        pdfFirstPagePreview: '',
         pdfPagePreview: '',
         previewError: '',
         previewRetryable: '',
@@ -489,16 +528,92 @@ async function reusePdfIntoProject({
   };
 }
 
+async function loadPdfSource({
+  projectName,
+  fileId,
+  identity,
+  mongoClient,
+  s3 = s3Service,
+}) {
+  const client = mongoClient ?? getClient();
+  if (!client) throw new Error('MongoDB is not connected');
+  const metadataCollection = client.db(projectName).collection('PdfMeta');
+  let metadata = await metadataCollection.findOne(
+    { fileId },
+    { projection: { pdfSha256: 1, s3Key: 1, size: 1 } },
+  );
+  const resolvedIdentity = {
+    ...await paperIdentityForFile(projectName, fileId, client),
+    ...(identity && typeof identity === 'object' ? identity : {}),
+  };
+
+  const loadAndIndex = async (s3Key) => {
+    const pdfBuffer = await s3.downloadPdfBuffer(s3Key);
+    if (metadata?.pdfSha256 && metadata?.s3Key === s3Key) {
+      return {
+        pdfBuffer,
+        pdfSha256: metadata.pdfSha256,
+        s3Key,
+        size: metadata.size || pdfBuffer.length,
+        identity: resolvedIdentity,
+      };
+    }
+    const stored = await storeSharedPdf({
+      projectName,
+      fileId,
+      pdfBuffer,
+      identity: resolvedIdentity,
+      mongoClient: client,
+      s3,
+    });
+    metadata = stored;
+    return { pdfBuffer, ...stored, identity: resolvedIdentity };
+  };
+
+  const directKey = cleanText(metadata?.s3Key, 2_000)
+    || legacyPdfS3Key(projectName, fileId);
+  try {
+    return await loadAndIndex(directKey);
+  } catch (error) {
+    if (!isMissingObjectError(error)) throw error;
+  }
+
+  const reusable = await reusePdfIntoProject({
+    projectName,
+    fileId,
+    identity: resolvedIdentity,
+    mongoClient: client,
+    s3,
+  });
+  if (reusable?.s3Key) {
+    metadata = reusable;
+    return loadAndIndex(reusable.s3Key);
+  }
+
+  const discoveredKey = await discoverPdfS3Key(fileId, s3);
+  if (discoveredKey) {
+    return loadAndIndex(discoveredKey);
+  }
+
+  const missing = new Error(`PDF source not found for ${projectName}/${fileId}`);
+  missing.name = 'NoSuchKey';
+  throw missing;
+}
+
 module.exports = {
   LIBRARY_COLLECTION,
   SHARED_DATABASE,
   canonicalUrl,
+  discoverPdfS3Key,
   findReusablePdf,
+  identityFromLegacyDocument,
   isMissingObjectError,
   legacyPaperQuery,
   legacyPdfS3Key,
   normalizeDoi,
+  paperIdentityForFile,
   paperIdentityKeys,
+  loadPdfSource,
   rememberPdfS3Key,
   resolvePdfS3Key,
   reusePdfIntoProject,

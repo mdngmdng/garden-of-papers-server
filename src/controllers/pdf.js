@@ -1062,10 +1062,8 @@ exports.downloadPdfPreview = async (req, res) => {
   const { projectName, fileid } = req.params;
   const requestedPageIndex = Number(req.query.pageIndex);
   const abortController = new AbortController();
-  let s3Body;
   const abortStream = () => {
     if (!abortController.signal.aborted) abortController.abort();
-    if (s3Body && typeof s3Body.destroy === 'function') s3Body.destroy();
   };
   const onRequestAborted = () => abortStream();
   const onResponseClosed = () => {
@@ -1078,20 +1076,13 @@ exports.downloadPdfPreview = async (req, res) => {
     if (!Number.isInteger(requestedPageIndex) || requestedPageIndex < 0) {
       return res.status(400).json({ error: 'Invalid PDF preview page' });
     }
-    const metadata = await getPdfMetaCollection(projectName).findOne({ fileId: fileid });
-    const preview = metadata?.pdfPagePreview;
-    const descriptor = pdfPreviewService.createPreviewDescriptor(
+    const cached = await pdfPreviewService.cachedPdfPreview(
       projectName,
       fileid,
-      preview,
+      requestedPageIndex,
     );
-    if (
-      !descriptor
-      || descriptor.pageIndex !== requestedPageIndex
-      || typeof preview.s3Key !== 'string'
-      || !preview.s3Key
-    ) {
-      if (pdfPreviewService.canAttemptPdfPreview(metadata)) {
+    if (!cached?.buffer?.length || !cached.descriptor) {
+      if (pdfPreviewService.canAttemptPdfPreview(cached?.metadata)) {
         pdfPreviewService.queuePdfPreview(projectName, fileid, requestedPageIndex);
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
@@ -1099,19 +1090,12 @@ exports.downloadPdfPreview = async (req, res) => {
       }
       return res.status(404).json({ error: 'PDF preview is not available' });
     }
-    const s3Response = await s3Service.downloadPdfPreview(
-      preview.s3Key,
-      { abortSignal: abortController.signal },
-    );
-    s3Body = s3Response.Body;
     if (abortController.signal.aborted || req.aborted || res.destroyed) return;
-    res.setHeader('Content-Type', s3Response.ContentType || descriptor.mimeType);
+    res.setHeader('Content-Type', cached.descriptor.mimeType);
     res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
-    if (s3Response.ContentLength !== undefined) {
-      res.setHeader('Content-Length', String(s3Response.ContentLength));
-    }
-    if (s3Response.ETag) res.setHeader('ETag', s3Response.ETag);
-    await pipeline(s3Body, res);
+    res.setHeader('Content-Length', String(cached.buffer.length));
+    if (cached.etag) res.setHeader('ETag', cached.etag);
+    return res.end(cached.buffer);
   } catch (error) {
     if (
       abortController.signal.aborted

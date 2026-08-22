@@ -7,8 +7,12 @@ const {
   createPreviewDescriptor,
   canAttemptPdfPreview,
   isPreviewCurrent,
+  loadSharedPreview,
   previewS3Key,
   renderPdfPage,
+  sharedPreviewId,
+  sharedPreviewS3Key,
+  storeSharedPreview,
 } = require('../src/services/pdfPreview');
 const { readOptions } = require('../scripts/backfill-pdf-previews');
 
@@ -69,6 +73,7 @@ test('suppresses permanent and recent preview failures', () => {
   assert.equal(canAttemptPdfPreview({
     previewStatus: 'failed',
     previewRetryable: false,
+    previewRecoveryVersion: 1,
     previewFailedAt: new Date(now - 60_000),
   }, now), false);
   assert.equal(canAttemptPdfPreview({
@@ -81,4 +86,47 @@ test('suppresses permanent and recent preview failures', () => {
     previewRetryable: true,
     previewFailedAt: new Date(now - 11 * 60_000),
   }, now), true);
+});
+
+test('retries permanent failures created before shared-source recovery', () => {
+  assert.equal(canAttemptPdfPreview({
+    previewStatus: 'failed',
+    previewRetryable: false,
+    previewFailedAt: new Date(),
+  }), true);
+});
+
+test('stores compact first-page images in the shared Mongo preview library', async () => {
+  let stored;
+  const collection = {
+    async createIndex() {},
+    async updateOne(_filter, update) { stored = update.$set; },
+    async findOne() { return stored; },
+  };
+  const mongoClient = {
+    db(name) {
+      assert.equal(name, '_GardenOfPapersShared');
+      return { collection() { return collection; } };
+    },
+  };
+  const image = Buffer.alloc(1_500, 1);
+  image.write('RIFF');
+  await storeSharedPreview(mongoClient, {
+    pdfSha256: 'abc123',
+    pageIndex: 0,
+    buffer: image,
+    width: 320,
+    height: 440,
+    s3Key: 'previews/shared/abc.webp',
+    updatedAt: 123,
+  });
+  const loaded = await loadSharedPreview(mongoClient, 'abc123', 0);
+
+  assert.equal(sharedPreviewId('abc123', 0), 'abc123:page:0:v2');
+  assert.equal(
+    sharedPreviewS3Key('abc123', 0),
+    'previews/shared/sha256/abc123/page-0-v2.webp',
+  );
+  assert.deepEqual(loaded.buffer, image);
+  assert.equal(loaded.width, 320);
 });
