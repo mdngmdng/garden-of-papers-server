@@ -6,7 +6,7 @@ const PDF_PREVIEW_VERSION = 2;
 const PDF_PREVIEW_MAX_WIDTH = 320;
 const PDF_PREVIEW_RETRY_COOLDOWN_MS = 10 * 60 * 1000;
 const configuredPreviewConcurrency = Number(
-  process.env.PDF_PREVIEW_MAX_CONCURRENCY || 2,
+  process.env.PDF_PREVIEW_MAX_CONCURRENCY || 4,
 );
 const MAX_CONCURRENT_PREVIEW_JOBS = Math.max(
   1,
@@ -14,7 +14,7 @@ const MAX_CONCURRENT_PREVIEW_JOBS = Math.max(
     4,
     Number.isFinite(configuredPreviewConcurrency)
       ? Math.floor(configuredPreviewConcurrency)
-      : 2,
+      : 4,
   ),
 );
 
