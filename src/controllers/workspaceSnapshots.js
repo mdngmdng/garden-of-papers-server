@@ -62,3 +62,18 @@ exports.saveWorkspace = async (req, res) => {
     return sendError(res, error);
   }
 };
+
+exports.patchWorkspace = async (req, res) => {
+  try {
+    const result = await workspaceSnapshotService.patch({
+      projectName: req.params.id,
+      baseRevision: req.body.baseRevision,
+      mutationId: req.body.mutationId,
+      delta: req.body.delta,
+    });
+    if (result.replayed) res.set('x-gop-idempotent-replay', 'true');
+    return res.status(200).json(result);
+  } catch (error) {
+    return sendError(res, error);
+  }
+};

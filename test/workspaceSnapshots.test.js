@@ -126,6 +126,43 @@ test('stores and updates a whole workspace as one revisioned document', async ()
   assert.equal(collection.document.lastMutationId, 'writer:1');
 });
 
+test('applies compact workspace deltas without returning the whole board', async () => {
+  const { collection, service } = fixture();
+  const initial = workspace();
+  initial.objects = [
+    { id: 'note-1', type: 'GX.MARONote', text: 'old' },
+    { id: 'note-removed', type: 'GX.MARONote', text: 'remove me' },
+  ];
+  await service.ensure(initial);
+
+  const result = await service.patch({
+    projectName: 'garden',
+    baseRevision: 0,
+    mutationId: 'writer:delta-1',
+    delta: {
+      schemaVersion: 3,
+      camera: { x: 42, y: 10, scale: 0.5 },
+      upsertedObjects: [
+        { id: 'note-1', type: 'GX.MARONote', text: 'new' },
+        { id: 'note-2', type: 'GX.MARONote', text: 'added' },
+      ],
+      removedObjectIds: ['note-removed'],
+    },
+  });
+
+  assert.deepEqual(Object.keys(result).sort(), [
+    'replayed',
+    'revision',
+    'updatedAt',
+  ]);
+  assert.equal(result.revision, 1);
+  assert.equal(collection.document.state.camera.x, 42);
+  assert.deepEqual(
+    collection.document.state.objects.map(({ id, text }) => [id, text]),
+    [['note-1', 'new'], ['note-2', 'added']],
+  );
+});
+
 test('replays a duplicate mutation without incrementing the revision', async () => {
   const { collection, service } = fixture();
   await service.ensure(workspace());

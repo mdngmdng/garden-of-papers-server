@@ -266,7 +266,124 @@ function createWorkspaceSnapshotService(
     );
   }
 
-  return { ensure, list, load, save };
+  async function patch({
+    projectName: projectNameValue,
+    baseRevision,
+    mutationId: mutationIdValue,
+    delta,
+  }) {
+    const projectName = requiredString(projectNameValue, 'projectName');
+    const mutationId = requiredString(mutationIdValue, 'mutationId', 512);
+    if (!Number.isInteger(baseRevision) || baseRevision < 0) {
+      throw new WorkspaceSnapshotError(
+        'baseRevision is invalid',
+        400,
+        'invalid_request',
+      );
+    }
+    if (
+      !delta
+      || typeof delta !== 'object'
+      || !Array.isArray(delta.upsertedObjects)
+      || !Array.isArray(delta.removedObjectIds)
+      || !delta.camera
+    ) {
+      throw new WorkspaceSnapshotError(
+        'delta is invalid',
+        400,
+        'invalid_request',
+      );
+    }
+
+    const snapshots = await collection();
+    const current = await snapshots.findOne({ _id: projectName });
+    if (!current) {
+      throw new WorkspaceSnapshotError(
+        'Workspace snapshot not found',
+        404,
+        'not_found',
+      );
+    }
+    if (current.lastMutationId === mutationId) {
+      return {
+        revision: current.revision,
+        updatedAt: publicState(current).updatedAt,
+        replayed: true,
+      };
+    }
+    if (current.revision !== baseRevision) {
+      throw new WorkspaceSnapshotError(
+        'Workspace revision conflict',
+        409,
+        'revision_conflict',
+        publicState(current),
+      );
+    }
+
+    const removed = new Set(
+      delta.removedObjectIds.map((id) => requiredString(id, 'removedObjectId')),
+    );
+    const byId = new Map(
+      publicState(current).objects
+        .filter((object) => !removed.has(object.id))
+        .map((object) => [object.id, object]),
+    );
+    for (const object of delta.upsertedObjects) {
+      const id = requiredString(object?.id, 'object.id');
+      byId.set(id, structuredClone(object));
+    }
+
+    const timestamp = now();
+    const nextRevision = current.revision + 1;
+    const savedState = {
+      ...structuredClone(publicState(current)),
+      schemaVersion: Number.isInteger(delta.schemaVersion)
+        ? delta.schemaVersion
+        : publicState(current).schemaVersion,
+      camera: structuredClone(delta.camera),
+      objects: [...byId.values()],
+      revision: nextRevision,
+      updatedAt: timestamp.toISOString(),
+    };
+    validateState(savedState, projectName);
+    const updated = await snapshots.findOneAndUpdate(
+      { _id: projectName, revision: baseRevision },
+      {
+        $set: {
+          revision: nextRevision,
+          state: savedState,
+          lastMutationId: mutationId,
+          updatedAt: timestamp,
+        },
+      },
+      { returnDocument: 'after' },
+    );
+    if (updated) {
+      notifyWorkspaceSaved(publicState(updated));
+      return {
+        revision: nextRevision,
+        updatedAt: savedState.updatedAt,
+        replayed: false,
+      };
+    }
+
+    const latest = await snapshots.findOne({ _id: projectName });
+    if (latest?.lastMutationId === mutationId) {
+      return {
+        revision: latest.revision,
+        updatedAt: publicState(latest).updatedAt,
+        replayed: true,
+      };
+    }
+    throw new WorkspaceSnapshotError(
+      'Workspace revision conflict',
+      409,
+      'revision_conflict',
+      publicState(latest),
+    );
+  }
+
+  return { ensure, list, load, patch, save };
 }
 
 function syncSavedWorkspaceToWiki(state) {
