@@ -152,7 +152,7 @@ function fixture(options = {}) {
 }
 
 test('syncs PDF, metadata, notes, highlights, positions, and a Markdown audit log', async () => {
-  const { markdownStore, service, sourceLoads } = fixture();
+  const { collection, markdownStore, service, sourceLoads } = fixture();
   const result = await service.sync('garden', workspace());
 
   assert.deepEqual(result.counts, {
@@ -167,6 +167,9 @@ test('syncs PDF, metadata, notes, highlights, positions, and a Markdown audit lo
     searchResults: 0,
   });
   assert.equal(sourceLoads(), 1);
+  assert.equal(collection.document.papers[0].sourceText, undefined);
+  assert.ok(collection.document.papers[0].sourceTextGzip);
+  assert.equal(result.papers[0].sourceTextCharacters > 0, true);
   assert.equal(result.diff.papers.added[0], 'paper-ilovesketch');
   const paperFile = [...markdownStore.files.entries()]
     .find(([filePath]) => filePath.includes('ilovesketch'));

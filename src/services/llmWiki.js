@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const config = require('../config');
 const { getClient } = require('./mongo');
 const grobid = require('./grobid');
@@ -24,7 +25,7 @@ const RETRIEVAL_CHUNK_CHARACTERS = 3_200;
 const RETRIEVAL_CHUNK_OVERLAP = 400;
 const MAX_SHARED_CHAT_MESSAGES = 100;
 const MAX_CHAT_HISTORY_MESSAGES = 12;
-const WIKI_FORMAT_VERSION = 4;
+const WIKI_FORMAT_VERSION = 5;
 
 class LLMWikiError extends Error {
   constructor(message, status = 400, code = 'invalid_request') {
@@ -451,6 +452,39 @@ function contentHash(paper) {
 
 function positionHash(paper) {
   return hash(paper.position);
+}
+
+function compressPaperSources(papers) {
+  return papers.map((paper) => {
+    const sourceText = cleanText(paper.sourceText, MAX_SOURCE_CHARACTERS);
+    const { sourceText: _sourceText, sourceTextGzip: _oldGzip, ...metadata } = paper;
+    return {
+      ...metadata,
+      sourceTextCharacters: sourceText.length,
+      sourceTextGzip: sourceText ? zlib.gzipSync(sourceText) : null,
+    };
+  });
+}
+
+function hydrateStoredSources(document) {
+  if (!document) return document;
+  document.papers = (document.papers || []).map((paper) => {
+    if (typeof paper.sourceText === 'string') return paper;
+    let sourceText = '';
+    if (paper.sourceTextGzip) {
+      try {
+        sourceText = cleanText(
+          zlib.gunzipSync(paper.sourceTextGzip).toString('utf8'),
+          MAX_SOURCE_CHARACTERS,
+        );
+      } catch {
+        sourceText = '';
+      }
+    }
+    const { sourceTextGzip: _sourceTextGzip, ...metadata } = paper;
+    return { ...metadata, sourceText };
+  });
+  return document;
 }
 
 function isMissingStoredPdf(error) {
@@ -1151,7 +1185,9 @@ function publicStatus(document) {
       title: paper.title,
       fileId: paper.pdf?.fileId || '',
       sourceStatus: paper.sourceStatus || 'unknown',
-      sourceTextCharacters: paper.sourceText?.length || 0,
+      sourceTextCharacters: Number.isInteger(paper.sourceTextCharacters)
+        ? paper.sourceTextCharacters
+        : paper.sourceText?.length || 0,
       wikiFilePath: paper.filePath || '',
     })),
     messages: publicChatMessages(document.chatMessages),
@@ -1617,14 +1653,19 @@ function createLLMWikiService({
 
   async function status(workspaceIdValue) {
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
-    const document = await (await collection()).findOne({ _id: workspaceId });
+    const document = await (await collection()).findOne(
+      { _id: workspaceId },
+      { projection: { 'papers.sourceTextGzip': 0 } },
+    );
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
     return publicStatus(document);
   }
 
   async function syncUnlocked(workspaceId, state) {
     const snapshots = await collection();
-    const previous = await snapshots.findOne({ _id: workspaceId });
+    const previous = hydrateStoredSources(
+      await snapshots.findOne({ _id: workspaceId }),
+    );
     const workspace = normalizeWorkspace(state, workspaceId);
     // WorkspaceSnapshots is the authoritative source. A browser may briefly
     // expose a larger optimistic revision before MongoDB assigns the canonical
@@ -1729,6 +1770,7 @@ function createLLMWikiService({
       updatedAt: now(),
     };
     const { _id, ...storedDocument } = document;
+    storedDocument.papers = compressPaperSources(document.papers);
     await snapshots.updateOne(
       { _id: workspaceId },
       { $set: storedDocument },
@@ -1778,7 +1820,10 @@ function createLLMWikiService({
 
   async function latestLog(workspaceIdValue) {
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
-    const document = await (await collection()).findOne({ _id: workspaceId });
+    const document = await (await collection()).findOne(
+      { _id: workspaceId },
+      { projection: { latestLog: 1 } },
+    );
     if (!document?.latestLog) throw new LLMWikiError('Sync log not found', 404, 'not_found');
     return {
       fileName: path.posix.basename(document.latestLog.filePath),
@@ -1790,7 +1835,9 @@ function createLLMWikiService({
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
     const question = requiredString(questionValue, 'question', 8_000);
     const contextPaperIds = optionalStringList(contextPaperIdsValue);
-    const document = await (await collection()).findOne({ _id: workspaceId });
+    const document = hydrateStoredSources(
+      await (await collection()).findOne({ _id: workspaceId }),
+    );
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
     const retrieval = buildChatContext(document, question, contextPaperIds);
     const answer = await openAIRequest({
@@ -1849,7 +1896,9 @@ function createLLMWikiService({
     const requestId = requiredString(requestIdValue, 'requestId', 128);
     const contextPaperIds = optionalStringList(contextPaperIdsValue);
     const snapshots = await collection();
-    const document = await snapshots.findOne({ _id: workspaceId });
+    const document = hydrateStoredSources(
+      await snapshots.findOne({ _id: workspaceId }),
+    );
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
 
     const existingMessages = publicChatMessages(document.chatMessages);
