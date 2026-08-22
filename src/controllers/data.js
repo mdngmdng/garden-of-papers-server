@@ -30,10 +30,7 @@ exports.loadData = async (req, res) => {
         paperRows
           .filter((row) => {
             const fileId = String(row.fileId || row._id || '');
-            const pageIndex = Math.max(
-              0,
-              Math.floor(Number(row.abovePageIndex) || 0),
-            );
+            const pageIndex = 0;
             const hasCitations = row.citationStatus === 'ready'
               && Array.isArray(row.citationHits);
             const hasPreview = pdfPreviewService.isPreviewCurrent(
@@ -102,7 +99,7 @@ exports.loadData = async (req, res) => {
             rowUpdate.referenceTitleList = cached.referenceTitleList;
           }
         }
-        const pageIndex = Math.max(0, Math.floor(Number(row.abovePageIndex) || 0));
+        const pageIndex = 0;
         const storedPreview = pdfPreviewService.isPreviewCurrent(
           row.pdfPagePreview,
           fileId,
@@ -199,7 +196,7 @@ exports.uploadData = async (req, res) => {
       pdfPreviewService.queuePdfPreview(
         data._projectName,
         String(data.fileId),
-        Math.max(0, Math.floor(Number(data.abovePageIndex) || 0)),
+        0,
       );
     }
   } catch (error) {
@@ -369,10 +366,7 @@ exports.updateData = async (req, res) => {
       syncKeys.rotateKey(WebSocketID, _projectName);
       syncKeys.debugLog();
       if (updatedData.type === 'GX.MAROScientificPaper' && updatedData.fileId) {
-        const pageIndex = Math.max(
-          0,
-          Math.floor(Number(updatedData.abovePageIndex) || 0),
-        );
+        const pageIndex = 0;
         if (!pdfPreviewService.isPreviewCurrent(
           updatedData.pdfPagePreview,
           String(updatedData.fileId),

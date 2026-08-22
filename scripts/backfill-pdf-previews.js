@@ -1,5 +1,5 @@
 /**
- * Render the last-opened page of every saved paper and store it in S3.
+ * Render the first page of every saved paper and store it in S3.
  *
  * Usage:
  *   npm run backfill:pdf-previews -- [projectName] [--force] [--concurrency=2]
@@ -82,10 +82,7 @@ async function main() {
       console.log(`[PDF preview] ${projectName}: ${papers.length} paper(s)`);
       await mapConcurrent(papers, options.concurrency, async (paper) => {
         const fileId = String(paper.fileId);
-        const pageIndex = Math.max(
-          0,
-          Math.floor(Number(paper.abovePageIndex) || 0),
-        );
+        const pageIndex = 0;
         try {
           const preview = await generatePdfPreview(projectName, fileId, pageIndex, {
             force: options.force,

@@ -1091,7 +1091,13 @@ exports.downloadPdfPreview = async (req, res) => {
       || typeof preview.s3Key !== 'string'
       || !preview.s3Key
     ) {
-      return res.status(404).json({ error: 'PDF preview is not ready' });
+      if (pdfPreviewService.canAttemptPdfPreview(metadata)) {
+        pdfPreviewService.queuePdfPreview(projectName, fileid, requestedPageIndex);
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        return res.status(202).json({ status: 'queued' });
+      }
+      return res.status(404).json({ error: 'PDF preview is not available' });
     }
     const s3Response = await s3Service.downloadPdfPreview(
       preview.s3Key,
@@ -1116,7 +1122,10 @@ exports.downloadPdfPreview = async (req, res) => {
       return;
     }
     if (isMissingPdfError(error)) {
-      return res.status(404).json({ error: 'PDF preview is not ready' });
+      pdfPreviewService.queuePdfPreview(projectName, fileid, requestedPageIndex);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Retry-After', '2');
+      return res.status(202).json({ status: 'queued' });
     }
     console.error('Error downloading PDF preview:', error);
     if (!res.headersSent) {
