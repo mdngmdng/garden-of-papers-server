@@ -1818,6 +1818,19 @@ function createLLMWikiService({
     return result;
   }
 
+  function requestSync(workspaceIdValue, state) {
+    const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
+    const requestedRevision = Number.isInteger(state?.revision) ? state.revision : 0;
+    void sync(workspaceId, state).catch((error) => {
+      console.error(`LLM Wiki background sync failed for ${workspaceId}:`, error);
+    });
+    return {
+      workspaceId,
+      requestedRevision,
+      accepted: true,
+    };
+  }
+
   async function latestLog(workspaceIdValue) {
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
     const document = await (await collection()).findOne(
@@ -2009,7 +2022,15 @@ function createLLMWikiService({
     return { workspaceId, messages: [], clearedAt: iso(clearedAt) };
   }
 
-  return { chat, clearChat, enqueueChat, latestLog, status, sync };
+  return {
+    chat,
+    clearChat,
+    enqueueChat,
+    latestLog,
+    requestSync,
+    status,
+    sync,
+  };
 }
 
 module.exports = {

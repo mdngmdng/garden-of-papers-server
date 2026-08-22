@@ -367,6 +367,28 @@ test('coalesces queued large-board syncs to the newest saved revision', async ()
   assert.equal(collection.document.papers[0].position.x, 300);
 });
 
+test('accepts a background sync before a large PDF load completes', async () => {
+  let releaseLoad;
+  const loadPending = new Promise((resolve) => {
+    releaseLoad = resolve;
+  });
+  const { service } = fixture({
+    sourceTextLoader: async () => {
+      await loadPending;
+      return 'Full PDF text.';
+    },
+  });
+
+  const receipt = service.requestSync('garden', workspace({ revision: 7 }));
+
+  assert.deepEqual(receipt, {
+    workspaceId: 'garden',
+    requestedRevision: 7,
+    accepted: true,
+  });
+  releaseLoad();
+});
+
 test('uses the currently selected paper when the question omits its title', async () => {
   const { modelInput, service } = fixture({
     sourceTextLoader: async () =>

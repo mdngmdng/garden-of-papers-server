@@ -50,8 +50,8 @@ exports.sync = async (req, res) => {
         'workspace_not_ready',
       );
     }
-    return res.status(200).json(
-      await llmWikiService.sync(req.params.id, state),
+    return res.status(202).json(
+      llmWikiService.requestSync(req.params.id, state),
     );
   } catch (error) {
     return sendError(res, error);
