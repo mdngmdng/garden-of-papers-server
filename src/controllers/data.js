@@ -240,7 +240,8 @@ exports.updateData = async (req, res) => {
     scholarCitationStatus, scholarCitationNextOffset, scholarCitationError,
     abovePageIndex, paperWidth, paperHeight,
     referenceTextArray, highlightTexts, copiedOrigianlPaperId,
-    lastPageNavigationTime, paperIndex, parentPaperId, color, noteType,
+    lastPageNavigationTime, paperIndex, parentPaperId, parentOffsetX,
+    parentOffsetY, color, noteType,
     textAlignmentIndex, fontSizeIndex, startPaperId, endPaperId, labelPosIndex,
     scaleFactor, ptCurveIds, ptArray, parentPageIndex,
     citationContextParagraph, citationSentenceRangePageIndex,
@@ -308,6 +309,13 @@ exports.updateData = async (req, res) => {
     update.labelPosIndex = labelPosIndex;
     update.scaleFactor = scaleFactor;
     if (parentPaperId !== '') update.parentPaperId = parentPaperId;
+    if (Number.isFinite(parentOffsetX) && Number.isFinite(parentOffsetY)) {
+      update.parentOffsetX = parentOffsetX;
+      update.parentOffsetY = parentOffsetY;
+    } else if (parentOffsetX === null && parentOffsetY === null) {
+      unset.parentOffsetX = '';
+      unset.parentOffsetY = '';
+    }
     if (ptCurveIds !== null && ptCurveIds.length !== 0) update.ptCurveIds = ptCurveIds;
     if (ptArray !== null && ptArray.length !== 0) update.ptArray = ptArray;
     update.parentPageIndex = parentPageIndex;

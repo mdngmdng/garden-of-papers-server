@@ -35,6 +35,8 @@ const dataSchema = new mongoose.Schema({
   lastPageNavigationTime: String,
   parentPaperId: String,
   paperIndex: Number,
+  parentOffsetX: Number,
+  parentOffsetY: Number,
   fontSizeIndex: Number,
   textAlignmentIndex: Number,
   color: { r: Number, g: Number, b: Number, a: Number },
