@@ -620,7 +620,12 @@ test('persists citation arrows, search nodes, and generated Markdown in MongoDB'
   assert.match(modelInput(), /Citation and canvas relationships/);
   assert.match(modelInput(), /Search nodes and saved results/);
   assert.ok(collection.document.markdownDocuments.length >= 6);
-  assert.ok(collection.document.markdownDocuments.every((item) => item.markdown));
+  assert.ok(collection.document.markdownDocuments.every(
+    (item) => Number.isInteger(item.characters) && item.characters > 0,
+  ));
+  assert.ok(collection.document.markdownDocuments.every(
+    (item) => item.markdown === undefined,
+  ));
   assert.match(result.latestLogMarkdown, /Relationships added \/ updated \/ deleted/);
   assert.match(result.latestLogMarkdown, /Search nodes transferred/);
 });

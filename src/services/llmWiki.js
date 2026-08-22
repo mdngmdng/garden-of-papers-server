@@ -24,7 +24,7 @@ const RETRIEVAL_CHUNK_CHARACTERS = 3_200;
 const RETRIEVAL_CHUNK_OVERLAP = 400;
 const MAX_SHARED_CHAT_MESSAGES = 100;
 const MAX_CHAT_HISTORY_MESSAGES = 12;
-const WIKI_FORMAT_VERSION = 3;
+const WIKI_FORMAT_VERSION = 4;
 
 class LLMWikiError extends Error {
   constructor(message, status = 400, code = 'invalid_request') {
@@ -1063,7 +1063,7 @@ function logMarkdown(workspace, diff) {
     '- [x] Canvas coordinates and stacking order recorded',
     '- [x] Citation arrows, evidence, and contexts recorded',
     '- [x] Search nodes, result metadata, review states, and positions recorded',
-    '- [x] Generated Markdown documents persisted with the shared MongoDB snapshot',
+    '- [x] Generated Markdown document index persisted with the shared MongoDB snapshot',
     '- [x] Deletions compared against the previous synced snapshot',
     '',
   ].join('\n');
@@ -1140,7 +1140,11 @@ function publicStatus(document) {
     markdownDocuments: (document.markdownDocuments || []).map((item) => ({
       path: cleanText(item?.path, 4_000),
       kind: cleanText(item?.kind, 128),
-      characters: typeof item?.markdown === 'string' ? item.markdown.length : 0,
+      characters: Number.isInteger(item?.characters)
+        ? item.characters
+        : typeof item?.markdown === 'string'
+          ? item.markdown.length
+          : 0,
     })),
     papers: (document.papers || []).map((paper) => ({
       id: paper.id,
@@ -1666,7 +1670,7 @@ function createLLMWikiService({
     for (const oldPaper of previous?.papers || []) {
       if (!currentPaths.has(oldPaper.filePath)) await markdownStore.remove(oldPaper.filePath);
     }
-    const markdownDocuments = [
+    const renderedMarkdownDocuments = [
       {
         path: workspaceIndexPath(workspace),
         kind: 'workspace-index',
@@ -1694,8 +1698,16 @@ function createLLMWikiService({
       })),
     ];
     await Promise.all(
-      markdownDocuments.map((item) => markdownStore.write(item.path, item.markdown)),
+      renderedMarkdownDocuments.map((item) => markdownStore.write(item.path, item.markdown)),
     );
+    // Markdown files already contain the complete generated text. Persisting
+    // that text again beside every PDF source duplicated several megabytes and
+    // pushed large boards beyond MongoDB's single-document limit.
+    const markdownDocuments = renderedMarkdownDocuments.map((item) => ({
+      path: item.path,
+      kind: item.kind,
+      characters: item.markdown.length,
+    }));
 
     const log = logMarkdown(workspace, diff);
     const safeTimestamp = workspace.syncedAt.replace(/[:.]/g, '-');
