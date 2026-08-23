@@ -114,10 +114,14 @@ function parseTeiToCitationHits(teiXml) {
   // (b) 본문 인용: <ref type="bibr" coords="..." target="#b0">text</ref>
   //     속성 순서가 일정하지 않으므로 유연하게 파싱
   const citationHits = [];
+  // Publisher templates may contain ref nodes in notes or back matter. Only
+  // citation markers inside the TEI body are prose evidence; bibliography
+  // entries must never become in-text citation hits.
+  const bodyXml = teiXml.match(/<body\b[^>]*>([\s\S]*?)<\/body>/)?.[1] || '';
   const refRegex = /<ref\b([^>]*?)(?<!\/)>([\s\S]*?)<\/ref>/g;
   let refMatch;
 
-  while ((refMatch = refRegex.exec(teiXml)) !== null) {
+  while ((refMatch = refRegex.exec(bodyXml)) !== null) {
     const attrs = refMatch[1];
     if (xmlAttribute(attrs, 'type') !== 'bibr') continue;
     const markerText = (refMatch[2] || '').replace(/<[^>]*>/g, '').trim();

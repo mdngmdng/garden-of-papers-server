@@ -22,6 +22,24 @@ test('parses citation and page attributes independent of XML attribute order', (
   ]);
 });
 
+test('keeps citation hits in the TEI body and excludes back references', () => {
+  const result = parseTeiToCitationHits(`
+    <TEI>
+      <listBibl>
+        <biblStruct xml:id="b0"><title>Body paper</title></biblStruct>
+        <biblStruct xml:id="b1"><title>Reference-list paper</title></biblStruct>
+      </listBibl>
+      <text>
+        <body><p>Body claim <ref type="bibr" target="#b0">[1]</ref>.</p></body>
+        <back><div type="references"><p><ref type="bibr" target="#b1">[2]</ref></p></div></back>
+      </text>
+    </TEI>
+  `);
+
+  assert.equal(result.citationHits.length, 1);
+  assert.deepEqual(result.citationHits[0].refIds, ['b0']);
+});
+
 test('recovers a missing GROBID target from its displayed reference number', () => {
   const result = parseTeiToCitationHits(`
     <TEI>
