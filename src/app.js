@@ -25,7 +25,7 @@ const app = express();
 // Middleware
 app.use(cors({
   origin: true, // allow all origins (Chrome extension + Unity)
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type',
     'Authorization',

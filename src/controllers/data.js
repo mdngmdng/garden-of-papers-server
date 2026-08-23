@@ -183,6 +183,7 @@ exports.uploadData = async (req, res) => {
     if (data.type === 'GX.MAROScientificPaper') {
       delete data.pdfPagePreview;
     }
+    data._gopUpdatedAt = new Date();
     const newData = await collection.insertOne(data);
     if (!newData) {
       return res.status(404).json({ status: 'error', message: 'Data not found' });
@@ -355,6 +356,7 @@ exports.updateData = async (req, res) => {
     if (pdfPagePreview?.version === 1) {
       unset.pdfPagePreview = '';
     }
+    update._gopUpdatedAt = new Date();
 
     try {
       const updatedData = await collection.findOneAndUpdate(
@@ -414,6 +416,15 @@ exports.deleteData = async (req, res) => {
     if (!deletedData.deletedCount) {
       return res.status(404).json({ status: 'error', message: 'Data not found' });
     }
+
+    // Keep a workspace-level freshness witness even when the newest change is
+    // a deletion. The camera row is written at the end of every successful
+    // browser save, so this marker also lets clients distinguish a current
+    // legacy mirror from an older atomic safety snapshot.
+    await collection.updateOne(
+      { type: 'GX.MAROScreenCameraPerson' },
+      { $set: { _gopUpdatedAt: new Date() } },
+    );
 
     res.status(200).json({ status: 'ok', message: 'Data deleted successfully' });
     syncKeys.rotateKey(WebSocketID, _projectName);

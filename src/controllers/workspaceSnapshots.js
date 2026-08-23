@@ -2,6 +2,9 @@ const {
   WorkspaceSnapshotError,
   workspaceSnapshotService,
 } = require('../services/workspaceSnapshots');
+const {
+  workspaceFreshnessService,
+} = require('../services/workspaceFreshness');
 
 function sendError(res, error) {
   if (error instanceof WorkspaceSnapshotError) {
@@ -42,6 +45,16 @@ exports.loadWorkspace = async (req, res) => {
   try {
     return res.status(200).json(
       await workspaceSnapshotService.load(req.params.id),
+    );
+  } catch (error) {
+    return sendError(res, error);
+  }
+};
+
+exports.workspaceSourceStatus = async (req, res) => {
+  try {
+    return res.status(200).json(
+      await workspaceFreshnessService.sourceStatus(req.params.id),
     );
   } catch (error) {
     return sendError(res, error);
