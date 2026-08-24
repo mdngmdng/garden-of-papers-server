@@ -13,7 +13,7 @@ const pdfText = require('./pdfText');
 const DATABASE = 'GardenOfPapersSystem';
 const COLLECTION = 'LLMWikiSnapshots';
 const MAX_SOURCE_CHARACTERS = 240_000;
-const SOURCE_TEXT_FORMAT_VERSION = 2;
+const SOURCE_TEXT_FORMAT_VERSION = 3;
 // Keep generation prompts bounded even as a board grows. Retrieval scans only
 // the most relevant papers and sends evidence chunks instead of complete PDFs.
 const MAX_CHAT_CONTEXT_CHARACTERS = 96_000;
@@ -24,6 +24,9 @@ const MAX_RETRIEVED_CHUNKS = 24;
 const MAX_BROAD_RETRIEVED_CHUNKS = 32;
 const RETRIEVAL_CHUNK_CHARACTERS = 3_200;
 const RETRIEVAL_CHUNK_OVERLAP = 400;
+const MAX_FOCUSED_CONTEXT_CHARACTERS = 80_000;
+const MAX_FOCUSED_RELEVANT_SEEDS = 8;
+const FOCUSED_NEIGHBOR_RADIUS = 1;
 const MAX_DEEP_READ_PAPERS = 4;
 const DEEP_READ_BATCH_CHARACTERS = 90_000;
 const DEEP_READ_INPUT_TOKEN_BUDGET = Math.max(
@@ -33,7 +36,7 @@ const DEEP_READ_INPUT_TOKEN_BUDGET = Math.max(
 const DEEP_READ_RESERVED_TOKENS = 12_000;
 const MAX_SHARED_CHAT_MESSAGES = 100;
 const MAX_CHAT_HISTORY_MESSAGES = 12;
-const WIKI_FORMAT_VERSION = 6;
+const WIKI_FORMAT_VERSION = 7;
 
 class LLMWikiError extends Error {
   constructor(message, status = 400, code = 'invalid_request') {
@@ -419,8 +422,13 @@ function teiBodyText(teiXml) {
   return cleanText(
     body
       .replace(/<pb\b[^>]*\bn=["']?(\d+)["']?[^>]*\/?\s*>/gi, '\n\n[Page $1]\n')
-      .replace(/<head\b[^>]*>/gi, '\n\n')
-      .replace(/<\/head>/gi, '\n')
+      .replace(/<head\b[^>]*>([\s\S]*?)<\/head>/gi, (_match, heading) => {
+        const value = String(heading || '')
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        return value ? `\n\n[Section: ${value}]\n` : '\n\n';
+      })
       .replace(/<\/p>|<\/div>|<\/list>|<\/item>/gi, '\n\n')
       .replace(/<[^>]*>/g, ' ')
       .replace(/&amp;/g, '&')
@@ -507,6 +515,37 @@ function hydrateStoredSources(document) {
   return document;
 }
 
+function sourceTextFromPaperMarkdown(markdown) {
+  const value = String(markdown || '');
+  const marker = '## PDF full text';
+  const index = value.lastIndexOf(marker);
+  if (index < 0) return '';
+  const source = cleanText(value.slice(index + marker.length), MAX_SOURCE_CHARACTERS);
+  if (!source || /^_PDF text was not available during this sync\._$/i.test(source)) return '';
+  return source;
+}
+
+async function hydrateMarkdownSources(document, markdownStore) {
+  if (!document || typeof markdownStore?.read !== 'function') return document;
+  await Promise.all((document.papers || []).map(async (paper) => {
+    if (paper.sourceText || !paper.filePath) return;
+    try {
+      const sourceText = sourceTextFromPaperMarkdown(
+        await markdownStore.read(paper.filePath),
+      );
+      if (!sourceText) return;
+      paper.sourceText = sourceText;
+      paper.sourceTextCharacters = sourceText.length;
+      paper.sourceStatus = 'markdown-cache';
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        console.error(`LLM Wiki Markdown source recovery failed for ${paper.id}:`, error);
+      }
+    }
+  }));
+  return document;
+}
+
 function isMissingStoredPdf(error) {
   return error?.name === 'NoSuchKey'
     || error?.Code === 'NoSuchKey'
@@ -519,6 +558,7 @@ async function hydratePapers(
   previous,
   sourceTextLoader,
   pdfBridgeRegistrar,
+  markdownStore,
 ) {
   const previousById = new Map((previous?.papers || []).map((paper) => [paper.id, paper]));
   const hydrated = new Array(workspace.papers.length);
@@ -537,6 +577,18 @@ async function hydratePapers(
       ) {
         paper.sourceText = old.sourceText;
         paper.sourceStatus = old.sourceStatus || 'cached';
+      }
+      if (!paper.sourceText && old?.filePath && typeof markdownStore?.read === 'function') {
+        try {
+          paper.sourceText = sourceTextFromPaperMarkdown(
+            await markdownStore.read(old.filePath),
+          );
+          if (paper.sourceText) paper.sourceStatus = 'markdown-cache';
+        } catch (error) {
+          if (error?.code !== 'ENOENT') {
+            console.error(`LLM Wiki Markdown source recovery failed for ${paper.id}:`, error);
+          }
+        }
       }
       if (!paper.sourceText && paper.pdf.fileId) {
         try {
@@ -1152,7 +1204,16 @@ function createMarkdownStore(rootValue = config.llmWikiRoot) {
     });
   }
 
-  return { root, write, remove };
+  async function read(relativePath) {
+    if (!relativePath) return '';
+    const source = path.resolve(root, relativePath);
+    if (source !== root && !source.startsWith(`${root}${path.sep}`)) {
+      throw new LLMWikiError('Generated Wiki path escaped the configured root', 500, 'unsafe_path');
+    }
+    return fs.readFile(source, 'utf8');
+  }
+
+  return { root, write, remove, read };
 }
 
 function defaultCollection() {
@@ -1227,7 +1288,7 @@ function publicStatus(document) {
 
 function publicReadingReport(value) {
   if (!value || typeof value !== 'object') return null;
-  const mode = ['retrieved-passages', 'full-text', 'chunked-full-text']
+  const mode = ['retrieved-passages', 'focused-chunks', 'full-text', 'chunked-full-text']
     .includes(value.mode)
     ? value.mode
     : 'retrieved-passages';
@@ -1237,7 +1298,12 @@ function publicReadingReport(value) {
       title: cleanText(paper?.title, 1_000),
       coverage: paper?.coverage === 'full-text' ? 'full-text' : 'selected-passages',
       sourceTextCharacters: Math.max(0, Number(paper?.sourceTextCharacters) || 0),
+      totalChunkCount: Math.max(0, Number(paper?.totalChunkCount) || 0),
       chunkCount: Math.max(0, Number(paper?.chunkCount) || 0),
+      readCharacters: Math.max(0, Number(paper?.readCharacters) || 0),
+      sections: Array.isArray(paper?.sections)
+        ? paper.sections.slice(0, 24).map((section) => cleanText(section, 240)).filter(Boolean)
+        : [],
       passages: Array.isArray(paper?.passages)
         ? paper.passages.slice(0, 48).map((passage) => ({
           kind: cleanText(passage?.kind, 240),
@@ -1255,6 +1321,10 @@ function publicReadingReport(value) {
     mode,
     estimatedInputTokens: Math.max(0, Number(value.estimatedInputTokens) || 0),
     offerFullTextReview: Boolean(value.offerFullTextReview),
+    scope: cleanText(value.scope, 1_000),
+    selectionRule: cleanText(value.selectionRule, 2_000),
+    processing: cleanText(value.processing, 2_000),
+    readSummary: cleanText(value.readSummary, 2_000),
     papers,
   };
 }
@@ -1503,6 +1573,21 @@ function sourceTextChunks(text) {
     }
     return page;
   };
+  const sectionMarkers = [...source.matchAll(/\[Section:\s*([^\]\n]+)\]/gi)].map((match) => ({
+    offset: match.index || 0,
+    section: cleanText(match[1], 240),
+  }));
+  const sectionAt = (offset, endOffset = offset) => {
+    let section = '';
+    for (const marker of sectionMarkers) {
+      if (marker.offset > offset) {
+        if (!section && marker.offset < endOffset) section = marker.section;
+        break;
+      }
+      section = marker.section;
+    }
+    return section;
+  };
   const chunks = [];
   let start = 0;
   while (start < source.length) {
@@ -1523,6 +1608,7 @@ function sourceTextChunks(text) {
       end,
       pageStart: pageAt(start),
       pageEnd: pageAt(Math.max(start, end - 1)),
+      section: sectionAt(start, end),
       text: source.slice(start, end).trim(),
     });
     if (end >= source.length) break;
@@ -1556,7 +1642,10 @@ function paperEvidenceChunks(paper) {
       text: highlight.text,
     });
   }
-  return [...chunks, ...sourceTextChunks(paper.sourceText)];
+  return [...chunks, ...sourceTextChunks(paper.sourceText).map((chunk) => ({
+    ...chunk,
+    kind: chunk.section ? `PDF full text · ${chunk.section}` : chunk.kind,
+  }))];
 }
 
 function rankChunks(paperRank, question) {
@@ -1702,6 +1791,10 @@ function buildChatContext(document, question, contextPaperIds = []) {
       mode: 'retrieved-passages',
       estimatedInputTokens: estimatedTokens(context),
       offerFullTextReview: sources.length > 0,
+      scope: `보드 전체 ${document.papers.length}편의 제목·초록·저장된 PDF 본문`,
+      selectionRule: '질문과 제목·초록·본문의 일치도를 계산해 관련성이 높은 논문과 구절을 우선 선택',
+      processing: `PDF 본문을 페이지 경계를 보존한 약 ${RETRIEVAL_CHUNK_CHARACTERS.toLocaleString()}자 중첩 청크로 분할한 뒤 보드 전체에서 검색`,
+      readSummary: `${includedPapers.size}편에서 관련 본문 ${[...includedPassages.values()].reduce((sum, passages) => sum + passages.length, 0)}개를 읽음`,
       papers: [...includedPapers.values()].map((paper) => ({
         id: paper.id,
         title: paper.title,
@@ -1710,6 +1803,174 @@ function buildChatContext(document, question, contextPaperIds = []) {
         chunkCount: includedPassages.get(paper.id)?.length || 0,
         passages: includedPassages.get(paper.id) || [],
       })),
+    },
+  };
+}
+
+const FOCUSED_FOLLOW_UP = /(?:이|그|해당|앞의|위의)\s*(?:논문|연구|PDF)|(?:더|좀)\s*(?:자세|깊게)|(?:구체적|세부적)(?:으로)?|(?:method|results?|limitations?|paper)\b/iu;
+const IMPORTANT_SECTION = /(?:abstract|introduction|background|related\s+work|method|methodology|approach|system|design|implementation|evaluation|experiment|result|finding|discussion|conclusion|limitation|future\s+work|초록|서론|배경|관련\s*연구|방법|시스템|설계|구현|평가|실험|결과|논의|결론|한계|향후)/iu;
+
+function focusedReadTargets(document, question, contextPaperIds = []) {
+  const normalizedQuestion = normalizeSearchText(question);
+  const contextIds = new Set(contextPaperIds);
+  const named = document.papers.filter((paper) =>
+    paperAliases(paper).some((alias) => containsSearchPhrase(normalizedQuestion, alias)),
+  );
+  if (isBroadCoverageQuestion(question) && !named.length) return null;
+
+  const selected = document.papers.filter((paper) => contextIds.has(paper.id));
+  let reason = '';
+  let papers = [];
+  if (named.length) {
+    papers = named;
+    reason = '질문에 논문명이 명시됨';
+  } else if (selected.length) {
+    papers = selected;
+    reason = '캔버스에서 선택된 논문을 질문 범위로 사용';
+  } else if (FOCUSED_FOLLOW_UP.test(question)) {
+    const recentAssistant = [...(document.chatMessages || [])]
+      .reverse()
+      .find((message) => message?.role === 'assistant'
+        && (message?.sources?.length || message?.readingReport?.papers?.length));
+    const recentIds = new Set([
+      ...(recentAssistant?.sources || []).map((source) => source.id),
+      ...(recentAssistant?.readingReport?.papers || []).map((paper) => paper.id),
+    ]);
+    papers = document.papers.filter((paper) => recentIds.has(paper.id));
+    reason = '직전 답변에서 특정된 논문의 후속 질문으로 판단';
+  }
+  papers = papers.filter((paper) => paper?.sourceText).slice(0, MAX_DEEP_READ_PAPERS);
+  return papers.length ? { papers, reason } : null;
+}
+
+function focusedChunkCandidates(paper, question) {
+  const terms = queryTerms(question);
+  const chunks = sourceTextChunks(paper.sourceText).map((chunk, index) => ({
+    ...chunk,
+    index,
+    score: terms.reduce((sum, term) =>
+      sum + termOccurrences(normalizeSearchText(chunk.text), term) * 6, 0),
+  }));
+  if (!chunks.length) return { chunks, selected: [] };
+
+  const selected = new Map();
+  const add = (index, priority, selection) => {
+    const chunk = chunks[index];
+    if (!chunk) return;
+    const previous = selected.get(index);
+    if (!previous || previous.priority < priority) {
+      selected.set(index, { ...chunk, priority, selection });
+    }
+  };
+  const seeds = [...chunks]
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, MAX_FOCUSED_RELEVANT_SEEDS);
+  for (const seed of seeds) {
+    add(seed.index, 100 + seed.score, '질문 관련 청크');
+    for (let offset = 1; offset <= FOCUSED_NEIGHBOR_RADIUS; offset += 1) {
+      add(seed.index - offset, 70 + seed.score, '관련 청크의 앞 문맥');
+      add(seed.index + offset, 70 + seed.score, '관련 청크의 뒤 문맥');
+    }
+  }
+  const importantSections = new Set();
+  for (const chunk of chunks) {
+    if (!chunk.section || !IMPORTANT_SECTION.test(chunk.section)) continue;
+    const key = normalizeSearchText(chunk.section);
+    if (importantSections.has(key)) continue;
+    importantSections.add(key);
+    add(chunk.index, 55, `핵심 섹션: ${chunk.section}`);
+  }
+  add(0, 45, '논문 도입부');
+  add(chunks.length - 1, 45, '논문 마무리');
+  // Once query hits, adjacent context, and core academic sections have been
+  // secured, spend the remaining focused-reading budget on the next strongest
+  // body chunks. A named paper should be read as deeply as the token budget
+  // allows instead of stopping after a small retrieval shortlist.
+  for (const chunk of chunks) {
+    add(chunk.index, 25 + chunk.score, '남은 토큰 예산으로 추가한 본문 문맥');
+  }
+  return {
+    chunks,
+    selected: [...selected.values()]
+      .sort((left, right) => right.priority - left.priority || left.index - right.index),
+  };
+}
+
+function buildFocusedReadContext(document, question, contextPaperIds = []) {
+  const target = focusedReadTargets(document, question, contextPaperIds);
+  if (!target) return null;
+  const perPaperBudget = Math.floor(
+    (MAX_FOCUSED_CONTEXT_CHARACTERS - 8_000) / target.papers.length,
+  );
+  const included = [];
+  const reports = [];
+  for (const paper of target.papers) {
+    const { chunks, selected } = focusedChunkCandidates(paper, question);
+    let used = 0;
+    const chosen = [];
+    for (const candidate of selected) {
+      const headerLength = 240;
+      if (chosen.length && used + candidate.text.length + headerLength > perPaperBudget) continue;
+      chosen.push(candidate);
+      used += candidate.text.length + headerLength;
+    }
+    chosen.sort((left, right) => left.index - right.index);
+    const abstract = cleanText(paper.abstract, 8_000);
+    included.push([
+      `# Focused Markdown reading: ${paper.title}`,
+      `Authors: ${paper.authors.join(', ') || 'Unknown'} | Year: ${paper.year || 'Unknown'} | Venue: ${paper.venue || 'Unknown'}`,
+      `Selection reason: ${target.reason}`,
+      abstract ? `## Abstract\n${abstract}` : '',
+      ...chosen.map((chunk) => [
+        `## ${chunk.section || 'Body'} | ${chunk.pageStart ? `pages ${chunk.pageStart}${chunk.pageEnd && chunk.pageEnd !== chunk.pageStart ? `-${chunk.pageEnd}` : ''}` : `characters ${chunk.start}-${chunk.end}`}`,
+        `Why this chunk was read: ${chunk.selection}`,
+        chunk.text,
+      ].filter(Boolean).join('\n')),
+    ].filter(Boolean).join('\n\n'));
+    const sections = [...new Set(chosen.map((chunk) => chunk.section).filter(Boolean))];
+    reports.push({
+      id: paper.id,
+      title: paper.title,
+      coverage: 'selected-passages',
+      sourceTextCharacters: paper.sourceText.length,
+      totalChunkCount: chunks.length,
+      chunkCount: chosen.length,
+      readCharacters: chosen.reduce((sum, chunk) => sum + chunk.text.length, 0),
+      sections,
+      passages: chosen.map((chunk) => ({
+        kind: chunk.section ? `저장된 Markdown · ${chunk.section}` : '저장된 Markdown · 본문',
+        start: chunk.start,
+        end: chunk.end,
+        pageStart: chunk.pageStart,
+        pageEnd: chunk.pageEnd,
+        excerpt: chunk.text.replace(/\s+/g, ' ').slice(0, 360),
+      })),
+    });
+  }
+  const context = [
+    '# Focused paper reading mode',
+    'The user has narrowed the scope to the papers below. The evidence was selected from each stored Markdown full-text section by query relevance, adjacent context, and important academic sections. Give these papers substantially deeper treatment than a board-wide search.',
+    ...included,
+  ].join('\n\n---\n\n').slice(0, MAX_FOCUSED_CONTEXT_CHARACTERS);
+  const sources = target.papers.map((paper) => ({
+    id: paper.id,
+    title: paper.title,
+    filePath: paper.filePath,
+  }));
+  const sectionNames = [...new Set(reports.flatMap((paper) => paper.sections))].slice(0, 8);
+  return {
+    context,
+    sources,
+    directSources: sources,
+    readingReport: {
+      mode: 'focused-chunks',
+      estimatedInputTokens: estimatedTokens(context),
+      offerFullTextReview: true,
+      scope: `${target.reason} · 저장된 Markdown 본문 ${target.papers.length}편`,
+      selectionRule: `질문 관련 상위 청크를 찾고 앞뒤 ${FOCUSED_NEIGHBOR_RADIUS}개 문맥과 주요 학술 섹션을 추가`,
+      processing: `Markdown의 PDF 본문을 페이지·섹션을 보존한 약 ${RETRIEVAL_CHUNK_CHARACTERS.toLocaleString()}자 중첩 청크로 분할`,
+      readSummary: `전체 ${reports.reduce((sum, paper) => sum + paper.totalChunkCount, 0)}개 중 ${reports.reduce((sum, paper) => sum + paper.chunkCount, 0)}개 청크·${reports.reduce((sum, paper) => sum + paper.readCharacters, 0).toLocaleString()}자를 읽음${sectionNames.length ? ` (${sectionNames.join(', ')})` : ''}`,
+      papers: reports,
     },
   };
 }
@@ -1743,7 +2004,7 @@ function deepReadTargetPapers(document, question, contextPaperIds = []) {
   return ids.slice(0, MAX_DEEP_READ_PAPERS).map((id) => papersById.get(id));
 }
 
-function fullTextPassage(paper, kind = 'PDF full text') {
+function fullTextPassage(paper, kind = 'Stored Markdown full text') {
   const chunks = sourceTextChunks(paper.sourceText);
   return {
     kind,
@@ -1826,8 +2087,8 @@ async function buildDeepReadContext(
   if (directInputTokens <= DEEP_READ_INPUT_TOKEN_BUDGET - DEEP_READ_RESERVED_TOKENS) {
     return {
       context: [
-        '# Full PDF reading mode',
-        'The complete extracted body below was read for this answer. Follow its argument from beginning to end rather than relying only on keyword hits.',
+        '# Full Markdown paper reading mode',
+        'The complete stored Markdown body below was read for this answer. Follow its argument from beginning to end rather than relying only on keyword hits.',
         completeText,
       ].join('\n\n'),
       sources,
@@ -1836,12 +2097,19 @@ async function buildDeepReadContext(
         mode: 'full-text',
         estimatedInputTokens: directInputTokens,
         offerFullTextReview: false,
+        scope: `질문으로 특정된 논문 ${targets.length}편의 저장된 Markdown 본문 전체`,
+        selectionRule: '사용자가 본문 전체 검토를 요청해 관련 구절 선별 없이 처음부터 끝까지 선택',
+        processing: '전체 본문이 토큰 예산 안에 들어 한 번의 읽기 문맥으로 구성',
+        readSummary: `${targets.length}편·${targets.reduce((sum, paper) => sum + paper.sourceText.length, 0).toLocaleString()}자를 전체 순서대로 읽음`,
         papers: targets.map((paper) => ({
           id: paper.id,
           title: paper.title,
           coverage: 'full-text',
           sourceTextCharacters: paper.sourceText.length,
+          totalChunkCount: sourceTextChunks(paper.sourceText).length,
           chunkCount: 1,
+          readCharacters: paper.sourceText.length,
+          sections: [...new Set(sourceTextChunks(paper.sourceText).map((chunk) => chunk.section).filter(Boolean))],
           passages: [fullTextPassage(paper)],
         })),
       },
@@ -1874,8 +2142,8 @@ async function buildDeepReadContext(
     return { ...batch, range, summary };
   });
   const synthesisContext = [
-    '# Chunked complete-PDF reading mode',
-    'Every available extracted PDF character was read by the ordered passes below. Synthesize across all passes and preserve each paper’s beginning-to-end argument.',
+    '# Chunked complete-Markdown reading mode',
+    'Every available stored Markdown body character was read by the ordered passes below. Synthesize across all passes and preserve each paper’s beginning-to-end argument.',
     ...summaries.map((item) => [
       `## ${item.paper.title} | ${item.range} | pass ${item.index + 1}/${item.count}`,
       item.summary,
@@ -1891,6 +2159,10 @@ async function buildDeepReadContext(
         batches.map((batch) => batch.text).join('') + synthesisContext,
       ),
       offerFullTextReview: false,
+      scope: `질문으로 특정된 논문 ${targets.length}편의 저장된 Markdown 본문 전체`,
+      selectionRule: '사용자가 본문 전체 검토를 요청해 모든 청크를 원문 순서대로 선택',
+      processing: `토큰 예산을 넘는 본문을 최대 ${DEEP_READ_BATCH_CHARACTERS.toLocaleString()}자 묶음으로 나눠 각각 읽은 뒤 전체 요약을 다시 통합`,
+      readSummary: `${targets.length}편의 전체 본문을 ${summaries.length}회 순차 읽기로 빠짐없이 처리`,
       papers: targets.map((paper) => {
         const paperBatches = summaries.filter((item) => item.paper.id === paper.id);
         return {
@@ -1898,7 +2170,10 @@ async function buildDeepReadContext(
           title: paper.title,
           coverage: 'full-text',
           sourceTextCharacters: paper.sourceText.length,
+          totalChunkCount: sourceTextChunks(paper.sourceText).length,
           chunkCount: paperBatches.length,
+          readCharacters: paper.sourceText.length,
+          sections: [...new Set(sourceTextChunks(paper.sourceText).map((chunk) => chunk.section).filter(Boolean))],
           passages: paperBatches.map((batch) => ({
             kind: `PDF full text pass ${batch.index + 1}/${batch.count}`,
             start: batch.start,
@@ -1935,8 +2210,9 @@ const CHAT_INSTRUCTIONS = [
   'Answer only what was asked, plainly and concisely. Do not add unsolicited writing, expansions, recommendations, or follow-up sections.',
   'Lead with the direct answer and include only the evidence necessary to support it.',
   'Name every paper whose evidence materially supports the answer. The application separately displays the exact PDF pages or character ranges that were read.',
+  'When the context says Focused paper reading mode, treat the specified stored Markdown bodies as the primary scope and use the expanded relevant, adjacent, and important-section chunks rather than falling back to a board-wide overview.',
   'When complete PDF text is supplied, integrate its beginning-to-end argument and do not reduce the answer to isolated keyword matches.',
-  'When the data is insufficient, say exactly what is missing. Do not claim that authors are unknown when the catalog lists them.',
+  'When the data is insufficient, say exactly what is missing. Never claim that a PDF body is unavailable or zero characters when stored Markdown body passages are present in the supplied context. Do not claim that authors are unknown when the catalog lists them.',
   'Name the supporting paper title when using its evidence, and cite page numbers from notes or highlights when available.',
   'Use citation arrows and saved search results only when they directly support the requested answer, and distinguish collected papers from uncollected search results.',
   'For count, list, or board-wide questions, evaluate the complete catalog and the evidence retrieved across every candidate paper; do not stop after the first few matches. State uncertainty when the evidence does not support an exact count.',
@@ -2010,6 +2286,7 @@ function createLLMWikiService({
       previous,
       sourceTextLoader,
       pdfBridgeRegistrar,
+      markdownStore,
     );
     workspace.counts = counts(workspace);
     workspace.wikiRoot = markdownStore.root;
@@ -2182,11 +2459,15 @@ function createLLMWikiService({
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
     const question = requiredString(questionValue, 'question', 8_000);
     const contextPaperIds = optionalStringList(contextPaperIdsValue);
-    const document = hydrateStoredSources(
-      await (await collection()).findOne({ _id: workspaceId }),
+    const document = await hydrateMarkdownSources(
+      hydrateStoredSources(
+        await (await collection()).findOne({ _id: workspaceId }),
+      ),
+      markdownStore,
     );
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
-    let retrieval = buildChatContext(document, question, contextPaperIds);
+    let retrieval = buildFocusedReadContext(document, question, contextPaperIds)
+      || buildChatContext(document, question, contextPaperIds);
     if (requestsFullTextReview(question)) {
       try {
         retrieval = await buildDeepReadContext(
@@ -2260,8 +2541,11 @@ function createLLMWikiService({
     const requestId = requiredString(requestIdValue, 'requestId', 128);
     const contextPaperIds = optionalStringList(contextPaperIdsValue);
     const snapshots = await collection();
-    const document = hydrateStoredSources(
-      await snapshots.findOne({ _id: workspaceId }),
+    const document = await hydrateMarkdownSources(
+      hydrateStoredSources(
+        await snapshots.findOne({ _id: workspaceId }),
+      ),
+      markdownStore,
     );
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
 
@@ -2300,7 +2584,8 @@ function createLLMWikiService({
     const operation = before
       .catch(() => undefined)
       .then(async () => {
-        let retrieval = buildChatContext(document, question, contextPaperIds);
+        let retrieval = buildFocusedReadContext(document, question, contextPaperIds)
+          || buildChatContext(document, question, contextPaperIds);
         if (requestsFullTextReview(question)) {
           try {
             retrieval = await buildDeepReadContext(

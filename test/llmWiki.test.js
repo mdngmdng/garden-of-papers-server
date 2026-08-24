@@ -50,6 +50,15 @@ class MemoryMarkdownStore {
     this.removed.push(filePath);
     this.files.delete(filePath);
   }
+
+  async read(filePath) {
+    if (!this.files.has(filePath)) {
+      const error = new Error('Markdown not found');
+      error.code = 'ENOENT';
+      throw error;
+    }
+    return this.files.get(filePath);
+  }
 }
 
 function workspace({ revision = 1, includePaper = true, includeNote = true, x = 100 } = {}) {
@@ -220,13 +229,14 @@ test('accepts a canonical saved workspace after an optimistic revision ran ahead
   assert.equal(collection.document.papers[0].position.x, 100);
 });
 
-test('grounds chat in the complete catalog and the selected paper Markdown', async () => {
+test('grounds a named-paper question in its focused Markdown body and metadata', async () => {
   const { collection, modelInput, service } = fixture();
   await service.sync('garden', workspace());
   const response = await service.chat('garden', 'ILoveSketch 저자가 누구야?');
 
   assert.match(response.answer, /Seok-Hyung Bae/);
-  assert.match(modelInput(), /Complete paper catalog/);
+  assert.match(modelInput(), /Focused paper reading mode/);
+  assert.match(modelInput(), /Focused Markdown reading: ILoveSketch/);
   assert.match(modelInput(), /Karan Singh/);
   assert.equal(response.sources[0].title, 'ILoveSketch');
   assert.equal(response.messages.length, 2);
@@ -246,7 +256,7 @@ test('stores the exact PDF ranges read for a normal answer', async () => {
   });
   await service.sync('garden', workspace());
 
-  const response = await service.chat('garden', 'ILoveSketch의 시스템을 설명해줘');
+  const response = await service.chat('garden', '3D 곡선 스케치 시스템을 설명해줘');
   const report = response.messages.at(-1).readingReport;
 
   assert.equal(report.mode, 'retrieved-passages');
@@ -255,6 +265,52 @@ test('stores the exact PDF ranges read for a normal answer', async () => {
   assert.ok(report.papers[0].passages.length > 0);
   assert.ok(report.papers[0].passages[0].end > report.papers[0].passages[0].start);
   assert.match(report.papers[0].passages[0].excerpt, /3D curve sketching|three-dimensional/i);
+});
+
+test('automatically reads a named paper deeply from relevant, adjacent, and important Markdown chunks', async () => {
+  const body = [
+    '[Page 1]\n[Section: Introduction]\nThe paper motivates professional three-dimensional sketching.',
+    'Background context about existing sketching tools. '.repeat(90),
+    '[Page 3]\n[Section: System Design]\nILoveSketch introduces a natural curve sketching workflow for designers.',
+    'Interaction details and implementation context. '.repeat(90),
+    '[Page 7]\n[Section: Evaluation]\nProfessional designers evaluated the workflow in realistic tasks.',
+    'Evaluation observations and evidence. '.repeat(90),
+    '[Page 10]\n[Section: Conclusion]\nThe system supports iterative 3D curve creation but has limitations.',
+  ].join('\n\n');
+  const { modelInput, service } = fixture({
+    sourceTextLoader: async () => body,
+    openAIRequest: async () => 'ILoveSketch의 설계와 평가를 함께 종합했습니다.',
+  });
+  await service.sync('garden', workspace());
+
+  const response = await service.chat('garden', 'ILoveSketch의 설계 기여와 평가 근거를 설명해줘');
+  const report = response.messages.at(-1).readingReport;
+
+  assert.equal(report.mode, 'focused-chunks');
+  assert.match(modelInput(), /# Focused paper reading mode/);
+  assert.match(modelInput(), /Why this chunk was read/);
+  assert.match(modelInput(), /Evaluation/);
+  assert.match(report.scope, /질문에 논문명이 명시됨/);
+  assert.match(report.selectionRule, /앞뒤 1개 문맥/);
+  assert.ok(report.papers[0].chunkCount > 1);
+  assert.ok(report.papers[0].readCharacters >= report.papers[0].sourceTextCharacters * 0.6);
+});
+
+test('recovers a stored PDF body from its Markdown file when Mongo source text is empty', async () => {
+  const { collection, modelInput, service } = fixture({
+    sourceTextLoader: async () =>
+      '[Page 1]\n[Section: Introduction]\nRECOVERED-MARKDOWN-BODY describes natural 3D sketching.',
+    openAIRequest: async () => '저장된 Markdown 본문을 읽었습니다.',
+  });
+  await service.sync('garden', workspace());
+  collection.document.papers[0].sourceTextGzip = null;
+  collection.document.papers[0].sourceTextCharacters = 0;
+
+  const response = await service.chat('garden', 'ILoveSketch 본문에서 무엇을 제안해?');
+
+  assert.match(modelInput(), /RECOVERED-MARKDOWN-BODY/);
+  assert.equal(response.messages.at(-1).readingReport.mode, 'focused-chunks');
+  assert.ok(response.messages.at(-1).readingReport.papers[0].sourceTextCharacters > 0);
 });
 
 test('reads a complete PDF directly when it fits the input token budget', async () => {
@@ -492,8 +548,9 @@ test('uses the currently selected paper when the question omits its title', asyn
     ['paper-ilovesketch'],
   );
 
-  assert.match(modelInput(), /# Papers currently selected by the user/);
-  assert.match(modelInput(), /ILoveSketch \| id: paper-ilovesketch/);
+  assert.match(modelInput(), /# Focused paper reading mode/);
+  assert.match(modelInput(), /Selection reason: 캔버스에서 선택된 논문/);
+  assert.equal(response.messages.at(-1).readingReport.mode, 'focused-chunks');
   assert.deepEqual(response.sources.map((source) => source.id), [
     'paper-ilovesketch',
   ]);
