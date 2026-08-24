@@ -261,10 +261,49 @@ test('stores the exact PDF ranges read for a normal answer', async () => {
 
   assert.equal(report.mode, 'retrieved-passages');
   assert.equal(report.offerFullTextReview, true);
+  assert.equal(report.catalogPaperCount, 1);
+  assert.equal(report.searchableBodyPaperCount, 1);
+  assert.equal(report.candidatePaperCount, 1);
+  assert.equal(report.readPaperCount, 1);
+  assert.ok(report.readPassageCount > 0);
+  assert.ok(report.readCharacters > 0);
   assert.equal(report.papers[0].title, 'ILoveSketch');
   assert.ok(report.papers[0].passages.length > 0);
   assert.ok(report.papers[0].passages[0].end > report.papers[0].passages[0].start);
   assert.match(report.papers[0].passages[0].excerpt, /3D curve sketching|three-dimensional/i);
+});
+
+test('links every collected paper title mentioned in an answer even when it was outside the retrieval shortlist', async () => {
+  const state = workspace();
+  for (let index = 0; index < 25; index += 1) {
+    state.objects.push({
+      ...structuredClone(state.objects[0]),
+      id: `paper-catalog-${index}`,
+      title: `Catalog Paper ${String(index).padStart(2, '0')}`,
+      fileId: `pdf-catalog-${index}`,
+      pdfUrl: `/download_pdf/garden/pdf-catalog-${index}`,
+      x: 600 + index * 10,
+    });
+  }
+  state.objects.push({
+    ...structuredClone(state.objects[0]),
+    id: 'paper-zzz-readar',
+    title: 'ZZZ ReadAR: Utilizing Mixed Reality for Physical Document Digitization',
+    fileId: 'pdf-zzz-readar',
+    pdfUrl: '/download_pdf/garden/pdf-zzz-readar',
+    x: 1_200,
+  });
+  const { service } = fixture({
+    openAIRequest: async () =>
+      'ZZZ ReadAR: Utilizing Mixed Reality for Physical Document Digitization이 최신 후보입니다.',
+  });
+  await service.sync('garden', state);
+
+  const response = await service.chat('garden', '모든 논문 목록에서 최신 후보를 알려줘');
+
+  assert.equal(response.sources.length, 1);
+  assert.equal(response.sources[0].id, 'paper-zzz-readar');
+  assert.equal(response.messages.at(-1).sources[0].title, state.objects.at(-1).title);
 });
 
 test('automatically reads a named paper deeply from relevant, adjacent, and important Markdown chunks', async () => {

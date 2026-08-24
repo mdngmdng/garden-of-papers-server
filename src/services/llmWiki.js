@@ -1321,6 +1321,20 @@ function publicReadingReport(value) {
     mode,
     estimatedInputTokens: Math.max(0, Number(value.estimatedInputTokens) || 0),
     offerFullTextReview: Boolean(value.offerFullTextReview),
+    catalogPaperCount: Math.max(0, Number(value.catalogPaperCount) || 0),
+    searchableBodyPaperCount: Math.max(0, Number(value.searchableBodyPaperCount) || 0),
+    candidatePaperCount: Math.max(0, Number(value.candidatePaperCount) || 0),
+    readPaperCount: Math.max(0, Number(value.readPaperCount) || papers.length),
+    readPassageCount: Math.max(
+      0,
+      Number(value.readPassageCount)
+        || papers.reduce((sum, paper) => sum + paper.chunkCount, 0),
+    ),
+    readCharacters: Math.max(
+      0,
+      Number(value.readCharacters)
+        || papers.reduce((sum, paper) => sum + paper.readCharacters, 0),
+    ),
     scope: cleanText(value.scope, 1_000),
     selectionRule: cleanText(value.selectionRule, 2_000),
     processing: cleanText(value.processing, 2_000),
@@ -1699,6 +1713,7 @@ function buildChatContext(document, question, contextPaperIds = []) {
     contextPaperIds,
     broadCoverage ? MAX_BROAD_RETRIEVED_PAPERS : MAX_RETRIEVED_PAPERS,
   );
+  const searchableBodyPaperCount = document.papers.filter((paper) => paper.sourceText).length;
   const byPaper = paperRanks.map((paperRank) => {
     const perPaperLimit = paperRank.direct ? 8 : 3;
     return {
@@ -1783,6 +1798,11 @@ function buildChatContext(document, question, contextPaperIds = []) {
   const directPaperIds = new Set(
     paperRanks.filter((rank) => rank.direct).map((rank) => rank.paper.id),
   );
+  const readPassageCount = [...includedPassages.values()]
+    .reduce((sum, passages) => sum + passages.length, 0);
+  const readCharacters = [...includedPassages.values()]
+    .flat()
+    .reduce((sum, passage) => sum + Math.max(0, passage.end - passage.start), 0);
   return {
     context,
     sources,
@@ -1791,10 +1811,16 @@ function buildChatContext(document, question, contextPaperIds = []) {
       mode: 'retrieved-passages',
       estimatedInputTokens: estimatedTokens(context),
       offerFullTextReview: sources.length > 0,
-      scope: `보드 전체 ${document.papers.length}편의 제목·초록·저장된 PDF 본문`,
-      selectionRule: '질문과 제목·초록·본문의 일치도를 계산해 관련성이 높은 논문과 구절을 우선 선택',
+      catalogPaperCount: document.papers.length,
+      searchableBodyPaperCount,
+      candidatePaperCount: paperRanks.length,
+      readPaperCount: includedPapers.size,
+      readPassageCount,
+      readCharacters,
+      scope: `캔버스에 수집된 ${document.papers.length}편 전체의 제목·저자·연도·초록을 먼저 검사하고, 본문이 저장된 ${searchableBodyPaperCount}편은 Markdown 본문까지 검색`,
+      selectionRule: `전체 카탈로그에서 질문 관련도 상위 ${paperRanks.length}편을 후보로 정한 뒤 입력 예산 안에서 근거 구절을 우선 배치`,
       processing: `PDF 본문을 페이지 경계를 보존한 약 ${RETRIEVAL_CHUNK_CHARACTERS.toLocaleString()}자 중첩 청크로 분할한 뒤 보드 전체에서 검색`,
-      readSummary: `${includedPapers.size}편에서 관련 본문 ${[...includedPassages.values()].reduce((sum, passages) => sum + passages.length, 0)}개를 읽음`,
+      readSummary: `후보 중 ${includedPapers.size}편의 관련 본문 ${readPassageCount}개·${readCharacters.toLocaleString()}자를 답변 근거로 실제 입력`,
       papers: [...includedPapers.values()].map((paper) => ({
         id: paper.id,
         title: paper.title,
@@ -1966,6 +1992,12 @@ function buildFocusedReadContext(document, question, contextPaperIds = []) {
       mode: 'focused-chunks',
       estimatedInputTokens: estimatedTokens(context),
       offerFullTextReview: true,
+      catalogPaperCount: document.papers.length,
+      searchableBodyPaperCount: document.papers.filter((paper) => paper.sourceText).length,
+      candidatePaperCount: target.papers.length,
+      readPaperCount: reports.length,
+      readPassageCount: reports.reduce((sum, paper) => sum + paper.chunkCount, 0),
+      readCharacters: reports.reduce((sum, paper) => sum + paper.readCharacters, 0),
       scope: `${target.reason} · 저장된 Markdown 본문 ${target.papers.length}편`,
       selectionRule: `질문 관련 상위 청크를 찾고 앞뒤 ${FOCUSED_NEIGHBOR_RADIUS}개 문맥과 주요 학술 섹션을 추가`,
       processing: `Markdown의 PDF 본문을 페이지·섹션을 보존한 약 ${RETRIEVAL_CHUNK_CHARACTERS.toLocaleString()}자 중첩 청크로 분할`,
@@ -2097,6 +2129,15 @@ async function buildDeepReadContext(
         mode: 'full-text',
         estimatedInputTokens: directInputTokens,
         offerFullTextReview: false,
+        catalogPaperCount: document.papers.length,
+        searchableBodyPaperCount: document.papers.filter((paper) => paper.sourceText).length,
+        candidatePaperCount: targets.length,
+        readPaperCount: targets.length,
+        readPassageCount: targets.reduce(
+          (sum, paper) => sum + sourceTextChunks(paper.sourceText).length,
+          0,
+        ),
+        readCharacters: targets.reduce((sum, paper) => sum + paper.sourceText.length, 0),
         scope: `질문으로 특정된 논문 ${targets.length}편의 저장된 Markdown 본문 전체`,
         selectionRule: '사용자가 본문 전체 검토를 요청해 관련 구절 선별 없이 처음부터 끝까지 선택',
         processing: '전체 본문이 토큰 예산 안에 들어 한 번의 읽기 문맥으로 구성',
@@ -2159,6 +2200,12 @@ async function buildDeepReadContext(
         batches.map((batch) => batch.text).join('') + synthesisContext,
       ),
       offerFullTextReview: false,
+      catalogPaperCount: document.papers.length,
+      searchableBodyPaperCount: document.papers.filter((paper) => paper.sourceText).length,
+      candidatePaperCount: targets.length,
+      readPaperCount: targets.length,
+      readPassageCount: summaries.length,
+      readCharacters: targets.reduce((sum, paper) => sum + paper.sourceText.length, 0),
       scope: `질문으로 특정된 논문 ${targets.length}편의 저장된 Markdown 본문 전체`,
       selectionRule: '사용자가 본문 전체 검토를 요청해 모든 청크를 원문 순서대로 선택',
       processing: `토큰 예산을 넘는 본문을 최대 ${DEEP_READ_BATCH_CHARACTERS.toLocaleString()}자 묶음으로 나눠 각각 읽은 뒤 전체 요약을 다시 통합`,
@@ -2188,11 +2235,21 @@ async function buildDeepReadContext(
   };
 }
 
-function directlyCitedSources(retrieval, answer) {
+function directlyCitedSources(retrieval, answer, allPapers = []) {
   const normalizedAnswer = normalizeSearchText(answer);
-  const candidates = retrieval.directSources.length
-    ? retrieval.directSources
-    : retrieval.sources;
+  const candidatesById = new Map();
+  for (const source of [
+    ...retrieval.directSources,
+    ...retrieval.sources,
+    ...allPapers.map((paper) => ({
+      id: paper.id,
+      title: paper.title,
+      filePath: paper.filePath,
+    })),
+  ]) {
+    if (source?.id && source?.title) candidatesById.set(source.id, source);
+  }
+  const candidates = [...candidatesById.values()];
   const cited = candidates.filter((source) =>
     paperAliases({ title: source.title, citationKey: '' })
       .some((alias) => containsSearchPhrase(normalizedAnswer, alias)),
@@ -2488,7 +2545,7 @@ function createLLMWikiService({
         ? 'low'
         : 'medium',
     });
-    const sources = directlyCitedSources(retrieval, answer);
+    const sources = directlyCitedSources(retrieval, answer, document.papers);
     const createdAt = iso(now());
     const userMessage = {
       id: crypto.randomUUID(),
@@ -2612,7 +2669,7 @@ function createLLMWikiService({
           console.error(`LLM Wiki answer failed for ${workspaceId}:`, error);
           answer = '답변 생성에 실패했습니다. 잠시 후 다시 질문해 주세요.';
         }
-        const sources = directlyCitedSources(retrieval, answer);
+        const sources = directlyCitedSources(retrieval, answer, document.papers);
 
         // A chat reset may happen while the model is working. In that case the
         // cleared question must not be resurrected by a late answer.
