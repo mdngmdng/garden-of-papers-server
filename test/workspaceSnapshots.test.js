@@ -3,6 +3,7 @@ const test = require('node:test');
 const { Binary } = require('mongodb');
 const {
   INLINE_SNAPSHOT_BYTES,
+  SNAPSHOT_HISTORY_LIMIT,
   WorkspaceSnapshotError,
   createWorkspaceSnapshotService,
 } = require('../src/services/workspaceSnapshots');
@@ -79,15 +80,92 @@ class MemorySnapshotCollection {
   }
 }
 
+class MemoryHistoryCollection {
+  constructor() {
+    this.documents = new Map();
+  }
+
+  async createIndex() {
+    return 'workspace_history_index';
+  }
+
+  async updateOne(query, update) {
+    if (!this.documents.has(query._id)) {
+      this.documents.set(
+        query._id,
+        structuredClone(update.$setOnInsert),
+      );
+      return { upsertedCount: 1, matchedCount: 0 };
+    }
+    return { upsertedCount: 0, matchedCount: 1 };
+  }
+
+  async findOne(query) {
+    const document = this.documents.get(query._id);
+    if (!document || (
+      query.projectName && document.projectName !== query.projectName
+    )) {
+      return null;
+    }
+    return structuredClone(document);
+  }
+
+  find(query) {
+    let rows = [...this.documents.values()]
+      .filter((row) => !query.projectName || row.projectName === query.projectName)
+      .map((row) => structuredClone(row));
+    let skip = 0;
+    let limit = Number.POSITIVE_INFINITY;
+    return {
+      sort(specification) {
+        const direction = specification.revision ?? specification.savedAt ?? -1;
+        const field = specification.revision ? 'revision' : 'savedAt';
+        rows.sort((left, right) => {
+          const leftValue = field === 'savedAt'
+            ? new Date(left.savedAt).getTime()
+            : left.revision;
+          const rightValue = field === 'savedAt'
+            ? new Date(right.savedAt).getTime()
+            : right.revision;
+          return (leftValue - rightValue) * direction;
+        });
+        return this;
+      },
+      skip(value) {
+        skip = value;
+        return this;
+      },
+      limit(value) {
+        limit = value;
+        return this;
+      },
+      async toArray() {
+        return rows.slice(skip, skip + limit);
+      },
+    };
+  }
+
+  async deleteMany(query) {
+    const ids = new Set(query._id?.$in ?? []);
+    let deletedCount = 0;
+    for (const id of ids) {
+      if (this.documents.delete(id)) deletedCount += 1;
+    }
+    return { deletedCount };
+  }
+}
+
 function fixture(onWorkspaceSaved = null) {
   const collection = new MemorySnapshotCollection();
+  const historyCollection = new MemoryHistoryCollection();
   let timestamp = Date.parse('2026-08-03T00:00:00.000Z');
   const service = createWorkspaceSnapshotService(
     () => collection,
     () => new Date(timestamp += 1_000),
     onWorkspaceSaved,
+    () => historyCollection,
   );
-  return { collection, service };
+  return { collection, historyCollection, service };
 }
 
 test('triggers Wiki synchronization from every successful canonical save', async () => {
@@ -272,4 +350,63 @@ test('compresses and restores boards that exceed the safe inline Mongo size', as
     restoredFromMongoBinary.objects[0].text,
     largeWorkspace.objects[0].text,
   );
+});
+
+test('retains the latest ten durable workspace revisions', async () => {
+  const { historyCollection, service } = fixture();
+  let state = await service.ensure(workspace());
+  for (let index = 0; index < SNAPSHOT_HISTORY_LIMIT + 3; index += 1) {
+    state.camera.x = index + 1;
+    const saved = await service.save({
+      projectName: 'garden',
+      baseRevision: state.revision,
+      mutationId: `writer:history-${index}`,
+      state,
+    });
+    state = saved.state;
+  }
+
+  const history = await service.listHistory('garden');
+  assert.equal(history.entries.length, SNAPSHOT_HISTORY_LIMIT);
+  assert.deepEqual(
+    history.entries.map((entry) => entry.revision),
+    [13, 12, 11, 10, 9, 8, 7, 6, 5, 4],
+  );
+  assert.equal(historyCollection.documents.size, SNAPSHOT_HISTORY_LIMIT);
+});
+
+test('restores a historical board as a new revision and preserves undo history', async () => {
+  const { service } = fixture();
+  let state = await service.ensure(workspace());
+  state.camera.x = 10;
+  state = (await service.save({
+    projectName: 'garden',
+    baseRevision: 0,
+    mutationId: 'writer:first',
+    state,
+  })).state;
+  state.camera.x = 99;
+  state = (await service.save({
+    projectName: 'garden',
+    baseRevision: 1,
+    mutationId: 'writer:second',
+    state,
+  })).state;
+  const before = await service.listHistory('garden');
+  const revisionOne = before.entries.find((entry) => entry.revision === 1);
+
+  const restored = await service.restoreHistory({
+    projectName: 'garden',
+    historyId: revisionOne.id,
+    baseRevision: 2,
+    mutationId: 'writer:restore',
+  });
+
+  assert.equal(restored.state.revision, 3);
+  assert.equal(restored.state.camera.x, 10);
+  const after = await service.listHistory('garden');
+  assert.equal(after.entries[0].revision, 3);
+  assert.equal(after.entries[0].reason, 'restore');
+  assert.equal(after.entries[0].restoredFromRevision, 1);
+  assert.ok(after.entries.some((entry) => entry.revision === 2));
 });

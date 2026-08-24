@@ -51,6 +51,31 @@ exports.loadWorkspace = async (req, res) => {
   }
 };
 
+exports.listWorkspaceHistory = async (req, res) => {
+  try {
+    return res.status(200).json(
+      await workspaceSnapshotService.listHistory(req.params.id),
+    );
+  } catch (error) {
+    return sendError(res, error);
+  }
+};
+
+exports.restoreWorkspaceHistory = async (req, res) => {
+  try {
+    const result = await workspaceSnapshotService.restoreHistory({
+      projectName: req.params.id,
+      historyId: req.params.historyId,
+      baseRevision: req.body.baseRevision,
+      mutationId: req.body.mutationId,
+    });
+    if (result.replayed) res.set('x-gop-idempotent-replay', 'true');
+    return res.status(200).json(result.state);
+  } catch (error) {
+    return sendError(res, error);
+  }
+};
+
 exports.workspaceSourceStatus = async (req, res) => {
   try {
     return res.status(200).json(
