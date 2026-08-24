@@ -667,6 +667,96 @@ test('does not publish an in-list search-result PDF preview to the Wiki', async 
   assert.deepEqual(result.papers, []);
 });
 
+test('does not publish a legacy attached search-result PDF without the preview marker', async () => {
+  const { service, sourceLoads } = fixture();
+  const state = workspace({ includeNote: false });
+  state.objects.push({
+    id: 'search-node-legacy',
+    type: 'GX.MAROBlankPaper',
+    paperKind: 'search',
+    query: 'legacy attached result',
+    x: 500,
+    y: 100,
+    width: 342,
+    height: 444,
+    zIndex: 4,
+    searchSnapshot: {
+      version: 1,
+      query: 'legacy attached result',
+      results: [{ paperId: 'result-1', title: 'ILoveSketch' }],
+      layer: {
+        version: 1,
+        id: 'layer-legacy',
+        name: 'Legacy search results',
+        visible: true,
+        nodes: [{
+          paperId: 'result-1',
+          collectedPaperId: 'paper-ilovesketch',
+          collectedPaperDetached: false,
+          x: 0,
+          y: 0,
+          width: 214,
+          height: 252,
+          reviewState: 'read',
+        }],
+      },
+    },
+    createdAt: '2026-08-17T00:00:00.000Z',
+    updatedAt: '2026-08-17T00:00:00.000Z',
+  });
+
+  const result = await service.sync('garden', state);
+
+  assert.equal(result.counts.papers, 0);
+  assert.equal(sourceLoads(), 0);
+  assert.deepEqual(result.papers, []);
+});
+
+test('publishes a search-result PDF after it is detached onto the outer canvas', async () => {
+  const { service, sourceLoads } = fixture();
+  const state = workspace({ includeNote: false });
+  state.objects.push({
+    id: 'search-node-detached',
+    type: 'GX.MAROBlankPaper',
+    paperKind: 'search',
+    query: 'detached result',
+    x: 500,
+    y: 100,
+    width: 342,
+    height: 444,
+    zIndex: 4,
+    searchSnapshot: {
+      version: 1,
+      query: 'detached result',
+      results: [{ paperId: 'result-1', title: 'ILoveSketch' }],
+      layer: {
+        version: 1,
+        id: 'layer-detached',
+        name: 'Detached search result',
+        visible: true,
+        nodes: [{
+          paperId: 'result-1',
+          collectedPaperId: 'paper-ilovesketch',
+          collectedPaperDetached: true,
+          x: 0,
+          y: 0,
+          width: 214,
+          height: 252,
+          reviewState: 'read',
+        }],
+      },
+    },
+    createdAt: '2026-08-17T00:00:00.000Z',
+    updatedAt: '2026-08-17T00:00:00.000Z',
+  });
+
+  const result = await service.sync('garden', state);
+
+  assert.equal(result.counts.papers, 1);
+  assert.equal(sourceLoads(), 1);
+  assert.equal(result.papers[0].id, 'paper-ilovesketch');
+});
+
 test('returns board-shared chat history and grounds follow-up questions in it', async () => {
   const { modelInput, service } = fixture();
   await service.sync('garden', workspace());
@@ -887,7 +977,8 @@ test('persists citation arrows, search nodes, and generated Markdown in MongoDB'
   assert.match(searchResults, /Sketching With Hands/);
   assert.match(searchResults, /"x":1312/);
   assert.match(modelInput(), /Citation and canvas relationships/);
-  assert.match(modelInput(), /Search nodes and saved results/);
+  assert.doesNotMatch(modelInput(), /Search nodes and saved results/);
+  assert.doesNotMatch(modelInput(), /Sketching With Hands/);
   assert.ok(collection.document.markdownDocuments.length >= 6);
   assert.ok(collection.document.markdownDocuments.every(
     (item) => Number.isInteger(item.characters) && item.characters > 0,

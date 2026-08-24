@@ -343,6 +343,25 @@ function normalizeWorkspace(state, expectedId) {
       )
       .map((object) => object.id),
   );
+  // Search-result PDFs are rendered as scientific-paper objects while they
+  // remain attached to a search sheet. Older workspaces predate the explicit
+  // searchResultPreview marker, so layer ownership is the authoritative way
+  // to distinguish those previews from papers the user detached and formally
+  // collected on the outer canvas.
+  for (const source of state.objects) {
+    if (source?.type !== 'GX.MAROBlankPaper') continue;
+    const nodes = source.searchSnapshot?.layer?.nodes;
+    if (!Array.isArray(nodes)) continue;
+    for (const node of nodes) {
+      if (
+        typeof node?.collectedPaperId === 'string'
+        && node.collectedPaperId
+        && node.collectedPaperDetached !== true
+      ) {
+        searchResultPreviewIds.add(node.collectedPaperId);
+      }
+    }
+  }
   const notes = state.objects.filter((object) => object?.type === 'GX.MARONote');
   const papers = state.objects
     .filter((object) =>
@@ -1698,11 +1717,7 @@ function rankChunks(paperRank, question) {
 }
 
 function relevantWorkspaceContext(document, question, maximum = 8_000) {
-  const workspaceText = [
-    postItsMarkdown(document),
-    relationshipsMarkdown(document),
-    searchResultsMarkdown(document),
-  ].join('\n\n');
+  const workspaceText = postItsMarkdown(document);
   const ranked = sourceTextChunks(workspaceText)
     .map((chunk) => {
       const normalized = normalizeSearchText(chunk.text);
@@ -1712,7 +1727,13 @@ function relevantWorkspaceContext(document, question, maximum = 8_000) {
     })
     .filter((chunk) => chunk.score > 0)
     .sort((a, b) => b.score - a.score || a.start - b.start);
-  return ranked.map((chunk) => chunk.text).join('\n\n---\n\n').slice(0, maximum);
+  const relationshipContext = /(?:인용|관계|연결|citation|relationship|link|arrow)/iu.test(question)
+    ? relationshipsMarkdown(document)
+    : '';
+  return [
+    relationshipContext,
+    ranked.map((chunk) => chunk.text).join('\n\n---\n\n'),
+  ].filter(Boolean).join('\n\n').slice(0, maximum);
 }
 
 function buildChatContext(document, question, contextPaperIds = []) {
@@ -1802,7 +1823,7 @@ function buildChatContext(document, question, contextPaperIds = []) {
     '# Papers currently selected by the user',
     selectedContext || '(no paper is currently selected)',
     '',
-    '# Search nodes and saved results, canvas notes, and relationships',
+    '# Canvas notes and relationships between collected papers',
     workspaceContext || '(no directly relevant workspace evidence)',
     '',
     '# Retrieved paper evidence',
@@ -2289,7 +2310,8 @@ const CHAT_INSTRUCTIONS = [
   'When complete PDF text is supplied, integrate its beginning-to-end argument and do not reduce the answer to isolated keyword matches.',
   'When the data is insufficient, say exactly what is missing. Never claim that a PDF body is unavailable or zero characters when stored Markdown body passages are present in the supplied context. Do not claim that authors are unknown when the catalog lists them.',
   'Name the supporting paper title when using its evidence, and cite page numbers from notes or highlights when available.',
-  'Use citation arrows and saved search results only when they directly support the requested answer, and distinguish collected papers from uncollected search results.',
+  'Only papers formally collected outside search-result sheets are eligible paper evidence. Never treat an attached search-result preview or an uncollected saved search result as a paper in the answer.',
+  'Use citation arrows only when they directly support the requested answer.',
   'For count, list, or board-wide questions, evaluate the complete catalog and the evidence retrieved across every candidate paper; do not stop after the first few matches. State uncertainty when the evidence does not support an exact count.',
 ].join(' ');
 
