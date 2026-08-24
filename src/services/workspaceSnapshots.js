@@ -81,7 +81,19 @@ function validateState(state, expectedProjectName) {
 
 function publicState(document) {
   if (document?.stateEncoding === SNAPSHOT_ENCODING && document.statePayload) {
-    return JSON.parse(gunzipSync(document.statePayload).toString('utf8'));
+    const payload = document.statePayload;
+    const bytes = Buffer.isBuffer(payload)
+      ? payload
+      : ArrayBuffer.isView(payload)
+        ? Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength)
+        : ArrayBuffer.isView(payload.buffer)
+          ? Buffer.from(
+              payload.buffer.buffer,
+              payload.buffer.byteOffset,
+              payload.buffer.byteLength,
+            )
+          : Buffer.from(payload.buffer);
+    return JSON.parse(gunzipSync(bytes).toString('utf8'));
   }
   return document?.state ?? null;
 }

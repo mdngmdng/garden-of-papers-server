@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { Binary } = require('mongodb');
 const {
   INLINE_SNAPSHOT_BYTES,
   WorkspaceSnapshotError,
@@ -262,4 +263,13 @@ test('compresses and restores boards that exceed the safe inline Mongo size', as
   assert.equal(collection.document.state, undefined);
   assert.equal(collection.document.stateEncoding, 'gzip-json-v1');
   assert.ok(collection.document.statePayload.byteLength < INLINE_SNAPSHOT_BYTES);
+
+  collection.document.statePayload = new Binary(
+    collection.document.statePayload,
+  );
+  const restoredFromMongoBinary = await service.load(largeWorkspace.id);
+  assert.equal(
+    restoredFromMongoBinary.objects[0].text,
+    largeWorkspace.objects[0].text,
+  );
 });
