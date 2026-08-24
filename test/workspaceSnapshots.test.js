@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  INLINE_SNAPSHOT_BYTES,
   WorkspaceSnapshotError,
   createWorkspaceSnapshotService,
 } = require('../src/services/workspaceSnapshots');
@@ -70,6 +71,9 @@ class MemorySnapshotCollection {
       return null;
     }
     Object.assign(this.document, structuredClone(update.$set));
+    for (const key of Object.keys(update.$unset || {})) {
+      delete this.document[key];
+    }
     return structuredClone(this.document);
   }
 }
@@ -239,4 +243,23 @@ test('lists snapshot-backed projects for offline-safe discovery', async () => {
   const projects = await service.list('tester');
 
   assert.deepEqual(projects.map((project) => project.projectName), ['garden']);
+});
+
+test('compresses and restores boards that exceed the safe inline Mongo size', async () => {
+  const { collection, service } = fixture();
+  const largeWorkspace = workspace();
+  largeWorkspace.objects.push({
+    id: 'large-note',
+    type: 'GX.MARONote',
+    text: 'large-board-content'.repeat(
+      Math.ceil((INLINE_SNAPSHOT_BYTES + 1024) / 19),
+    ),
+  });
+
+  const saved = await service.ensure(largeWorkspace);
+
+  assert.equal(saved.objects[0].text, largeWorkspace.objects[0].text);
+  assert.equal(collection.document.state, undefined);
+  assert.equal(collection.document.stateEncoding, 'gzip-json-v1');
+  assert.ok(collection.document.statePayload.byteLength < INLINE_SNAPSHOT_BYTES);
 });

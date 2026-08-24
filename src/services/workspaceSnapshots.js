@@ -1,8 +1,12 @@
 const { getClient } = require('./mongo');
+const { gzipSync, gunzipSync } = require('node:zlib');
 
 const SNAPSHOT_DATABASE = 'GardenOfPapersSystem';
 const SNAPSHOT_COLLECTION = 'WorkspaceSnapshots';
-const MAX_SNAPSHOT_BYTES = 15 * 1024 * 1024;
+const INLINE_SNAPSHOT_BYTES = 12 * 1024 * 1024;
+const MAX_SNAPSHOT_BYTES = 40 * 1024 * 1024;
+const MAX_STORED_SNAPSHOT_BYTES = 14 * 1024 * 1024;
+const SNAPSHOT_ENCODING = 'gzip-json-v1';
 
 class WorkspaceSnapshotError extends Error {
   constructor(message, status, code, latestState) {
@@ -63,7 +67,8 @@ function validateState(state, expectedProjectName) {
       'invalid_request',
     );
   }
-  const bytes = Buffer.byteLength(JSON.stringify(state), 'utf8');
+  const serializedState = JSON.stringify(state);
+  const bytes = Buffer.byteLength(serializedState, 'utf8');
   if (bytes > MAX_SNAPSHOT_BYTES) {
     throw new WorkspaceSnapshotError(
       'Workspace snapshot is too large',
@@ -71,11 +76,46 @@ function validateState(state, expectedProjectName) {
       'snapshot_too_large',
     );
   }
-  return { projectName, ownerName };
+  return { projectName, ownerName, serializedState };
 }
 
 function publicState(document) {
+  if (document?.stateEncoding === SNAPSHOT_ENCODING && document.statePayload) {
+    return JSON.parse(gunzipSync(document.statePayload).toString('utf8'));
+  }
   return document?.state ?? null;
+}
+
+function stateStorageFields(state, serializedState) {
+  const bytes = Buffer.byteLength(serializedState, 'utf8');
+  if (bytes <= INLINE_SNAPSHOT_BYTES) {
+    return {
+      set: { state },
+      unset: { stateEncoding: '', statePayload: '' },
+    };
+  }
+
+  const statePayload = gzipSync(Buffer.from(serializedState), { level: 6 });
+  if (statePayload.byteLength > MAX_STORED_SNAPSHOT_BYTES) {
+    throw new WorkspaceSnapshotError(
+      'Compressed workspace snapshot is too large',
+      413,
+      'snapshot_too_large',
+    );
+  }
+  return {
+    set: {
+      stateEncoding: SNAPSHOT_ENCODING,
+      statePayload,
+    },
+    unset: { state: '' },
+  };
+}
+
+function stateUpdate(set, unset) {
+  const update = { $set: set };
+  if (Object.keys(unset).length > 0) update.$unset = unset;
+  return update;
 }
 
 function createWorkspaceSnapshotService(
@@ -170,13 +210,15 @@ function createWorkspaceSnapshotService(
       revision: initialRevision,
       updatedAt: timestamp.toISOString(),
     };
+    const { serializedState } = validateState(initialState, projectName);
+    const storedState = stateStorageFields(initialState, serializedState);
     const document = {
       _id: projectName,
       schemaVersion: 1,
       ownerName,
       projectName,
       revision: initialRevision,
-      state: initialState,
+      ...storedState.set,
       lastMutationId: null,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -235,17 +277,19 @@ function createWorkspaceSnapshotService(
       revision: nextRevision,
       updatedAt: timestamp.toISOString(),
     };
-    validateState(savedState, projectName);
+    const { serializedState } = validateState(savedState, projectName);
+    const storedState = stateStorageFields(savedState, serializedState);
     const updated = await snapshots.findOneAndUpdate(
       { _id: projectName, revision: baseRevision },
-      {
-        $set: {
+      stateUpdate(
+        {
           revision: nextRevision,
-          state: savedState,
+          ...storedState.set,
           lastMutationId: mutationId,
           updatedAt: timestamp,
         },
-      },
+        storedState.unset,
+      ),
       { returnDocument: 'after' },
     );
     if (updated) {
@@ -304,10 +348,11 @@ function createWorkspaceSnapshotService(
         'not_found',
       );
     }
+    const currentState = publicState(current);
     if (current.lastMutationId === mutationId) {
       return {
         revision: current.revision,
-        updatedAt: publicState(current).updatedAt,
+        updatedAt: currentState.updatedAt,
         replayed: true,
       };
     }
@@ -316,7 +361,7 @@ function createWorkspaceSnapshotService(
         'Workspace revision conflict',
         409,
         'revision_conflict',
-        publicState(current),
+        currentState,
       );
     }
 
@@ -324,7 +369,7 @@ function createWorkspaceSnapshotService(
       delta.removedObjectIds.map((id) => requiredString(id, 'removedObjectId')),
     );
     const byId = new Map(
-      publicState(current).objects
+      currentState.objects
         .filter((object) => !removed.has(object.id))
         .map((object) => [object.id, object]),
     );
@@ -336,26 +381,28 @@ function createWorkspaceSnapshotService(
     const timestamp = now();
     const nextRevision = current.revision + 1;
     const savedState = {
-      ...structuredClone(publicState(current)),
+      ...structuredClone(currentState),
       schemaVersion: Number.isInteger(delta.schemaVersion)
         ? delta.schemaVersion
-        : publicState(current).schemaVersion,
+        : currentState.schemaVersion,
       camera: structuredClone(delta.camera),
       objects: [...byId.values()],
       revision: nextRevision,
       updatedAt: timestamp.toISOString(),
     };
-    validateState(savedState, projectName);
+    const { serializedState } = validateState(savedState, projectName);
+    const storedState = stateStorageFields(savedState, serializedState);
     const updated = await snapshots.findOneAndUpdate(
       { _id: projectName, revision: baseRevision },
-      {
-        $set: {
+      stateUpdate(
+        {
           revision: nextRevision,
-          state: savedState,
+          ...storedState.set,
           lastMutationId: mutationId,
           updatedAt: timestamp,
         },
-      },
+        storedState.unset,
+      ),
       { returnDocument: 'after' },
     );
     if (updated) {
@@ -392,6 +439,7 @@ function syncSavedWorkspaceToWiki(state) {
 }
 
 module.exports = {
+  INLINE_SNAPSHOT_BYTES,
   MAX_SNAPSHOT_BYTES,
   WorkspaceSnapshotError,
   createWorkspaceSnapshotService,
