@@ -603,7 +603,10 @@ function createWorkspaceSnapshotService(
   async function listHistory(projectNameValue) {
     const projectName = requiredString(projectNameValue, 'projectName');
     const snapshots = await collection();
-    const current = await snapshots.findOne({ _id: projectName });
+    const current = await snapshots.findOne(
+      { _id: projectName },
+      { projection: { _id: 1, revision: 1 } },
+    );
     if (!current) {
       throw new WorkspaceSnapshotError(
         'Workspace snapshot not found',
@@ -611,7 +614,6 @@ function createWorkspaceSnapshotService(
         'not_found',
       );
     }
-    const currentState = publicState(current);
     const history = await historyCollection();
     let rows = await history
       .find(
@@ -632,7 +634,10 @@ function createWorkspaceSnapshotService(
       .limit(SNAPSHOT_HISTORY_LIMIT)
       .toArray();
     if (!rows.some((row) => row.revision === current.revision)) {
-      await recordHistorySafely(currentState, 'baseline');
+      const currentDocument = await snapshots.findOne({ _id: projectName });
+      if (currentDocument) {
+        await recordHistorySafely(publicState(currentDocument), 'baseline');
+      }
       rows = await history
         .find(
           { projectName },
