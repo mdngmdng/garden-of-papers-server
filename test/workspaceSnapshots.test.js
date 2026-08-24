@@ -452,12 +452,16 @@ test('precomputes reversible object deltas for timeline scrubbing', async () => 
     moved: 1,
     updated: 0,
   });
+  assert.equal(current.previousRevision, 0);
+  assert.equal(current.transitionFromPrevious, undefined);
+  assert.equal(current.transitionToPrevious, undefined);
+  const transition = await service.getHistoryTransition('garden', 0, 1);
   assert.deepEqual(
-    current.transitionFromPrevious.upsertedObjects.map((object) => object.id),
+    transition.forward.upsertedObjects.map((object) => object.id),
     ['note-1', 'note-2'],
   );
-  assert.deepEqual(current.transitionToPrevious.removedObjectIds, ['note-2']);
-  assert.equal(current.transitionToPrevious.upsertedObjects[0].x, 0);
+  assert.deepEqual(transition.backward.removedObjectIds, ['note-2']);
+  assert.equal(transition.backward.upsertedObjects[0].x, 0);
 });
 
 test('restores a historical board as a new revision and preserves undo history', async () => {

@@ -679,19 +679,25 @@ function createWorkspaceSnapshotService(
       nextRow,
       deltaId,
     }) => {
-      let transition = publicTransition(deltaById.get(deltaId));
-      if (!transition) {
+      const deltaDocument = deltaById.get(deltaId);
+      let summary = deltaDocument?.summary ?? null;
+      if (!deltaDocument) {
         const previousDocument = historyById.get(String(previousRow._id));
         const nextDocument = historyById.get(String(nextRow._id));
         if (previousDocument && nextDocument) {
-          transition = await recordTransitionSafely(
+          const transition = await recordTransitionSafely(
             publicState(previousDocument),
             publicState(nextDocument),
           );
+          summary = transition?.forward?.summary ?? null;
         }
       }
-      if (transition) {
-        transitionByToRevision.set(nextRow.revision, transition);
+      if (summary) {
+        transitionByToRevision.set(nextRow.revision, {
+          fromRevision: previousRow.revision,
+          toRevision: nextRow.revision,
+          summary,
+        });
       }
     }));
     return {
@@ -711,13 +717,45 @@ function createWorkspaceSnapshotService(
         previousRevision:
           transitionByToRevision.get(row.revision)?.fromRevision ?? null,
         diffFromPrevious:
-          transitionByToRevision.get(row.revision)?.forward?.summary ?? null,
-        transitionFromPrevious:
-          transitionByToRevision.get(row.revision)?.forward ?? null,
-        transitionToPrevious:
-          transitionByToRevision.get(row.revision)?.backward ?? null,
+          transitionByToRevision.get(row.revision)?.summary ?? null,
       })),
     };
+  }
+
+  async function getHistoryTransition(
+    projectNameValue,
+    fromRevisionValue,
+    toRevisionValue,
+  ) {
+    const projectName = requiredString(projectNameValue, 'projectName');
+    const fromRevision = Number(fromRevisionValue);
+    const toRevision = Number(toRevisionValue);
+    if (
+      !Number.isInteger(fromRevision)
+      || !Number.isInteger(toRevision)
+      || fromRevision < 0
+      || toRevision <= fromRevision
+    ) {
+      throw new WorkspaceSnapshotError(
+        'Workspace history revisions are invalid',
+        400,
+        'invalid_history_revision',
+      );
+    }
+    const deltas = await historyDeltaCollection();
+    const document = await deltas.findOne({
+      _id: `${projectName}:${fromRevision}:${toRevision}`,
+      projectName,
+    });
+    const transition = publicTransition(document);
+    if (!transition) {
+      throw new WorkspaceSnapshotError(
+        'Workspace history transition not found',
+        404,
+        'history_transition_not_found',
+      );
+    }
+    return transition;
   }
 
   async function ensure(state) {
@@ -1080,6 +1118,7 @@ function createWorkspaceSnapshotService(
 
   return {
     ensure,
+    getHistoryTransition,
     list,
     listHistory,
     load,

@@ -7,6 +7,10 @@ router.get('/projects', controller.listProjects);
 router.post('/projects', controller.ensureWorkspace);
 router.get('/workspaces/:id/source-status', controller.workspaceSourceStatus);
 router.get('/workspaces/:id/history', controller.listWorkspaceHistory);
+router.get(
+  '/workspaces/:id/history/transitions/:fromRevision/:toRevision',
+  controller.getWorkspaceHistoryTransition,
+);
 router.post(
   '/workspaces/:id/history/:historyId/restore',
   controller.restoreWorkspaceHistory,
