@@ -233,6 +233,94 @@ test('grounds chat in the complete catalog and the selected paper Markdown', asy
   assert.equal(collection.document.chatMessages.length, 2);
 });
 
+test('stores the exact PDF ranges read for a normal answer', async () => {
+  const { service } = fixture({
+    sourceTextLoader: async () => [
+      '[Page 1]',
+      'ILoveSketch introduces a three-dimensional curve sketching system.',
+      '[Page 2]',
+      'The evaluation discusses professional designers and iteration.',
+    ].join('\n'),
+    openAIRequest: async () =>
+      'ILoveSketch는 3차원 곡선 스케치 시스템을 제안합니다.',
+  });
+  await service.sync('garden', workspace());
+
+  const response = await service.chat('garden', 'ILoveSketch의 시스템을 설명해줘');
+  const report = response.messages.at(-1).readingReport;
+
+  assert.equal(report.mode, 'retrieved-passages');
+  assert.equal(report.offerFullTextReview, true);
+  assert.equal(report.papers[0].title, 'ILoveSketch');
+  assert.ok(report.papers[0].passages.length > 0);
+  assert.ok(report.papers[0].passages[0].end > report.papers[0].passages[0].start);
+  assert.match(report.papers[0].passages[0].excerpt, /3D curve sketching|three-dimensional/i);
+});
+
+test('reads a complete PDF directly when it fits the input token budget', async () => {
+  const completeBody = [
+    '[Page 1] Beginning of the argument.',
+    'Middle method and evaluation evidence.',
+    '[Page 8] End of the paper and limitations.',
+  ].join('\n\n');
+  const { modelInput, service } = fixture({
+    sourceTextLoader: async () => completeBody,
+    openAIRequest: async () =>
+      'ILoveSketch 본문 전체의 논증과 한계를 종합했습니다.',
+  });
+  await service.sync('garden', workspace());
+
+  const response = await service.chat(
+    'garden',
+    '이 PDF 본문 전체를 처음부터 끝까지 읽어보고 알려줘',
+    ['paper-ilovesketch'],
+  );
+  const report = response.messages.at(-1).readingReport;
+
+  assert.equal(report.mode, 'full-text');
+  assert.equal(report.offerFullTextReview, false);
+  assert.equal(report.papers[0].coverage, 'full-text');
+  assert.match(modelInput(), /Beginning of the argument/);
+  assert.match(modelInput(), /End of the paper and limitations/);
+});
+
+test('reads an oversized PDF in ordered passes and synthesizes every pass', async () => {
+  const longBody = [
+    '[Page 1] BEGINNING-CONTEXT',
+    'method evidence and discussion. '.repeat(7_200),
+    '[Page 40] ENDING-LIMITATIONS',
+  ].join('\n');
+  const requests = [];
+  const { service } = fixture({
+    sourceTextLoader: async () => longBody,
+    openAIRequest: async (request) => {
+      requests.push(request);
+      if (request.instructions.includes('complete-paper reading pipeline')) {
+        return `Pass summary ${requests.length}: ${request.input.includes('BEGINNING-CONTEXT') ? 'beginning' : ''} ${request.input.includes('ENDING-LIMITATIONS') ? 'ending' : ''}`;
+      }
+      return 'ILoveSketch의 긴 본문 전체 흐름을 청크별로 읽고 종합했습니다.';
+    },
+  });
+  await service.sync('garden', workspace());
+
+  const response = await service.chat(
+    'garden',
+    '이 PDF 원문 전체를 읽고 흐름과 한계를 알려줘',
+    ['paper-ilovesketch'],
+  );
+  const report = response.messages.at(-1).readingReport;
+  const passRequests = requests.filter((request) =>
+    request.instructions.includes('complete-paper reading pipeline'));
+  const finalRequest = requests.at(-1);
+
+  assert.equal(report.mode, 'chunked-full-text');
+  assert.equal(report.papers[0].coverage, 'full-text');
+  assert.ok(report.papers[0].chunkCount >= 2);
+  assert.ok(passRequests.some((request) => request.input.includes('BEGINNING-CONTEXT')));
+  assert.ok(passRequests.some((request) => request.input.includes('ENDING-LIMITATIONS')));
+  assert.match(finalRequest.input, /Pass summary/);
+});
+
 test('retrieves a named paper contribution from 50 PDFs without sending every full text', async () => {
   const contribution = [
     'In summary, our work has the following primary contributions.',
