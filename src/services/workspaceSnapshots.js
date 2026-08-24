@@ -639,35 +639,61 @@ function createWorkspaceSnapshotService(
       (left, right) => left.revision - right.revision,
     );
     const deltas = await historyDeltaCollection();
-    for (let index = 1; index < chronologicalRows.length; index += 1) {
-      const previousRow = chronologicalRows[index - 1];
-      const nextRow = chronologicalRows[index];
-      const deltaId = `${projectName}:${previousRow.revision}:${nextRow.revision}`;
-      let deltaDocument = await deltas.findOne({ _id: deltaId, projectName });
-      let transition = publicTransition(deltaDocument);
+    const adjacentPairs = chronologicalRows.slice(1).map((nextRow, index) => {
+      const previousRow = chronologicalRows[index];
+      return {
+        previousRow,
+        nextRow,
+        deltaId: `${projectName}:${previousRow.revision}:${nextRow.revision}`,
+      };
+    });
+    const deltaDocuments = await deltas
+      .find({
+        projectName,
+        _id: { $in: adjacentPairs.map((pair) => pair.deltaId) },
+      })
+      .toArray();
+    const deltaById = new Map(
+      deltaDocuments.map((document) => [String(document._id), document]),
+    );
+    const missingPairs = adjacentPairs.filter(
+      (pair) => !deltaById.has(pair.deltaId),
+    );
+    const historyDocuments = missingPairs.length
+      ? await history.find({
+        projectName,
+        _id: {
+          $in: [...new Set(missingPairs.flatMap((pair) => [
+            pair.previousRow._id,
+            pair.nextRow._id,
+          ]))],
+        },
+      }).toArray()
+      : [];
+    const historyById = new Map(
+      historyDocuments.map((document) => [String(document._id), document]),
+    );
+
+    await Promise.all(adjacentPairs.map(async ({
+      previousRow,
+      nextRow,
+      deltaId,
+    }) => {
+      let transition = publicTransition(deltaById.get(deltaId));
       if (!transition) {
-        const [previousDocument, nextDocument] = await Promise.all([
-          history.findOne({ _id: previousRow._id, projectName }),
-          history.findOne({ _id: nextRow._id, projectName }),
-        ]);
+        const previousDocument = historyById.get(String(previousRow._id));
+        const nextDocument = historyById.get(String(nextRow._id));
         if (previousDocument && nextDocument) {
           transition = await recordTransitionSafely(
             publicState(previousDocument),
             publicState(nextDocument),
           );
-          if (!transition) {
-            deltaDocument = await deltas.findOne({
-              _id: deltaId,
-              projectName,
-            });
-            transition = publicTransition(deltaDocument);
-          }
         }
       }
       if (transition) {
         transitionByToRevision.set(nextRow.revision, transition);
       }
-    }
+    }));
     return {
       currentRevision: current.revision,
       entries: rows.map((row) => ({

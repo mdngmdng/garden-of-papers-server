@@ -111,8 +111,12 @@ class MemoryHistoryCollection {
   }
 
   find(query) {
+    const allowedIds = new Set(query._id?.$in ?? []);
     let rows = [...this.documents.values()]
-      .filter((row) => !query.projectName || row.projectName === query.projectName)
+      .filter((row) => (
+        (!query.projectName || row.projectName === query.projectName)
+        && (!allowedIds.size || allowedIds.has(row._id))
+      ))
       .map((row) => structuredClone(row));
     let skip = 0;
     let limit = Number.POSITIVE_INFINITY;
