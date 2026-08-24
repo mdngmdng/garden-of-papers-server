@@ -494,6 +494,22 @@ function compressPaperSources(papers) {
   });
 }
 
+function compressedSourceBuffer(value) {
+  if (!value) return null;
+  if (Buffer.isBuffer(value) || ArrayBuffer.isView(value)) return value;
+  // MongoDB returns BSON Binary instances for buffers. zlib does not accept
+  // the Binary wrapper itself, but its backing buffer contains the exact gzip
+  // payload. Without unwrapping it, every stored paper body silently hydrated
+  // as an empty string after a server reload.
+  if (Buffer.isBuffer(value.buffer) || ArrayBuffer.isView(value.buffer)) {
+    const length = typeof value.length === 'function'
+      ? Number(value.length())
+      : Number(value.position) || value.buffer.byteLength;
+    return value.buffer.subarray(0, Math.max(0, length));
+  }
+  return null;
+}
+
 function hydrateStoredSources(document) {
   if (!document) return document;
   document.papers = (document.papers || []).map((paper) => {
@@ -501,8 +517,10 @@ function hydrateStoredSources(document) {
     let sourceText = '';
     if (paper.sourceTextGzip) {
       try {
+        const compressed = compressedSourceBuffer(paper.sourceTextGzip);
+        if (!compressed) throw new TypeError('Unsupported compressed PDF text payload');
         sourceText = cleanText(
-          zlib.gunzipSync(paper.sourceTextGzip).toString('utf8'),
+          zlib.gunzipSync(compressed).toString('utf8'),
           MAX_SOURCE_CHARACTERS,
         );
       } catch {
@@ -2303,6 +2321,7 @@ function createLLMWikiService({
   let indexesReady = null;
   const syncJobs = new Map();
   const chatQueues = new Map();
+  const sourceRecoveryJobs = new Map();
 
   async function collection() {
     const value = getCollection();
@@ -2316,6 +2335,116 @@ function createLLMWikiService({
     }
     await indexesReady;
     return value;
+  }
+
+  async function persistRecoveredPaperBody(workspaceId, document, paper) {
+    if (!paper.filePath) paper.filePath = paperMarkdownPath(document, paper);
+    const markdown = paperMarkdown(document, paper);
+    await markdownStore.write(paper.filePath, markdown);
+
+    const set = {
+      'papers.$[paper].sourceTextGzip': zlib.gzipSync(paper.sourceText),
+      'papers.$[paper].sourceTextCharacters': paper.sourceText.length,
+      'papers.$[paper].sourceStatus': paper.sourceStatus,
+      'papers.$[paper].sourceTextVersion': SOURCE_TEXT_FORMAT_VERSION,
+      'papers.$[paper].filePath': paper.filePath,
+      'papers.$[paper].contentHash': contentHash(paper),
+    };
+    const arrayFilters = [{ 'paper.id': paper.id }];
+    if ((document.markdownDocuments || []).some((item) => item.path === paper.filePath)) {
+      set['markdownDocuments.$[markdown].characters'] = markdown.length;
+      arrayFilters.push({ 'markdown.path': paper.filePath });
+    }
+    await (await collection()).updateOne(
+      { _id: workspaceId, 'papers.id': paper.id },
+      { $set: set },
+      { arrayFilters },
+    );
+  }
+
+  async function recoverRequestedPaperBody(workspaceId, document, paper) {
+    if (paper.sourceText) return true;
+    if (!paper.pdf?.fileId) return false;
+
+    const recoveryKey = `${workspaceId}:${paper.id}`;
+    let recovery = sourceRecoveryJobs.get(recoveryKey);
+    if (!recovery) {
+      recovery = (async () => {
+        try {
+          const sourceText = cleanText(
+            await sourceTextLoader(workspaceId, paper),
+            MAX_SOURCE_CHARACTERS,
+          );
+          return {
+            sourceText,
+            sourceStatus: sourceText
+              ? (paper.sourceStatus === 'pdfjs-text' ? 'pdfjs-text' : 'grobid-tei')
+              : 'empty',
+          };
+        } catch (error) {
+          if (isMissingStoredPdf(error)) {
+            try {
+              await pdfBridgeRegistrar({
+                projectName: workspaceId,
+                fileId: paper.pdf.fileId,
+                pdfUrl: paper.pdf.pdfSourceUrl || paper.pdf.resourceLink || paper.pdf.pdfUrl,
+                scholarUrl: paper.pdf.resourceLink,
+                paperTitle: paper.title,
+              });
+            } catch (bridgeError) {
+              console.error(
+                `LLM Wiki on-demand PDF recovery registration failed for ${paper.id}:`,
+                bridgeError,
+              );
+            }
+          }
+          throw error;
+        }
+      })();
+      sourceRecoveryJobs.set(recoveryKey, recovery);
+      recovery.finally(() => {
+        if (sourceRecoveryJobs.get(recoveryKey) === recovery) {
+          sourceRecoveryJobs.delete(recoveryKey);
+        }
+      }).catch(() => undefined);
+    }
+
+    try {
+      const result = await recovery;
+      if (!result.sourceText) return false;
+      paper.sourceText = result.sourceText;
+      paper.sourceTextCharacters = result.sourceText.length;
+      paper.sourceStatus = result.sourceStatus;
+      paper.sourceTextVersion = SOURCE_TEXT_FORMAT_VERSION;
+      try {
+        await persistRecoveredPaperBody(workspaceId, document, paper);
+      } catch (error) {
+        // The in-memory body is still safe to read for this answer. A later
+        // sync can retry persistence without forcing the user to ask again.
+        console.error(`LLM Wiki recovered body persistence failed for ${paper.id}:`, error);
+      }
+      return true;
+    } catch (error) {
+      paper.sourceStatus = `error: ${cleanText(error?.message, 300) || 'PDF text unavailable'}`;
+      console.error(`LLM Wiki on-demand PDF body recovery failed for ${paper.id}:`, error);
+      return false;
+    }
+  }
+
+  async function hydrateRequestedFullTextSources(
+    workspaceId,
+    document,
+    question,
+    contextPaperIds,
+  ) {
+    if (!requestsFullTextReview(question)) return document;
+    const targets = deepReadTargetPapers(document, question, contextPaperIds);
+    await mapWithConcurrency(
+      targets.filter((paper) => !paper.sourceText),
+      2,
+      (paper) => recoverRequestedPaperBody(workspaceId, document, paper),
+    );
+    return document;
   }
 
   async function status(workspaceIdValue) {
@@ -2523,9 +2652,18 @@ function createLLMWikiService({
       markdownStore,
     );
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
+    const fullTextRequested = requestsFullTextReview(question);
+    if (fullTextRequested) {
+      await hydrateRequestedFullTextSources(
+        workspaceId,
+        document,
+        question,
+        contextPaperIds,
+      );
+    }
     let retrieval = buildFocusedReadContext(document, question, contextPaperIds)
       || buildChatContext(document, question, contextPaperIds);
-    if (requestsFullTextReview(question)) {
+    if (fullTextRequested) {
       try {
         retrieval = await buildDeepReadContext(
           document,
@@ -2641,9 +2779,18 @@ function createLLMWikiService({
     const operation = before
       .catch(() => undefined)
       .then(async () => {
+        const fullTextRequested = requestsFullTextReview(question);
+        if (fullTextRequested) {
+          await hydrateRequestedFullTextSources(
+            workspaceId,
+            document,
+            question,
+            contextPaperIds,
+          );
+        }
         let retrieval = buildFocusedReadContext(document, question, contextPaperIds)
           || buildChatContext(document, question, contextPaperIds);
-        if (requestsFullTextReview(question)) {
+        if (fullTextRequested) {
           try {
             retrieval = await buildDeepReadContext(
               document,

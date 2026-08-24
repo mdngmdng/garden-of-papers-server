@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { Binary } = require('mongodb');
 const { createLLMWikiService } = require('../src/services/llmWiki');
 
 class MemoryCollection {
@@ -350,6 +351,65 @@ test('recovers a stored PDF body from its Markdown file when Mongo source text i
   assert.match(modelInput(), /RECOVERED-MARKDOWN-BODY/);
   assert.equal(response.messages.at(-1).readingReport.mode, 'focused-chunks');
   assert.ok(response.messages.at(-1).readingReport.papers[0].sourceTextCharacters > 0);
+});
+
+test('hydrates compressed paper bodies returned by MongoDB as BSON Binary values', async () => {
+  let loads = 0;
+  const { collection, markdownStore, modelInput, service } = fixture({
+    sourceTextLoader: async () => {
+      loads += 1;
+      return '[Page 1]\nBSON-BINARY-BODY explains the complete spatial document experiment.';
+    },
+    openAIRequest: async () => '저장된 BSON 본문을 읽었습니다.',
+  });
+  await service.sync('garden', workspace());
+  const storedPaper = collection.document.papers[0];
+  storedPaper.sourceTextGzip = new Binary(Buffer.from(storedPaper.sourceTextGzip));
+  markdownStore.files.delete(storedPaper.filePath);
+
+  const response = await service.chat('garden', 'ILoveSketch의 실험을 자세히 설명해줘');
+
+  assert.match(modelInput(), /BSON-BINARY-BODY/);
+  assert.equal(response.messages.at(-1).readingReport.mode, 'focused-chunks');
+  assert.equal(loads, 1);
+});
+
+test('recovers and persists a missing paper body on an explicit full-text follow-up', async () => {
+  let loads = 0;
+  const { collection, markdownStore, modelInput, service } = fixture({
+    sourceTextLoader: async () => {
+      loads += 1;
+      return loads === 1
+        ? '[Page 1]\nInitial extracted body.'
+        : '[Page 1]\nON-DEMAND-BEGINNING\n\n[Page 8]\nON-DEMAND-ENDING';
+    },
+    openAIRequest: async () => '온디맨드로 복구한 전체 본문을 읽었습니다.',
+  });
+  await service.sync('garden', workspace());
+  const storedPaper = collection.document.papers[0];
+  storedPaper.sourceTextGzip = null;
+  storedPaper.sourceTextCharacters = 0;
+  storedPaper.sourceStatus = 'empty';
+  markdownStore.files.delete(storedPaper.filePath);
+  collection.document.chatMessages = [{
+    id: 'prior-answer',
+    role: 'assistant',
+    text: 'ILoveSketch가 관련 논문입니다.',
+    createdAt: '2026-08-17T00:01:00.000Z',
+    sources: [{ id: storedPaper.id, title: storedPaper.title, filePath: storedPaper.filePath }],
+  }];
+
+  const response = await service.chat('garden', '본문 전체를 처음부터 끝까지 읽어줘');
+  const report = response.messages.at(-1).readingReport;
+  const recoveredMarkdown = await markdownStore.read(storedPaper.filePath);
+
+  assert.equal(loads, 2);
+  assert.equal(report.mode, 'full-text');
+  assert.equal(report.papers[0].coverage, 'full-text');
+  assert.match(modelInput(), /ON-DEMAND-BEGINNING/);
+  assert.match(modelInput(), /ON-DEMAND-ENDING/);
+  assert.match(recoveredMarkdown, /## PDF full text[\s\S]*ON-DEMAND-BEGINNING/);
+  assert.match(recoveredMarkdown, /ON-DEMAND-ENDING/);
 });
 
 test('reads a complete PDF directly when it fits the input token budget', async () => {
