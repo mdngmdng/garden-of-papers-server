@@ -112,7 +112,7 @@ class MemoryHistoryCollection {
     const document = this.documents.get(query._id);
     if (!document || (
       query.projectName && document.projectName !== query.projectName
-    )) {
+    ) || (query.reason && document.reason !== query.reason)) {
       return null;
     }
     return structuredClone(document);
@@ -123,6 +123,7 @@ class MemoryHistoryCollection {
     let rows = [...this.documents.values()]
       .filter((row) => (
         (!query.projectName || row.projectName === query.projectName)
+        && (!query.reason || row.reason === query.reason)
         && (!allowedIds.size || allowedIds.has(row._id))
       ))
       .map((row) => structuredClone(row));
@@ -390,7 +391,7 @@ test('compresses and restores boards that exceed the safe inline Mongo size', as
   );
 });
 
-test('retains the latest ten durable workspace revisions', async () => {
+test('keeps autosaves live while retaining only the latest ten manual snapshots', async () => {
   const { historyCollection, historyDeltaCollection, service } = fixture();
   let state = await service.ensure(workspace());
   for (let index = 0; index < SNAPSHOT_HISTORY_LIMIT + 3; index += 1) {
@@ -402,12 +403,14 @@ test('retains the latest ten durable workspace revisions', async () => {
       state,
     });
     state = saved.state;
+    await service.createHistorySnapshot('garden');
   }
 
   const history = await service.listHistory('garden');
-  assert.equal(history.entries.length, SNAPSHOT_HISTORY_LIMIT);
+  assert.equal(history.entries.length, SNAPSHOT_HISTORY_LIMIT + 1);
+  assert.equal(history.entries[0].reason, 'current');
   assert.deepEqual(
-    history.entries.map((entry) => entry.revision),
+    history.entries.slice(1).map((entry) => entry.revision),
     [13, 12, 11, 10, 9, 8, 7, 6, 5, 4],
   );
   assert.equal(historyCollection.documents.size, SNAPSHOT_HISTORY_LIMIT);
@@ -415,6 +418,44 @@ test('retains the latest ten durable workspace revisions', async () => {
     historyDeltaCollection.documents.size,
     SNAPSHOT_HISTORY_LIMIT - 1,
   );
+});
+
+test('does not create history snapshots during ordinary autosaves', async () => {
+  const { historyCollection, service } = fixture();
+  let state = await service.ensure(workspace());
+  state.camera.x = 12;
+  state = (await service.save({
+    projectName: 'garden',
+    baseRevision: state.revision,
+    mutationId: 'writer:autosave-only',
+    state,
+  })).state;
+
+  const history = await service.listHistory('garden');
+  assert.equal(state.revision, 1);
+  assert.deepEqual(history.entries.map((entry) => entry.reason), ['current']);
+  assert.equal(historyCollection.documents.size, 0);
+});
+
+test('keeps distinct manual snapshots created at the same live revision', async () => {
+  const { historyCollection, service } = fixture();
+  await service.ensure(workspace());
+  await service.createHistorySnapshot('garden', 'first-branch');
+  await service.createHistorySnapshot('garden', 'second-branch');
+
+  const history = await service.listHistory('garden');
+  assert.deepEqual(
+    history.entries.slice(1).map((entry) => entry.id),
+    ['garden:manual:second-branch', 'garden:manual:first-branch'],
+  );
+  assert.deepEqual(
+    history.entries.slice(0, 2).map((entry) => entry.diffFromPrevious),
+    [
+      { created: 0, deleted: 0, moved: 0, updated: 0 },
+      { created: 0, deleted: 0, moved: 0, updated: 0 },
+    ],
+  );
+  assert.equal(historyCollection.documents.size, 2);
 });
 
 test('precomputes reversible object deltas for timeline scrubbing', async () => {
@@ -432,6 +473,7 @@ test('precomputes reversible object deltas for timeline scrubbing', async () => 
     updatedAt: '2026-08-03T00:00:00.000Z',
   }];
   state = await service.ensure(state);
+  await service.createHistorySnapshot('garden');
   state.objects[0].x = 40;
   state.objects[0].updatedAt = '2026-08-03T00:00:01.000Z';
   state.objects.push({
@@ -451,18 +493,21 @@ test('precomputes reversible object deltas for timeline scrubbing', async () => 
     mutationId: 'writer:diff',
     state,
   })).state;
+  await service.createHistorySnapshot('garden');
 
   const history = await service.listHistory('garden');
-  const current = history.entries.find((entry) => entry.revision === 1);
-  assert.deepEqual(current.diffFromPrevious, {
+  const revisionOne = history.entries.find(
+    (entry) => entry.revision === 1 && entry.reason === 'manual',
+  );
+  assert.deepEqual(revisionOne.diffFromPrevious, {
     created: 1,
     deleted: 0,
     moved: 1,
     updated: 0,
   });
-  assert.equal(current.previousRevision, 0);
-  assert.equal(current.transitionFromPrevious, undefined);
-  assert.equal(current.transitionToPrevious, undefined);
+  assert.equal(revisionOne.previousRevision, 0);
+  assert.equal(revisionOne.transitionFromPrevious, undefined);
+  assert.equal(revisionOne.transitionToPrevious, undefined);
   const transition = await service.getHistoryTransition('garden', 0, 1);
   assert.deepEqual(
     transition.forward.upsertedObjects.map((object) => object.id),
@@ -480,7 +525,7 @@ test('precomputes reversible object deltas for timeline scrubbing', async () => 
   assert.equal(transition.backward.patchedObjects[0].changes.x, 0);
 });
 
-test('restores a historical board as a new revision and preserves undo history', async () => {
+test('restores a manual snapshot as a new live revision', async () => {
   const { service } = fixture();
   let state = await service.ensure(workspace());
   state.camera.x = 10;
@@ -490,6 +535,7 @@ test('restores a historical board as a new revision and preserves undo history',
     mutationId: 'writer:first',
     state,
   })).state;
+  await service.createHistorySnapshot('garden');
   state.camera.x = 99;
   state = (await service.save({
     projectName: 'garden',
@@ -498,7 +544,9 @@ test('restores a historical board as a new revision and preserves undo history',
     state,
   })).state;
   const before = await service.listHistory('garden');
-  const revisionOne = before.entries.find((entry) => entry.revision === 1);
+  const revisionOne = before.entries.find(
+    (entry) => entry.revision === 1 && entry.reason === 'manual',
+  );
 
   const restored = await service.restoreHistory({
     projectName: 'garden',
@@ -511,7 +559,10 @@ test('restores a historical board as a new revision and preserves undo history',
   assert.equal(restored.state.camera.x, 10);
   const after = await service.listHistory('garden');
   assert.equal(after.entries[0].revision, 3);
-  assert.equal(after.entries[0].reason, 'restore');
-  assert.equal(after.entries[0].restoredFromRevision, 1);
-  assert.ok(after.entries.some((entry) => entry.revision === 2));
+  assert.equal(after.entries[0].reason, 'current');
+  assert.equal(after.entries[0].restoredFromRevision, null);
+  assert.deepEqual(
+    after.entries.slice(1).map((entry) => entry.revision),
+    [1],
+  );
 });

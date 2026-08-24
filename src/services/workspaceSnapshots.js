@@ -352,6 +352,10 @@ function createWorkspaceSnapshotService(
           { projectName: 1, savedAt: -1 },
           { name: 'workspace_history_project_saved' },
         ),
+        value.createIndex(
+          { projectName: 1, reason: 1, savedAt: -1 },
+          { name: 'workspace_history_manual_saved' },
+        ),
       ]).catch((error) => {
         historyIndexesReady = null;
         throw error;
@@ -431,7 +435,7 @@ function createWorkspaceSnapshotService(
 
   async function recordHistory(
     state,
-    reason = 'autosave',
+    reason = 'manual',
     restoredFromRevision = null,
     prepared = {},
   ) {
@@ -445,9 +449,14 @@ function createWorkspaceSnapshotService(
     const { ownerName, serializedState } = validated;
     const revision = Number.isInteger(state.revision) ? state.revision : 0;
     const history = await historyCollection();
-    const savedAt = new Date(state.updatedAt || now());
+    const createdAt = now();
+    const savedAt = reason === 'manual'
+      ? createdAt
+      : new Date(state.updatedAt || createdAt);
     const document = {
-      _id: `${projectName}:${revision}`,
+      _id: prepared.historyId || (reason === 'manual'
+        ? `${projectName}:manual:revision-${revision}`
+        : `${projectName}:${reason}:${revision}`),
       schemaVersion: 1,
       ownerName,
       projectName,
@@ -464,8 +473,8 @@ function createWorkspaceSnapshotService(
             statePayload: prepared.statePayload,
           }
         : historyStorageFields(serializedState)),
-      savedAt: Number.isFinite(savedAt.getTime()) ? savedAt : now(),
-      createdAt: now(),
+      savedAt: Number.isFinite(savedAt.getTime()) ? savedAt : createdAt,
+      createdAt,
     };
     await history.updateOne(
       { _id: document._id },
@@ -478,15 +487,15 @@ function createWorkspaceSnapshotService(
 
     const expired = await history
       .find(
-        { projectName },
-        { projection: { _id: 1 } },
+        { projectName, reason: 'manual' },
+        { projection: { _id: 1, revision: 1 } },
       )
-      .sort({ revision: -1 })
+      .sort({ savedAt: -1 })
       .skip(SNAPSHOT_HISTORY_LIMIT)
       .toArray();
     if (expired.length) {
       const expiredRevisions = expired
-        .map((entry) => Number(String(entry._id).split(':').at(-1)))
+        .map((entry) => entry.revision)
         .filter(Number.isInteger);
       await history.deleteMany({
         _id: { $in: expired.map((entry) => entry._id) },
@@ -501,47 +510,6 @@ function createWorkspaceSnapshotService(
           ],
         });
       }
-    }
-  }
-
-  async function recordHistorySafely(
-    state,
-    reason = 'autosave',
-    restoredFromRevision = null,
-    prepared = {},
-  ) {
-    try {
-      await recordHistory(state, reason, restoredFromRevision, prepared);
-    } catch (error) {
-      // Version history must never turn a successful canonical board save
-      // into a failed save. A duplicate client retry will attempt recording
-      // the same immutable revision again.
-      console.error(
-        `[Workspace history] Failed to record ${state?.projectName || 'workspace'} r${state?.revision ?? '?'}:`,
-        error?.message || error,
-      );
-    }
-  }
-
-  async function ensureHistoryForState(state, reason = 'baseline') {
-    try {
-      const projectName = requiredString(
-        state?.projectName,
-        'state.projectName',
-      );
-      const revision = Number.isInteger(state?.revision) ? state.revision : 0;
-      const history = await historyCollection();
-      const existing = await history.findOne(
-        { _id: `${projectName}:${revision}` },
-        { projection: { _id: 1 } },
-      );
-      if (existing) return;
-      await recordHistory(state, reason);
-    } catch (error) {
-      console.error(
-        `[Workspace history] Failed to protect ${state?.projectName || 'workspace'} r${state?.revision ?? '?'}:`,
-        error?.message || error,
-      );
     }
   }
 
@@ -605,7 +573,15 @@ function createWorkspaceSnapshotService(
     const snapshots = await collection();
     const current = await snapshots.findOne(
       { _id: projectName },
-      { projection: { _id: 1, revision: 1 } },
+      {
+        projection: {
+          _id: 1,
+          revision: 1,
+          summary: 1,
+          camera: 1,
+          updatedAt: 1,
+        },
+      },
     );
     if (!current) {
       throw new WorkspaceSnapshotError(
@@ -615,9 +591,9 @@ function createWorkspaceSnapshotService(
       );
     }
     const history = await historyCollection();
-    let rows = await history
+    const manualRows = await history
       .find(
-        { projectName },
+        { projectName, reason: 'manual' },
         {
           projection: {
             _id: 1,
@@ -630,95 +606,105 @@ function createWorkspaceSnapshotService(
           },
         },
       )
-      .sort({ revision: -1 })
+      .sort({ savedAt: -1 })
       .limit(SNAPSHOT_HISTORY_LIMIT)
       .toArray();
-    if (!rows.some((row) => row.revision === current.revision)) {
-      const currentDocument = await snapshots.findOne({ _id: projectName });
-      if (currentDocument) {
-        await recordHistorySafely(publicState(currentDocument), 'baseline');
-      }
-      rows = await history
-        .find(
-          { projectName },
-          {
-            projection: {
-              _id: 1,
-              revision: 1,
-              reason: 1,
-              restoredFromRevision: 1,
-              summary: 1,
-              camera: 1,
-              savedAt: 1,
-            },
-          },
-        )
-        .sort({ revision: -1 })
-        .limit(SNAPSHOT_HISTORY_LIMIT)
-        .toArray();
+    let currentDocument = null;
+    if (!current.summary || !current.camera) {
+      currentDocument = await snapshots.findOne({ _id: projectName });
+      const currentState = publicState(currentDocument);
+      current.summary = summarizeState(currentState);
+      current.camera = structuredClone(currentState.camera);
     }
-    const transitionByToRevision = new Map();
-    const chronologicalRows = [...rows].sort(
-      (left, right) => left.revision - right.revision,
-    );
+    const currentRow = {
+      _id: `${projectName}:current:${current.revision}`,
+      revision: current.revision,
+      reason: 'current',
+      restoredFromRevision: null,
+      summary: current.summary,
+      camera: current.camera,
+      savedAt: now(),
+    };
+    const rows = [currentRow, ...manualRows];
+    const transitionByEntryId = new Map();
     const deltas = await historyDeltaCollection();
-    const adjacentPairs = chronologicalRows.slice(1).map((nextRow, index) => {
-      const previousRow = chronologicalRows[index];
+    const adjacentPairs = rows.slice(0, -1).map((newerRow, index) => {
+      const olderRow = rows[index + 1];
       return {
-        previousRow,
-        nextRow,
-        deltaId: `${projectName}:${previousRow.revision}:${nextRow.revision}`,
+        newerRow,
+        olderRow,
+        deltaId: olderRow.revision === newerRow.revision
+          ? null
+          : `${projectName}:${olderRow.revision}:${newerRow.revision}`,
       };
     });
+    for (const pair of adjacentPairs) {
+      if (pair.deltaId) continue;
+      transitionByEntryId.set(String(pair.newerRow._id), {
+        fromRevision: pair.olderRow.revision,
+        toRevision: pair.newerRow.revision,
+        summary: { created: 0, deleted: 0, moved: 0, updated: 0 },
+      });
+    }
+    const deltaIds = adjacentPairs
+      .map((pair) => pair.deltaId)
+      .filter(Boolean);
     const deltaDocuments = await deltas
       .find({
         projectName,
-        _id: { $in: adjacentPairs.map((pair) => pair.deltaId) },
+        _id: { $in: deltaIds },
       })
       .toArray();
     const deltaById = new Map(
       deltaDocuments.map((document) => [String(document._id), document]),
     );
     const missingPairs = adjacentPairs.filter(
-      (pair) => deltaById.get(pair.deltaId)?.schemaVersion !== 2,
+      (pair) => pair.deltaId
+        && deltaById.get(pair.deltaId)?.schemaVersion !== 2,
     );
-    const historyDocuments = missingPairs.length
+    const manualHistoryIds = [...new Set(missingPairs.flatMap((pair) => [
+      pair.olderRow,
+      pair.newerRow,
+    ])
+      .filter((row) => row.reason === 'manual')
+      .map((row) => row._id))];
+    const historyDocuments = manualHistoryIds.length
       ? await history.find({
         projectName,
-        _id: {
-          $in: [...new Set(missingPairs.flatMap((pair) => [
-            pair.previousRow._id,
-            pair.nextRow._id,
-          ]))],
-        },
+        _id: { $in: manualHistoryIds },
       }).toArray()
       : [];
     const historyById = new Map(
       historyDocuments.map((document) => [String(document._id), document]),
     );
+    if (missingPairs.some((pair) => pair.newerRow.reason === 'current')) {
+      currentDocument ||= await snapshots.findOne({ _id: projectName });
+      historyById.set(String(currentRow._id), currentDocument);
+    }
 
     await Promise.all(adjacentPairs.map(async ({
-      previousRow,
-      nextRow,
+      olderRow,
+      newerRow,
       deltaId,
     }) => {
+      if (!deltaId) return;
       const deltaDocument = deltaById.get(deltaId);
       let summary = deltaDocument?.summary ?? null;
       if (deltaDocument?.schemaVersion !== 2) {
-        const previousDocument = historyById.get(String(previousRow._id));
-        const nextDocument = historyById.get(String(nextRow._id));
-        if (previousDocument && nextDocument) {
+        const olderDocument = historyById.get(String(olderRow._id));
+        const newerDocument = historyById.get(String(newerRow._id));
+        if (olderDocument && newerDocument) {
           const transition = await recordTransitionSafely(
-            publicState(previousDocument),
-            publicState(nextDocument),
+            publicState(olderDocument),
+            publicState(newerDocument),
           );
           summary = transition?.forward?.summary ?? null;
         }
       }
       if (summary) {
-        transitionByToRevision.set(nextRow.revision, {
-          fromRevision: previousRow.revision,
-          toRevision: nextRow.revision,
+        transitionByEntryId.set(String(newerRow._id), {
+          fromRevision: olderRow.revision,
+          toRevision: newerRow.revision,
           summary,
         });
       }
@@ -738,11 +724,50 @@ function createWorkspaceSnapshotService(
         summary: row.summary || {},
         camera: row.camera || null,
         previousRevision:
-          transitionByToRevision.get(row.revision)?.fromRevision ?? null,
+          transitionByEntryId.get(String(row._id))?.fromRevision ?? null,
         diffFromPrevious:
-          transitionByToRevision.get(row.revision)?.summary ?? null,
+          transitionByEntryId.get(String(row._id))?.summary ?? null,
       })),
     };
+  }
+
+  async function createHistorySnapshot(projectNameValue, snapshotIdValue) {
+    const projectName = requiredString(projectNameValue, 'projectName');
+    const snapshots = await collection();
+    const currentDocument = await snapshots.findOne({ _id: projectName });
+    if (!currentDocument) {
+      throw new WorkspaceSnapshotError(
+        'Workspace snapshot not found',
+        404,
+        'not_found',
+      );
+    }
+    const currentState = publicState(currentDocument);
+    validateState(currentState, projectName);
+    const history = await historyCollection();
+    const snapshotId = snapshotIdValue == null
+      ? `revision-${currentState.revision}`
+      : requiredString(snapshotIdValue, 'snapshotId', 512);
+    const historyId = `${projectName}:manual:${snapshotId}`;
+    const existing = await history.findOne(
+      { _id: historyId, projectName, reason: 'manual' },
+      { projection: { _id: 1 } },
+    );
+    if (!existing) {
+      const [previousRow] = await history
+        .find({ projectName, reason: 'manual' })
+        .sort({ savedAt: -1 })
+        .limit(1)
+        .toArray();
+      const previousDocument = previousRow
+        ? await history.findOne({ _id: previousRow._id, projectName })
+        : null;
+      await recordHistory(currentState, 'manual', null, {
+        historyId,
+        previousState: previousDocument ? publicState(previousDocument) : null,
+      });
+    }
+    return listHistory(projectName);
   }
 
   async function getHistoryTransition(
@@ -802,25 +827,23 @@ function createWorkspaceSnapshotService(
       ownerName,
       projectName,
       revision: initialRevision,
+      summary: summarizeState(initialState),
+      camera: structuredClone(initialState.camera),
       ...storedState.set,
       lastMutationId: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    let inserted = false;
     try {
-      const result = await snapshots.updateOne(
+      await snapshots.updateOne(
         { _id: projectName },
         { $setOnInsert: document },
         { upsert: true },
       );
-      inserted = result.upsertedCount === 1;
     } catch (error) {
       if (error?.code !== 11000) throw error;
     }
-    const ensured = await load(projectName);
-    if (inserted) await recordHistorySafely(ensured, 'initial');
-    return ensured;
+    return load(projectName);
   }
 
   async function save({ projectName: projectNameValue, baseRevision, mutationId: mutationIdValue, state }) {
@@ -845,7 +868,6 @@ function createWorkspaceSnapshotService(
     }
     if (current.lastMutationId === mutationId) {
       const replayedState = publicState(current);
-      await recordHistorySafely(replayedState);
       return { state: replayedState, replayed: true };
     }
     if (current.revision !== baseRevision) {
@@ -856,9 +878,6 @@ function createWorkspaceSnapshotService(
         publicState(current),
       );
     }
-    const currentState = publicState(current);
-    await ensureHistoryForState(currentState);
-
     const timestamp = now();
     const nextRevision = current.revision + 1;
     const savedState = {
@@ -876,6 +895,8 @@ function createWorkspaceSnapshotService(
       stateUpdate(
         {
           revision: nextRevision,
+          summary: summarizeState(savedState),
+          camera: structuredClone(savedState.camera),
           ...storedState.set,
           lastMutationId: mutationId,
           updatedAt: timestamp,
@@ -886,11 +907,6 @@ function createWorkspaceSnapshotService(
     );
     if (updated) {
       const savedState = publicState(updated);
-      await recordHistorySafely(savedState, 'autosave', null, {
-        serializedState,
-        statePayload: storedState.set.statePayload,
-        previousState: currentState,
-      });
       notifyWorkspaceSaved(savedState);
       return { state: savedState, replayed: false };
     }
@@ -947,7 +963,6 @@ function createWorkspaceSnapshotService(
     }
     const currentState = publicState(current);
     if (current.lastMutationId === mutationId) {
-      await recordHistorySafely(currentState);
       return {
         revision: current.revision,
         updatedAt: currentState.updatedAt,
@@ -962,8 +977,6 @@ function createWorkspaceSnapshotService(
         currentState,
       );
     }
-    await ensureHistoryForState(currentState);
-
     const removed = new Set(
       delta.removedObjectIds.map((id) => requiredString(id, 'removedObjectId')),
     );
@@ -996,6 +1009,8 @@ function createWorkspaceSnapshotService(
       stateUpdate(
         {
           revision: nextRevision,
+          summary: summarizeState(savedState),
+          camera: structuredClone(savedState.camera),
           ...storedState.set,
           lastMutationId: mutationId,
           updatedAt: timestamp,
@@ -1005,11 +1020,6 @@ function createWorkspaceSnapshotService(
       { returnDocument: 'after' },
     );
     if (updated) {
-      await recordHistorySafely(savedState, 'autosave', null, {
-        serializedState,
-        statePayload: storedState.set.statePayload,
-        previousState: currentState,
-      });
       notifyWorkspaceSaved(publicState(updated));
       return {
         revision: nextRevision,
@@ -1061,7 +1071,6 @@ function createWorkspaceSnapshotService(
     }
     if (current.lastMutationId === mutationId) {
       const replayedState = publicState(current);
-      await recordHistorySafely(replayedState, 'restore');
       return { state: replayedState, replayed: true };
     }
     if (current.revision !== baseRevision) {
@@ -1076,6 +1085,7 @@ function createWorkspaceSnapshotService(
     const historical = await history.findOne({
       _id: historyId,
       projectName,
+      reason: 'manual',
     });
     if (!historical) {
       throw new WorkspaceSnapshotError(
@@ -1087,7 +1097,6 @@ function createWorkspaceSnapshotService(
     const historicalState = publicState(historical);
     validateState(historicalState, projectName);
     const currentState = publicState(current);
-    await ensureHistoryForState(currentState, 'pre-restore');
 
     const timestamp = now();
     const nextRevision = current.revision + 1;
@@ -1107,6 +1116,8 @@ function createWorkspaceSnapshotService(
       stateUpdate(
         {
           revision: nextRevision,
+          summary: summarizeState(restoredState),
+          camera: structuredClone(restoredState.camera),
           ...storedState.set,
           lastMutationId: mutationId,
           updatedAt: timestamp,
@@ -1125,21 +1136,12 @@ function createWorkspaceSnapshotService(
       );
     }
     const savedState = publicState(updated);
-    await recordHistorySafely(
-      savedState,
-      'restore',
-      historical.revision,
-      {
-        serializedState,
-        statePayload: storedState.set.statePayload,
-        previousState: currentState,
-      },
-    );
     notifyWorkspaceSaved(savedState);
     return { state: savedState, replayed: false };
   }
 
   return {
+    createHistorySnapshot,
     ensure,
     getHistoryTransition,
     list,

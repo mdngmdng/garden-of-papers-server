@@ -61,6 +61,19 @@ exports.listWorkspaceHistory = async (req, res) => {
   }
 };
 
+exports.createWorkspaceHistorySnapshot = async (req, res) => {
+  try {
+    return res.status(201).json(
+      await workspaceSnapshotService.createHistorySnapshot(
+        req.params.id,
+        req.body?.snapshotId,
+      ),
+    );
+  } catch (error) {
+    return sendError(res, error);
+  }
+};
+
 exports.getWorkspaceHistoryTransition = async (req, res) => {
   try {
     return res.status(200).json(
