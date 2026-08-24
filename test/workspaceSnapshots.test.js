@@ -147,9 +147,28 @@ class MemoryHistoryCollection {
 
   async deleteMany(query) {
     const ids = new Set(query._id?.$in ?? []);
+    const revisionSets = (query.$or ?? [])
+      .flatMap((condition) => [
+        ...((condition.fromRevision?.$in ?? []).map((revision) => ({
+          field: 'fromRevision',
+          revision,
+        }))),
+        ...((condition.toRevision?.$in ?? []).map((revision) => ({
+          field: 'toRevision',
+          revision,
+        }))),
+      ]);
     let deletedCount = 0;
-    for (const id of ids) {
-      if (this.documents.delete(id)) deletedCount += 1;
+    for (const [id, document] of this.documents) {
+      const deleteById = ids.has(id);
+      const deleteByRevision = (
+        !query.projectName || document.projectName === query.projectName
+      ) && revisionSets.some(
+        ({ field, revision }) => document[field] === revision,
+      );
+      if ((deleteById || deleteByRevision) && this.documents.delete(id)) {
+        deletedCount += 1;
+      }
     }
     return { deletedCount };
   }
@@ -158,14 +177,21 @@ class MemoryHistoryCollection {
 function fixture(onWorkspaceSaved = null) {
   const collection = new MemorySnapshotCollection();
   const historyCollection = new MemoryHistoryCollection();
+  const historyDeltaCollection = new MemoryHistoryCollection();
   let timestamp = Date.parse('2026-08-03T00:00:00.000Z');
   const service = createWorkspaceSnapshotService(
     () => collection,
     () => new Date(timestamp += 1_000),
     onWorkspaceSaved,
     () => historyCollection,
+    () => historyDeltaCollection,
   );
-  return { collection, historyCollection, service };
+  return {
+    collection,
+    historyCollection,
+    historyDeltaCollection,
+    service,
+  };
 }
 
 test('triggers Wiki synchronization from every successful canonical save', async () => {
@@ -353,7 +379,7 @@ test('compresses and restores boards that exceed the safe inline Mongo size', as
 });
 
 test('retains the latest ten durable workspace revisions', async () => {
-  const { historyCollection, service } = fixture();
+  const { historyCollection, historyDeltaCollection, service } = fixture();
   let state = await service.ensure(workspace());
   for (let index = 0; index < SNAPSHOT_HISTORY_LIMIT + 3; index += 1) {
     state.camera.x = index + 1;
@@ -373,6 +399,61 @@ test('retains the latest ten durable workspace revisions', async () => {
     [13, 12, 11, 10, 9, 8, 7, 6, 5, 4],
   );
   assert.equal(historyCollection.documents.size, SNAPSHOT_HISTORY_LIMIT);
+  assert.equal(
+    historyDeltaCollection.documents.size,
+    SNAPSHOT_HISTORY_LIMIT - 1,
+  );
+});
+
+test('precomputes reversible object deltas for timeline scrubbing', async () => {
+  const { service } = fixture();
+  let state = workspace();
+  state.objects = [{
+    id: 'note-1',
+    type: 'GX.MARONote',
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+    zIndex: 1,
+    text: 'same',
+    updatedAt: '2026-08-03T00:00:00.000Z',
+  }];
+  state = await service.ensure(state);
+  state.objects[0].x = 40;
+  state.objects[0].updatedAt = '2026-08-03T00:00:01.000Z';
+  state.objects.push({
+    id: 'note-2',
+    type: 'GX.MARONote',
+    x: 120,
+    y: 0,
+    width: 100,
+    height: 100,
+    zIndex: 2,
+    text: 'new',
+    updatedAt: '2026-08-03T00:00:01.000Z',
+  });
+  state = (await service.save({
+    projectName: 'garden',
+    baseRevision: state.revision,
+    mutationId: 'writer:diff',
+    state,
+  })).state;
+
+  const history = await service.listHistory('garden');
+  const current = history.entries.find((entry) => entry.revision === 1);
+  assert.deepEqual(current.diffFromPrevious, {
+    created: 1,
+    deleted: 0,
+    moved: 1,
+    updated: 0,
+  });
+  assert.deepEqual(
+    current.transitionFromPrevious.upsertedObjects.map((object) => object.id),
+    ['note-1', 'note-2'],
+  );
+  assert.deepEqual(current.transitionToPrevious.removedObjectIds, ['note-2']);
+  assert.equal(current.transitionToPrevious.upsertedObjects[0].x, 0);
 });
 
 test('restores a historical board as a new revision and preserves undo history', async () => {

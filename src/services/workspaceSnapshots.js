@@ -4,6 +4,7 @@ const { gzipSync, gunzipSync } = require('node:zlib');
 const SNAPSHOT_DATABASE = 'GardenOfPapersSystem';
 const SNAPSHOT_COLLECTION = 'WorkspaceSnapshots';
 const SNAPSHOT_HISTORY_COLLECTION = 'WorkspaceSnapshotHistory';
+const SNAPSHOT_HISTORY_DELTA_COLLECTION = 'WorkspaceSnapshotDeltas';
 const SNAPSHOT_HISTORY_LIMIT = 10;
 const INLINE_SNAPSHOT_BYTES = 12 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 40 * 1024 * 1024;
@@ -42,6 +43,20 @@ function defaultHistoryCollection() {
     );
   }
   return client.db(SNAPSHOT_DATABASE).collection(SNAPSHOT_HISTORY_COLLECTION);
+}
+
+function defaultHistoryDeltaCollection() {
+  const client = getClient();
+  if (!client) {
+    throw new WorkspaceSnapshotError(
+      'MongoDB is not connected',
+      503,
+      'database_unavailable',
+    );
+  }
+  return client
+    .db(SNAPSHOT_DATABASE)
+    .collection(SNAPSHOT_HISTORY_DELTA_COLLECTION);
 }
 
 function requiredString(value, name, maxLength = 256) {
@@ -153,6 +168,109 @@ function historyStorageFields(serializedState) {
   };
 }
 
+function storedPayloadBuffer(payload) {
+  if (Buffer.isBuffer(payload)) return payload;
+  if (ArrayBuffer.isView(payload)) {
+    return Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength);
+  }
+  if (ArrayBuffer.isView(payload?.buffer)) {
+    return Buffer.from(
+      payload.buffer.buffer,
+      payload.buffer.byteOffset,
+      payload.buffer.byteLength,
+    );
+  }
+  return Buffer.from(payload?.buffer || payload);
+}
+
+function publicTransition(document) {
+  if (
+    document?.transitionEncoding !== SNAPSHOT_ENCODING
+    || !document.transitionPayload
+  ) {
+    return document?.transition ?? null;
+  }
+  return JSON.parse(
+    gunzipSync(storedPayloadBuffer(document.transitionPayload)).toString(
+      'utf8',
+    ),
+  );
+}
+
+function geometryChanged(left, right) {
+  return left.x !== right.x
+    || left.y !== right.y
+    || left.width !== right.width
+    || left.height !== right.height
+    || left.zIndex !== right.zIndex;
+}
+
+function onlyGeometryChanged(left, right) {
+  const omitted = new Set([
+    'x',
+    'y',
+    'width',
+    'height',
+    'zIndex',
+    'updatedAt',
+  ]);
+  const compact = (object) => Object.fromEntries(
+    Object.entries(object).filter(([key]) => !omitted.has(key)),
+  );
+  return JSON.stringify(compact(left)) === JSON.stringify(compact(right));
+}
+
+function buildObjectDelta(fromState, toState) {
+  const fromById = new Map(
+    fromState.objects.map((object) => [object.id, object]),
+  );
+  const toById = new Map(toState.objects.map((object) => [object.id, object]));
+  const upsertedObjects = [];
+  const removedObjectIds = [];
+  const summary = { created: 0, deleted: 0, moved: 0, updated: 0 };
+
+  for (const object of toState.objects) {
+    const previous = fromById.get(object.id);
+    if (!previous) {
+      upsertedObjects.push(structuredClone(object));
+      summary.created += 1;
+      continue;
+    }
+    if (JSON.stringify(previous) === JSON.stringify(object)) continue;
+    upsertedObjects.push(structuredClone(object));
+    if (geometryChanged(previous, object) && onlyGeometryChanged(previous, object)) {
+      summary.moved += 1;
+    } else {
+      summary.updated += 1;
+    }
+  }
+  for (const object of fromState.objects) {
+    if (toById.has(object.id)) continue;
+    removedObjectIds.push(object.id);
+    summary.deleted += 1;
+  }
+
+  return {
+    schemaVersion: toState.schemaVersion,
+    fromRevision: fromState.revision,
+    toRevision: toState.revision,
+    targetUpdatedAt: toState.updatedAt,
+    camera: structuredClone(toState.camera),
+    upsertedObjects,
+    removedObjectIds,
+    summary,
+  };
+}
+
+function buildHistoryTransition(fromState, toState) {
+  return {
+    fromRevision: fromState.revision,
+    toRevision: toState.revision,
+    forward: buildObjectDelta(fromState, toState),
+    backward: buildObjectDelta(toState, fromState),
+  };
+}
+
 function summarizeState(state) {
   const counts = {
     objects: state.objects.length,
@@ -181,9 +299,11 @@ function createWorkspaceSnapshotService(
   now = () => new Date(),
   onWorkspaceSaved = null,
   getHistoryCollection = defaultHistoryCollection,
+  getHistoryDeltaCollection = defaultHistoryDeltaCollection,
 ) {
   let indexesReady = null;
   let historyIndexesReady = null;
+  let historyDeltaIndexesReady = null;
 
   async function collection() {
     const value = getCollection();
@@ -221,6 +341,74 @@ function createWorkspaceSnapshotService(
     }
     await historyIndexesReady;
     return value;
+  }
+
+  async function historyDeltaCollection() {
+    const value = getHistoryDeltaCollection();
+    if (!historyDeltaIndexesReady) {
+      historyDeltaIndexesReady = Promise.all([
+        value.createIndex(
+          { projectName: 1, toRevision: -1 },
+          { name: 'workspace_delta_project_revision' },
+        ),
+      ]).catch((error) => {
+        historyDeltaIndexesReady = null;
+        throw error;
+      });
+    }
+    await historyDeltaIndexesReady;
+    return value;
+  }
+
+  async function recordTransition(fromState, toState) {
+    if (
+      !fromState
+      || !toState
+      || fromState.projectName !== toState.projectName
+      || fromState.revision === toState.revision
+    ) {
+      return null;
+    }
+    const transition = buildHistoryTransition(fromState, toState);
+    const serialized = JSON.stringify(transition);
+    const transitionPayload = gzipSync(Buffer.from(serialized), { level: 6 });
+    if (transitionPayload.byteLength > MAX_STORED_SNAPSHOT_BYTES) {
+      throw new WorkspaceSnapshotError(
+        'Compressed workspace history delta is too large',
+        413,
+        'snapshot_too_large',
+      );
+    }
+    const deltas = await historyDeltaCollection();
+    const document = {
+      _id: `${toState.projectName}:${fromState.revision}:${toState.revision}`,
+      schemaVersion: 1,
+      projectName: toState.projectName,
+      fromRevision: fromState.revision,
+      toRevision: toState.revision,
+      transitionEncoding: SNAPSHOT_ENCODING,
+      transitionPayload,
+      summary: transition.forward.summary,
+      createdAt: now(),
+    };
+    await deltas.updateOne(
+      { _id: document._id },
+      { $setOnInsert: document },
+      { upsert: true },
+    );
+    return transition;
+  }
+
+  async function recordTransitionSafely(fromState, toState) {
+    try {
+      return await recordTransition(fromState, toState);
+    } catch (error) {
+      console.error(
+        `[Workspace history] Failed to diff ${toState?.projectName || 'workspace'} r${fromState?.revision ?? '?'}→r${toState?.revision ?? '?'}:`,
+        error?.message || error,
+      );
+      return null;
+    }
   }
 
   async function recordHistory(
@@ -266,6 +454,9 @@ function createWorkspaceSnapshotService(
       { $setOnInsert: document },
       { upsert: true },
     );
+    if (prepared.previousState) {
+      await recordTransitionSafely(prepared.previousState, state);
+    }
 
     const expired = await history
       .find(
@@ -276,9 +467,22 @@ function createWorkspaceSnapshotService(
       .skip(SNAPSHOT_HISTORY_LIMIT)
       .toArray();
     if (expired.length) {
+      const expiredRevisions = expired
+        .map((entry) => Number(String(entry._id).split(':').at(-1)))
+        .filter(Number.isInteger);
       await history.deleteMany({
         _id: { $in: expired.map((entry) => entry._id) },
       });
+      if (expiredRevisions.length) {
+        const deltas = await historyDeltaCollection();
+        await deltas.deleteMany({
+          projectName,
+          $or: [
+            { fromRevision: { $in: expiredRevisions } },
+            { toRevision: { $in: expiredRevisions } },
+          ],
+        });
+      }
     }
   }
 
@@ -430,6 +634,40 @@ function createWorkspaceSnapshotService(
         .limit(SNAPSHOT_HISTORY_LIMIT)
         .toArray();
     }
+    const transitionByToRevision = new Map();
+    const chronologicalRows = [...rows].sort(
+      (left, right) => left.revision - right.revision,
+    );
+    const deltas = await historyDeltaCollection();
+    for (let index = 1; index < chronologicalRows.length; index += 1) {
+      const previousRow = chronologicalRows[index - 1];
+      const nextRow = chronologicalRows[index];
+      const deltaId = `${projectName}:${previousRow.revision}:${nextRow.revision}`;
+      let deltaDocument = await deltas.findOne({ _id: deltaId, projectName });
+      let transition = publicTransition(deltaDocument);
+      if (!transition) {
+        const [previousDocument, nextDocument] = await Promise.all([
+          history.findOne({ _id: previousRow._id, projectName }),
+          history.findOne({ _id: nextRow._id, projectName }),
+        ]);
+        if (previousDocument && nextDocument) {
+          transition = await recordTransitionSafely(
+            publicState(previousDocument),
+            publicState(nextDocument),
+          );
+          if (!transition) {
+            deltaDocument = await deltas.findOne({
+              _id: deltaId,
+              projectName,
+            });
+            transition = publicTransition(deltaDocument);
+          }
+        }
+      }
+      if (transition) {
+        transitionByToRevision.set(nextRow.revision, transition);
+      }
+    }
     return {
       currentRevision: current.revision,
       entries: rows.map((row) => ({
@@ -444,6 +682,14 @@ function createWorkspaceSnapshotService(
           : String(row.savedAt || ''),
         summary: row.summary || {},
         camera: row.camera || null,
+        previousRevision:
+          transitionByToRevision.get(row.revision)?.fromRevision ?? null,
+        diffFromPrevious:
+          transitionByToRevision.get(row.revision)?.forward?.summary ?? null,
+        transitionFromPrevious:
+          transitionByToRevision.get(row.revision)?.forward ?? null,
+        transitionToPrevious:
+          transitionByToRevision.get(row.revision)?.backward ?? null,
       })),
     };
   }
@@ -556,6 +802,7 @@ function createWorkspaceSnapshotService(
       await recordHistorySafely(savedState, 'autosave', null, {
         serializedState,
         statePayload: storedState.set.statePayload,
+        previousState: currentState,
       });
       notifyWorkspaceSaved(savedState);
       return { state: savedState, replayed: false };
@@ -674,6 +921,7 @@ function createWorkspaceSnapshotService(
       await recordHistorySafely(savedState, 'autosave', null, {
         serializedState,
         statePayload: storedState.set.statePayload,
+        previousState: currentState,
       });
       notifyWorkspaceSaved(publicState(updated));
       return {
@@ -797,6 +1045,7 @@ function createWorkspaceSnapshotService(
       {
         serializedState,
         statePayload: storedState.set.statePayload,
+        previousState: currentState,
       },
     );
     notifyWorkspaceSaved(savedState);
