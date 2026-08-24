@@ -220,12 +220,29 @@ function onlyGeometryChanged(left, right) {
   return JSON.stringify(compact(left)) === JSON.stringify(compact(right));
 }
 
+function buildObjectPatch(previous, next) {
+  const changes = {};
+  const removedKeys = [];
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  keys.delete('id');
+  for (const key of keys) {
+    if (!(key in next)) {
+      removedKeys.push(key);
+      continue;
+    }
+    if (JSON.stringify(previous[key]) === JSON.stringify(next[key])) continue;
+    changes[key] = structuredClone(next[key]);
+  }
+  return { id: next.id, changes, removedKeys };
+}
+
 function buildObjectDelta(fromState, toState) {
   const fromById = new Map(
     fromState.objects.map((object) => [object.id, object]),
   );
   const toById = new Map(toState.objects.map((object) => [object.id, object]));
   const upsertedObjects = [];
+  const patchedObjects = [];
   const removedObjectIds = [];
   const summary = { created: 0, deleted: 0, moved: 0, updated: 0 };
 
@@ -237,7 +254,7 @@ function buildObjectDelta(fromState, toState) {
       continue;
     }
     if (JSON.stringify(previous) === JSON.stringify(object)) continue;
-    upsertedObjects.push(structuredClone(object));
+    patchedObjects.push(buildObjectPatch(previous, object));
     if (geometryChanged(previous, object) && onlyGeometryChanged(previous, object)) {
       summary.moved += 1;
     } else {
@@ -257,6 +274,7 @@ function buildObjectDelta(fromState, toState) {
     targetUpdatedAt: toState.updatedAt,
     camera: structuredClone(toState.camera),
     upsertedObjects,
+    patchedObjects,
     removedObjectIds,
     summary,
   };
@@ -382,7 +400,7 @@ function createWorkspaceSnapshotService(
     const deltas = await historyDeltaCollection();
     const document = {
       _id: `${toState.projectName}:${fromState.revision}:${toState.revision}`,
-      schemaVersion: 1,
+      schemaVersion: 2,
       projectName: toState.projectName,
       fromRevision: fromState.revision,
       toRevision: toState.revision,
@@ -393,7 +411,7 @@ function createWorkspaceSnapshotService(
     };
     await deltas.updateOne(
       { _id: document._id },
-      { $setOnInsert: document },
+      { $set: document },
       { upsert: true },
     );
     return transition;
@@ -657,7 +675,7 @@ function createWorkspaceSnapshotService(
       deltaDocuments.map((document) => [String(document._id), document]),
     );
     const missingPairs = adjacentPairs.filter(
-      (pair) => !deltaById.has(pair.deltaId),
+      (pair) => deltaById.get(pair.deltaId)?.schemaVersion !== 2,
     );
     const historyDocuments = missingPairs.length
       ? await history.find({
@@ -681,7 +699,7 @@ function createWorkspaceSnapshotService(
     }) => {
       const deltaDocument = deltaById.get(deltaId);
       let summary = deltaDocument?.summary ?? null;
-      if (!deltaDocument) {
+      if (deltaDocument?.schemaVersion !== 2) {
         const previousDocument = historyById.get(String(previousRow._id));
         const nextDocument = historyById.get(String(nextRow._id));
         if (previousDocument && nextDocument) {

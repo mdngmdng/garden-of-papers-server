@@ -90,6 +90,14 @@ class MemoryHistoryCollection {
   }
 
   async updateOne(query, update) {
+    if (update.$set) {
+      const matched = this.documents.has(query._id);
+      this.documents.set(query._id, structuredClone(update.$set));
+      return {
+        upsertedCount: matched ? 0 : 1,
+        matchedCount: matched ? 1 : 0,
+      };
+    }
     if (!this.documents.has(query._id)) {
       this.documents.set(
         query._id,
@@ -458,10 +466,18 @@ test('precomputes reversible object deltas for timeline scrubbing', async () => 
   const transition = await service.getHistoryTransition('garden', 0, 1);
   assert.deepEqual(
     transition.forward.upsertedObjects.map((object) => object.id),
-    ['note-1', 'note-2'],
+    ['note-2'],
   );
+  assert.deepEqual(transition.forward.patchedObjects, [{
+    id: 'note-1',
+    changes: {
+      x: 40,
+      updatedAt: '2026-08-03T00:00:01.000Z',
+    },
+    removedKeys: [],
+  }]);
   assert.deepEqual(transition.backward.removedObjectIds, ['note-2']);
-  assert.equal(transition.backward.upsertedObjects[0].x, 0);
+  assert.equal(transition.backward.patchedObjects[0].changes.x, 0);
 });
 
 test('restores a historical board as a new revision and preserves undo history', async () => {
