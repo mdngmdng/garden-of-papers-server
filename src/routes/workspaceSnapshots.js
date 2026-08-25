@@ -5,6 +5,7 @@ const router = express.Router();
 
 router.get('/projects', controller.listProjects);
 router.post('/projects', controller.ensureWorkspace);
+router.delete('/projects', controller.deleteWorkspace);
 router.get('/workspaces/:id/source-status', controller.workspaceSourceStatus);
 router.get('/workspaces/:id/history', controller.listWorkspaceHistory);
 router.post(

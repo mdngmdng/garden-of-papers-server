@@ -51,6 +51,14 @@ class MemorySnapshotCollection {
     return structuredClone(this.document);
   }
 
+  async deleteOne(query) {
+    if (!this.document || this.document._id !== query._id) {
+      return { deletedCount: 0 };
+    }
+    this.document = null;
+    return { deletedCount: 1 };
+  }
+
   async updateOne(query, update) {
     if (!this.document) {
       this.document = structuredClone(update.$setOnInsert);
@@ -174,12 +182,21 @@ class MemoryHistoryCollection {
     let deletedCount = 0;
     for (const [id, document] of this.documents) {
       const deleteById = ids.has(id);
+      const deleteByProject = Boolean(
+        query.projectName
+        && !query._id
+        && !query.$or
+        && document.projectName === query.projectName,
+      );
       const deleteByRevision = (
         !query.projectName || document.projectName === query.projectName
       ) && revisionSets.some(
         ({ field, revision }) => document[field] === revision,
       );
-      if ((deleteById || deleteByRevision) && this.documents.delete(id)) {
+      if (
+        (deleteById || deleteByProject || deleteByRevision)
+        && this.documents.delete(id)
+      ) {
         deletedCount += 1;
       }
     }
@@ -225,6 +242,34 @@ test('triggers Wiki synchronization from every successful canonical save', async
   assert.equal(synchronized.length, 1);
   assert.equal(synchronized[0].revision, 1);
   assert.equal(synchronized[0].objects[0].text, 'saved');
+});
+
+test('removes the canonical snapshot and every history artifact for a board', async () => {
+  const { collection, historyCollection, historyDeltaCollection, service } = fixture();
+  await service.ensure(workspace());
+  historyCollection.documents.set('garden:manual:one', {
+    _id: 'garden:manual:one',
+    projectName: 'garden',
+    reason: 'manual',
+  });
+  historyDeltaCollection.documents.set('garden:0:1', {
+    _id: 'garden:0:1',
+    projectName: 'garden',
+  });
+
+  assert.deepEqual(await service.remove('garden'), {
+    deleted: true,
+    ownerName: 'tester',
+    projectName: 'garden',
+  });
+  assert.equal(collection.document, null);
+  assert.equal(historyCollection.documents.size, 0);
+  assert.equal(historyDeltaCollection.documents.size, 0);
+  assert.deepEqual(await service.remove('garden'), {
+    deleted: false,
+    ownerName: '',
+    projectName: 'garden',
+  });
 });
 
 test('stores and updates a whole workspace as one revisioned document', async () => {

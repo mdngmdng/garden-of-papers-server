@@ -2901,11 +2901,35 @@ function createLLMWikiService({
     return { workspaceId, messages: [], clearedAt: iso(clearedAt) };
   }
 
+  async function removeWorkspace(workspaceIdValue) {
+    const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
+    const snapshots = await collection();
+    const document = await snapshots.findOne({ _id: workspaceId });
+    if (!document) return { workspaceId, deleted: false };
+    const generatedPaths = new Set([
+      document.indexPath,
+      document.latestLog?.filePath,
+      ...(document.papers || []).map((paper) => paper.filePath),
+      ...(document.markdownDocuments || []).map((item) => item.path),
+    ].filter(Boolean));
+    await Promise.all(
+      [...generatedPaths].map((relativePath) => markdownStore.remove(relativePath)),
+    );
+    const result = await snapshots.deleteOne({ _id: workspaceId });
+    syncJobs.delete(workspaceId);
+    chatQueues.delete(workspaceId);
+    for (const key of sourceRecoveryJobs.keys()) {
+      if (key.startsWith(`${workspaceId}:`)) sourceRecoveryJobs.delete(key);
+    }
+    return { workspaceId, deleted: result.deletedCount > 0 };
+  }
+
   return {
     chat,
     clearChat,
     enqueueChat,
     latestLog,
+    removeWorkspace,
     requestSync,
     status,
     sync,

@@ -584,6 +584,28 @@ function createWorkspaceSnapshotService(
     return publicState(document);
   }
 
+  async function remove(projectNameValue) {
+    const projectName = requiredString(projectNameValue, 'projectName');
+    const snapshots = await collection();
+    const document = await snapshots.findOne(
+      { _id: projectName },
+      { projection: { _id: 1, ownerName: 1, projectName: 1 } },
+    );
+    if (!document) {
+      return { deleted: false, projectName, ownerName: '' };
+    }
+    const [snapshotResult] = await Promise.all([
+      snapshots.deleteOne({ _id: projectName }),
+      (await historyCollection()).deleteMany({ projectName }),
+      (await historyDeltaCollection()).deleteMany({ projectName }),
+    ]);
+    return {
+      deleted: snapshotResult.deletedCount > 0,
+      projectName,
+      ownerName: String(document.ownerName || ''),
+    };
+  }
+
   async function listHistory(projectNameValue) {
     const projectName = requiredString(projectNameValue, 'projectName');
     const snapshots = await collection();
@@ -1163,6 +1185,7 @@ function createWorkspaceSnapshotService(
     list,
     listHistory,
     load,
+    remove,
     patch,
     restoreHistory,
     save,

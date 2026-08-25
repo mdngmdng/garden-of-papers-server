@@ -5,6 +5,24 @@ const {
 const {
   workspaceFreshnessService,
 } = require('../services/workspaceFreshness');
+const { getClient } = require('../services/mongo');
+const { llmWikiService } = require('../services/llmWiki');
+
+const SHARED_DATABASE = '_GardenOfPapersShared';
+const SHARED_PDF_COLLECTION = 'PdfLibrary';
+const PROTECTED_DATABASES = new Set([
+  'admin',
+  'config',
+  'local',
+  'UserNameList',
+  'GardenOfPapersSystem',
+  SHARED_DATABASE,
+]);
+
+function optionalIdentifier(value, maximum = 256) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized && normalized.length <= maximum ? normalized : '';
+}
 
 function sendError(res, error) {
   if (error instanceof WorkspaceSnapshotError) {
@@ -36,6 +54,77 @@ exports.ensureWorkspace = async (req, res) => {
   try {
     const state = await workspaceSnapshotService.ensure(req.body.initialState);
     return res.status(201).json(state);
+  } catch (error) {
+    return sendError(res, error);
+  }
+};
+
+exports.deleteWorkspace = async (req, res) => {
+  try {
+    const projectName = optionalIdentifier(req.query.id);
+    const requestedOwner = optionalIdentifier(req.query.owner);
+    if (!projectName) {
+      return res.status(400).json({
+        error: 'id is required',
+        code: 'invalid_request',
+      });
+    }
+    if (PROTECTED_DATABASES.has(projectName)) {
+      return res.status(400).json({
+        error: 'This database cannot be deleted as a workspace',
+        code: 'protected_workspace_name',
+      });
+    }
+    const client = getClient();
+    if (!client) {
+      throw new WorkspaceSnapshotError(
+        'MongoDB is not connected',
+        503,
+        'database_unavailable',
+      );
+    }
+    const atomic = await workspaceSnapshotService.remove(projectName);
+    const owners = [atomic.ownerName || requestedOwner].filter(Boolean);
+    let legacyDeleted = 0;
+    for (const ownerName of owners) {
+      const result = await client
+        .db('UserNameList')
+        .collection(ownerName)
+        .deleteMany({ projectName });
+      legacyDeleted += result.deletedCount;
+    }
+    if (!atomic.deleted && legacyDeleted === 0) {
+      return res.status(404).json({
+        error: 'Workspace not found',
+        code: 'not_found',
+      });
+    }
+    await Promise.all([
+      llmWikiService.removeWorkspace(projectName),
+      client
+        .db('GardenOfPapersSystem')
+        .collection('PdfBridgeRequests')
+        .deleteMany({ projectName }),
+      client
+        .db('GardenOfPapersSystem')
+        .collection('PdfBridgeProjectLeases')
+        .deleteMany({ $or: [{ _id: projectName }, { projectName }] }),
+      client
+        .db(SHARED_DATABASE)
+        .collection(SHARED_PDF_COLLECTION)
+        .updateMany(
+          { 'sourceRefs.projectName': projectName },
+          { $pull: { sourceRefs: { projectName } } },
+        ),
+      // Board aliases and previews live in the board database. Shared PDF
+      // originals intentionally remain available to every other board.
+      client.db(projectName).dropDatabase(),
+    ]);
+    return res.status(200).json({
+      status: 'ok',
+      projectName,
+      deleted: true,
+    });
   } catch (error) {
     return sendError(res, error);
   }
