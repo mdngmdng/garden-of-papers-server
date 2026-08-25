@@ -10,6 +10,17 @@ const INLINE_SNAPSHOT_BYTES = 12 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 40 * 1024 * 1024;
 const MAX_STORED_SNAPSHOT_BYTES = 14 * 1024 * 1024;
 const SNAPSHOT_ENCODING = 'gzip-json-v1';
+const RETIRED_SKETCH_TYPE = 'GX.MAROPtCurve';
+
+function withoutRetiredSketches(state) {
+  if (!state || !Array.isArray(state.objects)) return state;
+  const objects = state.objects.filter(
+    (object) => object?.type !== RETIRED_SKETCH_TYPE,
+  );
+  return objects.length === state.objects.length
+    ? state
+    : { ...state, objects };
+}
 
 class WorkspaceSnapshotError extends Error {
   constructor(message, status, code, latestState) {
@@ -72,6 +83,7 @@ function requiredString(value, name, maxLength = 256) {
 }
 
 function validateState(state, expectedProjectName) {
+  state = withoutRetiredSketches(state);
   if (!state || typeof state !== 'object' || Array.isArray(state)) {
     throw new WorkspaceSnapshotError(
       'state is required',
@@ -122,12 +134,15 @@ function publicState(document) {
               payload.buffer.byteLength,
             )
           : Buffer.from(payload.buffer);
-    return JSON.parse(gunzipSync(bytes).toString('utf8'));
+    return withoutRetiredSketches(
+      JSON.parse(gunzipSync(bytes).toString('utf8')),
+    );
   }
-  return document?.state ?? null;
+  return withoutRetiredSketches(document?.state ?? null);
 }
 
 function stateStorageFields(state, serializedState) {
+  state = withoutRetiredSketches(state);
   const bytes = Buffer.byteLength(serializedState, 'utf8');
   if (bytes <= INLINE_SNAPSHOT_BYTES) {
     return {
@@ -290,6 +305,7 @@ function buildHistoryTransition(fromState, toState) {
 }
 
 function summarizeState(state) {
+  state = withoutRetiredSketches(state);
   const counts = {
     objects: state.objects.length,
     papers: 0,

@@ -9,6 +9,7 @@
     "gateway": "node scripts/local-gateway.js",
     "test": "node --test",
     "backfill:pdf-previews": "node scripts/backfill-pdf-previews.js",
+    "cleanup:workspace-sketches": "node scripts/remove-workspace-sketches.js",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f"

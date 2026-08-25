@@ -22,6 +22,15 @@ exports.loadData = async (req, res) => {
     const client = getClient();
     const db = client.db(req.body._projectName);
     const collection = db.collection('SaveFile');
+    // Point-curve ink is retired. Clean legacy rows at the read boundary so
+    // old VR clients cannot make removed scribbles reappear on another load.
+    await Promise.all([
+      collection.deleteMany({ type: 'GX.MAROPtCurve' }),
+      collection.updateMany(
+        { ptCurveIds: { $exists: true } },
+        { $unset: { ptCurveIds: '' } },
+      ),
+    ]);
     const data = await collection.find().toArray();
     const paperRows = data.filter((row) => row.type === 'GX.MAROScientificPaper');
     const previewRequests = [];
@@ -178,6 +187,10 @@ exports.uploadData = async (req, res) => {
       return res.status(202).json();
     }
 
+    if (data.type === 'GX.MAROPtCurve') {
+      return res.status(204).end();
+    }
+
     // Browser-generated Base64 previews were a temporary compatibility path.
     // Only compact server-owned URL descriptors are allowed into MongoDB now.
     if (data.type === 'GX.MAROScientificPaper') {
@@ -262,6 +275,14 @@ exports.updateData = async (req, res) => {
 
     if (!syncKeys.checkKey(WebSocketID, _projectName)) {
       return res.status(202).json();
+    }
+
+    if (type === 'GX.MAROPtCurve') {
+      await collection.deleteOne(getIdQuery(_id));
+      return res.status(200).json({
+        status: 'removed',
+        message: 'Freehand canvas ink is no longer supported',
+      });
     }
 
     const update = {};

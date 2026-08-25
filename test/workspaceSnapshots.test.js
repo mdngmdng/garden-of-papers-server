@@ -437,6 +437,40 @@ test('does not create history snapshots during ordinary autosaves', async () => 
   assert.equal(historyCollection.documents.size, 0);
 });
 
+test('rejects retired freehand curves from canonical saves and delta updates', async () => {
+  const { collection, service } = fixture();
+  const initial = workspace();
+  initial.objects = [{
+    id: 'legacy-stroke',
+    type: 'GX.MAROPtCurve',
+    points: [{ x: 10, y: 20 }],
+  }];
+
+  const ensured = await service.ensure(initial);
+  assert.deepEqual(ensured.objects, []);
+  assert.deepEqual(collection.document.state.objects, []);
+
+  await service.patch({
+    projectName: 'garden',
+    baseRevision: ensured.revision,
+    mutationId: 'writer:retired-stroke',
+    delta: {
+      schemaVersion: 1,
+      camera: ensured.camera,
+      upsertedObjects: [{
+        id: 'new-stroke',
+        type: 'GX.MAROPtCurve',
+        points: [{ x: 30, y: 40 }],
+      }],
+      removedObjectIds: [],
+    },
+  });
+
+  const loaded = await service.load('garden');
+  assert.deepEqual(loaded.objects, []);
+  assert.deepEqual(collection.document.state.objects, []);
+});
+
 test('keeps distinct manual snapshots created at the same live revision', async () => {
   const { historyCollection, service } = fixture();
   await service.ensure(workspace());
