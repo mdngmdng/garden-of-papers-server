@@ -90,6 +90,27 @@ function stateUpdate(state) {
   };
 }
 
+async function installRetiredSketchGuards(client) {
+  await client.db(workspaceId).command({
+    collMod: 'SaveFile',
+    validator: { type: { $ne: RETIRED_SKETCH_TYPE } },
+    validationLevel: 'strict',
+    validationAction: 'error',
+  });
+  await client.db(SYSTEM_DATABASE).command({
+    collMod: 'WorkspaceSnapshots',
+    validator: {
+      $nor: [{
+        'state.objects': {
+          $elemMatch: { type: RETIRED_SKETCH_TYPE },
+        },
+      }],
+    },
+    validationLevel: 'strict',
+    validationAction: 'error',
+  });
+}
+
 async function run() {
   const client = new MongoClient(config.mongoUrl);
   await client.connect();
@@ -128,6 +149,10 @@ async function run() {
       return;
     }
 
+    // Guard Mongo itself as well as the application. This prevents a stale VR
+    // client or an older web build from re-inserting ink while the new server
+    // and frontend are rolling out.
+    await installRetiredSketchGuards(client);
     if (legacyCount) {
       await legacy.deleteMany({ type: RETIRED_SKETCH_TYPE });
     }
