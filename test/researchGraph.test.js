@@ -9,6 +9,7 @@ const {
 const {
   createResearchGraphJob,
   getResearchGraphJob,
+  listResearchGraphJobs,
 } = require('../src/services/researchGraphJobs');
 
 const bundle = {
@@ -95,4 +96,27 @@ test('research graph runs as a separate asynchronous job', async () => {
   const job = getResearchGraphJob(id);
   assert.equal(job.status, 'completed');
   assert.equal(job.graphBundle.id, 'graph-1');
+});
+
+test('research graph jobs remain discoverable by workspace and search paper', async () => {
+  const id = createResearchGraphJob({
+    researchBundle: bundle,
+    workspaceId: 'workspace-graph-recovery',
+    sourcePaperId: 'search-paper-graph-recovery',
+    clientRequestId: 'graph-request-recovery',
+  }, async (_input, report, options) => {
+    report({ stage: 'verifying_citations', percent: 75, message: 'Checking references…' });
+    options.onActivity({
+      kind: 'reference_list', title: 'Checked a reference list',
+      counters: { referenceListsChecked: 1 },
+    });
+    return { version: 1, id: 'graph-recovered', nodes: [], edges: [] };
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const [job] = listResearchGraphJobs({ workspaceId: 'workspace-graph-recovery' });
+  assert.equal(job.id, id);
+  assert.equal(job.sourcePaperId, 'search-paper-graph-recovery');
+  assert.equal(job.status, 'completed');
+  assert.equal(job.events.some((event) => event.kind === 'reference_list'), true);
 });

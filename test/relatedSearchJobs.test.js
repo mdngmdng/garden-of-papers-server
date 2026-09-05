@@ -4,6 +4,7 @@ const {
   createRelatedSearchJob,
   executeRelatedSearch,
   getRelatedSearchJob,
+  listRelatedSearchJobs,
 } = require('../src/services/relatedSearchJobs');
 
 const manuscript = {
@@ -136,6 +137,36 @@ test('stores completed search jobs and pages results ten at a time', async () =>
   const second = getRelatedSearchJob(jobId, 10, 10);
   assert.equal(second.results.length, 2);
   assert.equal(second.hasMore, false);
+});
+
+test('recovers workspace jobs with source-paper metadata and activity logs', async () => {
+  const jobId = createRelatedSearchJob(
+    {
+      manuscript,
+      keyword: 'map the field',
+      workspaceId: 'workspace-recovery',
+      sourcePaperId: 'search-paper-recovery',
+      clientRequestId: 'request-recovery',
+      contextKey: 'context-recovery',
+    },
+    async (_input, report, options) => {
+      report({ stage: 'searching', percent: 40, message: 'Searching primary sources…' });
+      options.onActivity({
+        phase: 'research', kind: 'search_query', title: 'Ran a query',
+        detail: 'map the field papers', counters: { searchesCompleted: 1 },
+      });
+      return { results: [], total: 0, provider: 'test' };
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const [job] = listRelatedSearchJobs({ workspaceId: 'workspace-recovery' });
+  assert.equal(job.id, jobId);
+  assert.equal(job.sourcePaperId, 'search-paper-recovery');
+  assert.equal(job.contextKey, 'context-recovery');
+  assert.equal(job.status, 'completed');
+  assert.equal(job.counters.searchesCompleted, 1);
+  assert.equal(job.events.some((event) => event.kind === 'search_query'), true);
 });
 
 test('keeps every retrieved candidate instead of truncating results at forty', async () => {

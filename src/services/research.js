@@ -81,6 +81,254 @@ function responseSources(payload) {
   }).slice(0, 200);
 }
 
+function emitActivity(options, activity) {
+  if (typeof options.onActivity !== 'function') return;
+  options.onActivity({
+    phase: 'research',
+    status: 'active',
+    ...activity,
+  });
+}
+
+function responseFailureDetails(payload) {
+  const apiError = payload?.error;
+  const incomplete = payload?.incomplete_details;
+  return {
+    responseId: clean(payload?.id, 300),
+    responseStatus: clean(payload?.status, 100),
+    code: clean(apiError?.code || incomplete?.reason, 300),
+    reason: clean(incomplete?.reason, 500),
+    message: clean(apiError?.message, 2_000),
+  };
+}
+
+function openAIResearchError(payload, fallback) {
+  const details = responseFailureDetails(payload);
+  const explanation = details.message || details.reason || details.code || fallback;
+  const error = new Error(explanation);
+  error.details = details;
+  return error;
+}
+
+function safeHttpUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function describeWebAction(action, options) {
+  if (!action || typeof action !== 'object') return;
+  const queries = Array.isArray(action.queries)
+    ? action.queries.map((query) => clean(query, 1_000)).filter(Boolean)
+    : [];
+  for (const query of queries) {
+    emitActivity(options, {
+      kind: 'search_query',
+      title: textFor(query, '웹 검색어를 실행했습니다', 'Ran a web search query'),
+      detail: query,
+      query,
+      counters: { searchesCompleted: 1 },
+    });
+  }
+  const url = safeHttpUrl(action.url);
+  if (url) {
+    emitActivity(options, {
+      kind: action.type === 'find_in_page' ? 'find_in_page' : 'open_page',
+      title: action.type === 'find_in_page'
+        ? '페이지 안에서 근거를 찾았습니다'
+        : '원문 또는 서지 페이지를 열었습니다',
+      detail: clean(action.pattern, 500) || url,
+      url,
+      counters: { pagesOpened: 1 },
+    });
+  }
+  const sources = Array.isArray(action.sources) ? action.sources : [];
+  if (sources.length) {
+    emitActivity(options, {
+      kind: 'sources',
+      title: `이번 검색에서 출처 ${sources.length}개를 확인했습니다`,
+      detail: sources.slice(0, 6).map((source) => clean(source?.title || source?.url, 300))
+        .filter(Boolean).join(' · '),
+      counters: { sourcesFound: sources.length },
+    });
+    for (const source of sources.slice(0, 20)) {
+      const sourceUrl = safeHttpUrl(source?.url);
+      if (!sourceUrl) continue;
+      emitActivity(options, {
+        kind: 'source',
+        title: clean(source?.title, 500) || new URL(sourceUrl).hostname,
+        detail: new URL(sourceUrl).hostname,
+        url: sourceUrl,
+      });
+    }
+  }
+}
+
+function handleOpenAIStreamEvent(event, state, options) {
+  const type = clean(event?.type, 200);
+  if (event?.response?.id) state.responseId = clean(event.response.id, 300);
+  if (type === 'response.created' || type === 'response.queued') {
+    emitActivity(options, {
+      kind: 'response',
+      title: type === 'response.queued'
+        ? 'GPT 조사 요청이 대기열에 들어갔습니다'
+        : 'GPT 웹 조사가 시작됐습니다',
+      detail: [event.response?.model, event.response?.id].filter(Boolean).join(' · '),
+    });
+    return;
+  }
+  if (type === 'response.in_progress') {
+    emitActivity(options, {
+      kind: 'response',
+      title: 'GPT가 조사 범위와 다음 검색을 정하고 있습니다',
+      detail: clean(event.response?.model, 200),
+    });
+    return;
+  }
+  if (type === 'response.web_search_call.in_progress') {
+    emitActivity(options, {
+      kind: 'web_search',
+      title: '웹 검색 도구를 호출했습니다',
+    });
+    return;
+  }
+  if (type === 'response.web_search_call.searching') {
+    emitActivity(options, {
+      kind: 'web_search',
+      title: '논문과 1차 출처를 검색하고 있습니다',
+    });
+    return;
+  }
+  if (type === 'response.web_search_call.completed') {
+    emitActivity(options, {
+      kind: 'web_search',
+      title: '한 차례의 웹 검색을 마쳤습니다',
+    });
+    return;
+  }
+  if (type === 'response.output_item.done' || type === 'response.output_item.added') {
+    const item = event.item || event.output_item;
+    if (item?.type === 'web_search_call') describeWebAction(item.action, options);
+    return;
+  }
+  if (type === 'response.reasoning_summary_text.delta') {
+    state.reasoningSummary += String(event.delta || '');
+    return;
+  }
+  if (type === 'response.reasoning_summary_text.done') {
+    const summary = clean(event.text || state.reasoningSummary, 2_000);
+    if (summary) {
+      emitActivity(options, {
+        kind: 'reasoning_summary',
+        title: 'GPT가 현재까지의 조사 방향을 정리했습니다',
+        detail: summary,
+      });
+    }
+    state.reasoningSummary = '';
+    return;
+  }
+  if (type === 'response.output_text.delta') {
+    state.outputText += String(event.delta || '');
+    if (state.outputText.length - state.lastReportedCharacters >= 800) {
+      state.lastReportedCharacters = state.outputText.length;
+      emitActivity(options, {
+        kind: 'writing',
+        title: '출처를 연결해 조사 보고서를 작성하고 있습니다',
+        detail: `${state.outputText.length.toLocaleString()}자 작성`,
+        counters: { reportCharacters: state.outputText.length },
+      });
+    }
+    return;
+  }
+  if (type === 'response.completed' || type === 'response.failed' || type === 'response.incomplete') {
+    state.finalResponse = event.response || state.finalResponse;
+    for (const item of event.response?.output || []) {
+      if (item?.type === 'web_search_call') describeWebAction(item.action, options);
+    }
+    const usage = event.response?.usage;
+    emitActivity(options, {
+      kind: type === 'response.completed' ? 'response_complete' : 'error',
+      status: type === 'response.completed' ? 'completed' : 'error',
+      title: type === 'response.completed'
+        ? 'GPT 웹 조사가 완료됐습니다'
+        : 'GPT 웹 조사가 끝까지 완료되지 못했습니다',
+      detail: usage
+        ? `입력 ${usage.input_tokens || 0} · 출력 ${usage.output_tokens || 0} 토큰`
+        : clean(event.response?.error?.message || event.response?.incomplete_details?.reason, 1_000),
+      counters: usage ? {
+        inputTokens: Number(usage.input_tokens) || 0,
+        outputTokens: Number(usage.output_tokens) || 0,
+      } : undefined,
+    });
+  }
+}
+
+function parseSseBlock(block) {
+  let eventName = '';
+  const data = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith('event:')) eventName = line.slice(6).trim();
+    if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+  }
+  if (!data.length || data.join('\n').trim() === '[DONE]') return null;
+  const parsed = JSON.parse(data.join('\n'));
+  if (!parsed.type && eventName) parsed.type = eventName;
+  return parsed;
+}
+
+async function consumeOpenAIResponse(response, options) {
+  if (!response.body?.getReader) {
+    const payload = await response.json();
+    emitActivity(options, {
+      kind: 'response_complete',
+      status: payload.status === 'completed' ? 'completed' : 'error',
+      title: payload.status === 'completed'
+        ? 'GPT 웹 조사가 완료됐습니다'
+        : 'GPT 웹 조사가 끝까지 완료되지 못했습니다',
+    });
+    return payload;
+  }
+  const state = {
+    finalResponse: null,
+    outputText: '',
+    reasoningSummary: '',
+    lastReportedCharacters: 0,
+    responseId: '',
+  };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = done ? '' : blocks.pop() || '';
+    for (const block of blocks) {
+      const event = parseSseBlock(block);
+      if (event) handleOpenAIStreamEvent(event, state, options);
+    }
+    if (done) {
+      if (buffer.trim()) {
+        const event = parseSseBlock(buffer);
+        if (event) handleOpenAIStreamEvent(event, state, options);
+      }
+      break;
+    }
+  }
+  if (state.finalResponse) return state.finalResponse;
+  if (state.outputText) {
+    return {
+      id: state.responseId,
+      status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: state.outputText }] }],
+    };
+  }
+  throw new Error('OpenAI ended the event stream without a final response.');
+}
+
 async function runWebResearch(prompt, options = {}) {
   if (!config.openai.apiKey) throw new Error('OPENAI_API_KEY is not configured.');
   const signal = AbortSignal.any([
@@ -96,7 +344,11 @@ async function runWebResearch(prompt, options = {}) {
     body: JSON.stringify({
       model: config.openai.researchModel,
       store: false,
-      reasoning: { effort: config.openai.researchReasoningEffort },
+      stream: true,
+      reasoning: {
+        effort: config.openai.researchReasoningEffort,
+        summary: 'auto',
+      },
       instructions: [
         'Act as a rigorous academic research assistant.',
         'Research the user question broadly on the web, then follow important second-order leads until additional searches add little value.',
@@ -115,18 +367,28 @@ async function runWebResearch(prompt, options = {}) {
     }),
     signal,
   });
-  const payload = await response.json();
   if (!response.ok) {
-    const error = new Error(`OpenAI web research failed (${response.status}).`);
+    let payload = null;
+    try { payload = await response.json(); } catch { /* Preserve the HTTP status below. */ }
+    const error = openAIResearchError(payload, `OpenAI web research failed (${response.status}).`);
     error.status = response.status;
     throw error;
   }
+  const payload = await consumeOpenAIResponse(response, options);
   if (payload.status === 'failed' || payload.status === 'incomplete') {
-    throw new Error('OpenAI did not complete the web research.');
+    throw openAIResearchError(payload, 'OpenAI did not complete the web research.');
   }
   const report = responseText(payload);
   if (!report) throw new Error('OpenAI returned an empty research report.');
-  return { report, sources: responseSources(payload) };
+  const sources = responseSources(payload);
+  emitActivity(options, {
+    kind: 'research_report',
+    status: 'completed',
+    title: `조사 보고서와 출처 ${sources.length}개를 확보했습니다`,
+    detail: `${report.length.toLocaleString()}자 보고서`,
+    counters: { sourcesFound: sources.length, reportCharacters: report.length },
+  });
+  return { report, sources };
 }
 
 const researchSchema = {
@@ -217,7 +479,7 @@ async function verifyPapers(candidates, onProgress, options) {
         verified[index] = null;
       }
       finished++;
-      onProgress(finished, candidates.length);
+      onProgress(finished, candidates.length, candidate, verified[index]);
     }
   }));
   return verified;
@@ -236,24 +498,57 @@ async function executeResearchSearch(input, onProgress = () => {}, options = {})
     AbortSignal.timeout(options.timeoutMs || 300_000),
   ]);
   const settings = { ...options, signal };
+  emitActivity(settings, {
+    kind: 'stage',
+    title: textFor(prompt, '연구 질문을 분석했습니다', 'Analyzed the research question'),
+    detail: prompt,
+  });
   onProgress({ stage: 'web_research', percent: 8, message: textFor(prompt,
     '웹에서 관련 논문과 연구 흐름을 조사하고 있습니다…',
     'Researching papers and the surrounding literature on the web…') });
   const webResearch = await (options.webResearcher || runWebResearch)(prompt, settings);
+  emitActivity(settings, {
+    kind: 'stage',
+    title: textFor(prompt, '웹 조사 내용을 구조화하고 있습니다', 'Structuring the web research'),
+    detail: textFor(prompt,
+      `보고서 ${webResearch.report.length.toLocaleString()}자 · 출처 ${webResearch.sources.length}개`,
+      `${webResearch.report.length.toLocaleString()} report characters · ${webResearch.sources.length} sources`),
+    counters: { sourcesFound: webResearch.sources.length, reportCharacters: webResearch.report.length },
+  });
   onProgress({ stage: 'compiling_research', percent: 55, message: textFor(prompt,
     '조사 결과를 출처가 보존된 연구 번들로 정리하고 있습니다…',
     'Compiling the sourced findings into a research bundle…') });
   const compiled = await (options.researchCompiler || compileResearch)(prompt, webResearch, settings);
   const rawPapers = (Array.isArray(compiled?.papers) ? compiled.papers : [])
     .filter((paper) => clean(paper?.title, 1_000)).slice(0, MAX_RESEARCH_PAPERS);
+  emitActivity(settings, {
+    kind: 'papers_extracted',
+    title: textFor(prompt,
+      `조사 보고서에서 논문 후보 ${rawPapers.length}편을 추출했습니다`,
+      `Extracted ${rawPapers.length} paper candidates from the report`),
+    counters: { papersFound: rawPapers.length, papersTotal: rawPapers.length },
+  });
   onProgress({ stage: 'verifying_metadata', percent: 68, message: textFor(prompt,
     '논문 제목과 메타데이터를 Google Scholar에서 대조하고 있습니다…',
     'Verifying paper titles and metadata with Google Scholar…') });
-  const verifiedRecords = await verifyPapers(rawPapers, (finished, total) => {
+  const verifiedRecords = await verifyPapers(rawPapers, (finished, total, candidate, matched) => {
     onProgress({
       stage: 'verifying_metadata',
       percent: 68 + Math.round((finished / Math.max(1, total)) * 24),
       message: textFor(prompt, `논문 ${finished}/${total}편 검증 완료…`, `Verified ${finished}/${total} papers…`),
+    });
+    emitActivity(settings, {
+      kind: 'metadata_verification',
+      title: matched
+        ? textFor(prompt, 'Google Scholar에서 논문을 확인했습니다', 'Verified a paper in Google Scholar')
+        : textFor(prompt, '정확히 일치하는 Scholar 서지를 찾지 못했습니다', 'No exact Scholar record was found'),
+      detail: clean(candidate?.title, 1_000),
+      status: matched ? 'completed' : 'error',
+      counters: {
+        papersChecked: finished,
+        papersTotal: total,
+        papersVerified: matched ? 1 : 0,
+      },
     });
   }, settings);
   const allowedUrls = new Set(webResearch.sources.map((source) => source.url));

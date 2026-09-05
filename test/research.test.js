@@ -60,6 +60,69 @@ test('web research uses the Responses web_search tool and preserves consulted so
   ]);
 });
 
+test('streams understandable web-search activity without exposing raw reasoning', async (t) => {
+  const previous = config.openai.apiKey;
+  config.openai.apiKey = 'test-key';
+  t.after(() => { config.openai.apiKey = previous; });
+  const events = [
+    { type: 'response.created', response: { id: 'resp-test', model: 'gpt-test' } },
+    { type: 'response.web_search_call.searching' },
+    {
+      type: 'response.output_item.done',
+      item: {
+        type: 'web_search_call',
+        action: {
+          type: 'search',
+          queries: ['spatial memory augmentation papers'],
+          sources: [{ url: 'https://doi.org/10.1000/stream', title: 'DOI record' }],
+        },
+      },
+    },
+    { type: 'response.reasoning_summary_text.delta', delta: '주요 연구 흐름을 비교했습니다.' },
+    { type: 'response.reasoning_summary_text.done' },
+    { type: 'response.output_text.delta', delta: '스트리밍 조사 보고서' },
+    {
+      type: 'response.completed',
+      response: {
+        id: 'resp-test',
+        status: 'completed',
+        usage: { input_tokens: 100, output_tokens: 50 },
+        output: [
+          { type: 'web_search_call', action: { sources: [
+            { url: 'https://doi.org/10.1000/stream', title: 'DOI record' },
+          ] } },
+          { type: 'message', content: [{ type: 'output_text', text: '스트리밍 조사 보고서' }] },
+        ],
+      },
+    },
+  ];
+  const stream = events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+  const activity = [];
+  const result = await runWebResearch(prompt, {
+    onActivity: (event) => activity.push(event),
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      assert.equal(body.stream, true);
+      assert.equal(body.reasoning.summary, 'auto');
+      return {
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(stream));
+            controller.close();
+          },
+        }),
+      };
+    },
+  });
+  assert.equal(result.report, '스트리밍 조사 보고서');
+  assert.equal(activity.some((event) => event.kind === 'search_query'
+    && event.query === 'spatial memory augmentation papers'), true);
+  assert.equal(activity.some((event) => event.kind === 'reasoning_summary'
+    && /연구 흐름/.test(event.detail)), true);
+  assert.equal(activity.some((event) => event.kind === 'response_complete'), true);
+});
+
 test('source extraction rejects duplicate and unsafe URLs', () => {
   const sources = responseSources({ output: [{
     action: { sources: [

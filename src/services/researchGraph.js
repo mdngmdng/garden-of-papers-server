@@ -110,7 +110,7 @@ async function mapConcurrent(items, concurrency, mapper, onItem) {
       const index = next++;
       output[index] = await mapper(items[index], index);
       finished++;
-      onItem?.(finished, items.length);
+      onItem?.(finished, items.length, items[index], output[index]);
     }
   }));
   return output;
@@ -135,6 +135,14 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
   const signal = options.signal;
   const service = options.semanticScholarService || semanticScholar;
   const warnings = [];
+  const onActivity = typeof options.onActivity === 'function'
+    ? options.onActivity
+    : () => {};
+  onActivity({
+    phase: 'graph', kind: 'stage', status: 'active',
+    title: `고정된 조사 결과 ${papers.length}편으로 인용 그래프 검증을 시작했습니다`,
+    counters: { graphPapersTotal: papers.length },
+  });
   onProgress({
     stage: 'canonicalizing', percent: 8,
     message: 'Resolving canonical scholarly records for the frozen research bundle…',
@@ -150,11 +158,26 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
         return null;
       }
     },
-    (finished, total) => onProgress({
-      stage: 'canonicalizing',
-      percent: 8 + Math.round((finished / total) * 32),
-      message: `Resolved ${finished}/${total} scholarly records…`,
-    }),
+    (finished, total, paper, resolved) => {
+      onProgress({
+        stage: 'canonicalizing',
+        percent: 8 + Math.round((finished / total) * 32),
+        message: `Resolved ${finished}/${total} scholarly records…`,
+      });
+      onActivity({
+        phase: 'graph', kind: 'canonical_record',
+        status: resolved ? 'completed' : 'error',
+        title: resolved
+          ? 'Semantic Scholar에서 정확한 논문 식별자를 확인했습니다'
+          : '정확히 일치하는 논문 식별자를 찾지 못했습니다',
+        detail: clean(paper?.title, 1_000),
+        counters: {
+          graphPapersChecked: finished,
+          graphPapersTotal: total,
+          graphPapersResolved: resolved ? 1 : 0,
+        },
+      });
+    },
   );
   const nodes = papers.map((paper, index) => ({
     ...paper,
@@ -188,6 +211,19 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
         warnings.push(`Could not inspect references for "${node.title}": ${error.message}`);
       }
     }
+    onActivity({
+      phase: 'graph', kind: 'reference_list',
+      status: node.semanticScholarId ? 'completed' : 'error',
+      title: node.semanticScholarId
+        ? `참고문헌 ${referencesByIndex[index].length}개를 대조했습니다`
+        : '논문 식별자가 없어 참고문헌 대조를 건너뛰었습니다',
+      detail: node.title,
+      counters: {
+        referenceListsChecked: index + 1,
+        graphPapersTotal: nodes.length,
+        referencesInspected: referencesByIndex[index].length,
+      },
+    });
     onProgress({
       stage: 'verifying_citations',
       percent: 44 + Math.round(((index + 1) / nodes.length) * 48),
@@ -220,6 +256,11 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
   if (!edges.length) {
     warnings.push('No direct citation relationships among the researched papers were verified. The papers remain as disconnected graph nodes.');
   }
+  onActivity({
+    phase: 'graph', kind: 'citation_edges', status: 'completed',
+    title: `실제 참고문헌에서 인용관계 ${edges.length}개를 확인했습니다`,
+    counters: { citationEdgesVerified: edges.length },
+  });
   return {
     version: 1,
     id: crypto.randomUUID(),

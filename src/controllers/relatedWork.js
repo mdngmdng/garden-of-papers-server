@@ -3,6 +3,7 @@ const {
   cancelRelatedSearchJob,
   createRelatedSearchJob,
   getRelatedSearchJob,
+  listRelatedSearchJobs,
 } = require('../services/relatedSearchJobs');
 const { generateCollectedPaperContext } = require('../services/gemini');
 
@@ -32,6 +33,10 @@ exports.createJob = (req, res) => {
       excludedPapers: Array.isArray(req.body?.excludedPapers)
         ? req.body.excludedPapers
         : [],
+      workspaceId: String(req.body?.workspaceId || '').trim(),
+      sourcePaperId: String(req.body?.sourcePaperId || '').trim(),
+      clientRequestId: String(req.body?.clientRequestId || '').trim(),
+      contextKey: String(req.body?.contextKey || '').trim(),
     });
     noStore(res);
     return res.status(202).json({
@@ -46,6 +51,18 @@ exports.createJob = (req, res) => {
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
+};
+
+exports.listJobs = (req, res) => {
+  noStore(res);
+  const workspaceId = String(req.query.workspaceId || '').trim();
+  if (!workspaceId) {
+    return res.status(400).json({ error: 'workspaceId is required.' });
+  }
+  return res.json({ jobs: listRelatedSearchJobs({
+    workspaceId,
+    sourcePaperId: String(req.query.sourcePaperId || '').trim(),
+  }) });
 };
 
 exports.getJob = (req, res) => {

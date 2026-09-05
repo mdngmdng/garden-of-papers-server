@@ -17,8 +17,9 @@ const {
   prepareRelatedWorkBrief,
 } = require('./gemini');
 
-const JOB_TTL_MS = 30 * 60 * 1_000;
-const MAX_JOBS = 100;
+const JOB_TTL_MS = 24 * 60 * 60 * 1_000;
+const MAX_JOBS = 200;
+const MAX_ACTIVITY_EVENTS = 240;
 const jobs = new Map();
 
 function progress(stage, percent, message) {
@@ -196,13 +197,130 @@ function updateJob(jobId, changes) {
 
 function pruneJobs(now = Date.now()) {
   for (const [jobId, job] of jobs) {
-    if (now - job.updatedAt > JOB_TTL_MS) jobs.delete(jobId);
+    if (
+      !['queued', 'running'].includes(job.status)
+      && now - job.updatedAt > JOB_TTL_MS
+    ) jobs.delete(jobId);
   }
   while (jobs.size >= MAX_JOBS) {
-    const oldestJobId = jobs.keys().next().value;
+    const oldestJobId = [...jobs.values()]
+      .filter((job) => !['queued', 'running'].includes(job.status))
+      .sort((left, right) => left.updatedAt - right.updatedAt)[0]?.id;
     if (!oldestJobId) break;
     jobs.delete(oldestJobId);
   }
+}
+
+function normalizeJobMetadata(input) {
+  return {
+    workspaceId: cleanText(input?.workspaceId, 240),
+    sourcePaperId: cleanText(input?.sourcePaperId, 240),
+    clientRequestId: cleanText(input?.clientRequestId, 240),
+    contextKey: cleanText(input?.contextKey, 2_000),
+    query: cleanText(input?.keyword, 4_000),
+    searchIntent: cleanText(input?.searchIntent, 80),
+  };
+}
+
+function mergeCounters(current, incoming, duplicate = false) {
+  const next = { ...(current || {}) };
+  const additive = new Set(['searchesCompleted', 'pagesOpened', 'papersVerified']);
+  for (const [key, rawValue] of Object.entries(incoming || {})) {
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) continue;
+    next[key] = additive.has(key) && !duplicate
+      ? (Number(next[key]) || 0) + value
+      : Math.max(Number(next[key]) || 0, value);
+  }
+  return next;
+}
+
+function appendJobActivity(jobId, activity) {
+  const job = jobs.get(jobId);
+  if (!job || job.status === 'cancelled' || !activity) return null;
+  const now = Date.now();
+  const normalized = {
+    id: crypto.randomUUID(),
+    at: new Date(now).toISOString(),
+    phase: cleanText(activity.phase, 80) || 'search',
+    kind: cleanText(activity.kind, 100) || 'status',
+    status: ['active', 'completed', 'error'].includes(activity.status)
+      ? activity.status
+      : 'active',
+    title: cleanText(activity.title, 500),
+    detail: cleanText(activity.detail, 2_000),
+    query: cleanText(activity.query, 1_000),
+    url: cleanText(activity.url, 2_000),
+  };
+  if (!normalized.title) return null;
+  const duplicate = job.events.slice(-12).find((event) =>
+    event.kind === normalized.kind
+    && event.title === normalized.title
+    && event.detail === normalized.detail
+    && now - Date.parse(event.at) < 10_000,
+  );
+  job.counters = mergeCounters(job.counters, activity.counters, Boolean(duplicate));
+  job.lastActivityAt = now;
+  job.updatedAt = now;
+  if (duplicate) return duplicate;
+  job.events.push(normalized);
+  if (job.events.length > MAX_ACTIVITY_EVENTS) {
+    job.events.splice(0, job.events.length - MAX_ACTIVITY_EVENTS);
+  }
+  return normalized;
+}
+
+function updateJobProgress(jobId, nextProgress) {
+  const job = updateJob(jobId, { progress: nextProgress });
+  if (!job) return null;
+  const previous = job.events.at(-1);
+  if (
+    nextProgress?.message
+    && (previous?.kind !== 'progress' || previous.title !== nextProgress.message)
+  ) {
+    appendJobActivity(jobId, {
+      phase: job.metadata.searchIntent === 'research' ? 'research' : 'search',
+      kind: 'progress',
+      title: nextProgress.message,
+      counters: { progressPercent: Number(nextProgress.percent) || 0 },
+    });
+  }
+  return job;
+}
+
+function jobSnapshot(job, { includeResult = false, offset = 0, limit = 10 } = {}) {
+  const snapshot = {
+    id: job.id,
+    status: job.status,
+    progress: job.progress,
+    error: job.error,
+    failureDetails: job.failureDetails,
+    workspaceId: job.metadata.workspaceId,
+    sourcePaperId: job.metadata.sourcePaperId,
+    clientRequestId: job.metadata.clientRequestId,
+    contextKey: job.metadata.contextKey,
+    query: job.metadata.query,
+    searchIntent: job.metadata.searchIntent,
+    events: job.events,
+    counters: job.counters,
+    createdAt: new Date(job.createdAt).toISOString(),
+    updatedAt: new Date(job.updatedAt).toISOString(),
+    lastActivityAt: new Date(job.lastActivityAt || job.updatedAt).toISOString(),
+  };
+  if (!includeResult || job.status !== 'completed' || !job.result) return snapshot;
+  const safeOffset = Math.max(0, Number(offset) || 0);
+  const safeLimit = Math.max(1, Math.min(10, Number(limit) || 10));
+  const results = job.result.results.slice(safeOffset, safeOffset + safeLimit);
+  return {
+    ...snapshot,
+    ...job.result,
+    offset: safeOffset,
+    limit: safeLimit,
+    results,
+    total: job.result.results.length,
+    nextOffset: safeOffset + results.length,
+    hasMore: safeOffset + results.length < job.result.results.length,
+  };
 }
 
 function isNoResultsError(error) {
@@ -437,6 +555,14 @@ async function executeRelatedSearch(input, onProgress = () => {}, options = {}) 
 function createRelatedSearchJob(input, runner = executeRelatedSearch) {
   validateRelatedSearchInput(input);
   pruneJobs();
+  const metadata = normalizeJobMetadata(input);
+  if (metadata.clientRequestId) {
+    const existing = [...jobs.values()].find((job) =>
+      job.metadata.clientRequestId === metadata.clientRequestId
+      && job.metadata.workspaceId === metadata.workspaceId,
+    );
+    if (existing) return existing.id;
+  }
   const jobId = crypto.randomUUID();
   const now = Date.now();
   const controller = new AbortController();
@@ -446,24 +572,56 @@ function createRelatedSearchJob(input, runner = executeRelatedSearch) {
     progress: progress('queued', 0, 'Related-work search is queued…'),
     result: null,
     error: '',
+    failureDetails: null,
     createdAt: now,
     updatedAt: now,
+    lastActivityAt: now,
+    metadata,
+    events: [],
+    counters: {},
     controller,
+  });
+  appendJobActivity(jobId, {
+    phase: metadata.searchIntent === 'research' ? 'research' : 'search',
+    kind: 'queued',
+    title: metadata.searchIntent === 'research'
+      ? 'GPT 논문 조사가 대기열에 들어갔습니다'
+      : '논문 검색이 대기열에 들어갔습니다',
+    detail: metadata.query,
   });
 
   setImmediate(async () => {
     const job = updateJob(jobId, { status: 'running' });
     if (!job) return;
+    appendJobActivity(jobId, {
+      phase: metadata.searchIntent === 'research' ? 'research' : 'search',
+      kind: 'started',
+      title: metadata.searchIntent === 'research'
+        ? '백엔드가 GPT 논문 조사를 시작했습니다'
+        : '백엔드가 논문 검색을 시작했습니다',
+    });
     try {
       const result = await runner(
         input,
-        (nextProgress) => updateJob(jobId, { progress: nextProgress }),
-        { signal: controller.signal },
+        (nextProgress) => updateJobProgress(jobId, nextProgress),
+        {
+          signal: controller.signal,
+          onActivity: (activity) => appendJobActivity(jobId, activity),
+        },
       );
       updateJob(jobId, {
         status: 'completed',
         progress: progress('completed', 100, 'Related papers are ready.'),
         result,
+      });
+      appendJobActivity(jobId, {
+        phase: metadata.searchIntent === 'research' ? 'research' : 'search',
+        kind: 'completed',
+        status: 'completed',
+        title: metadata.searchIntent === 'research'
+          ? `검증된 논문 ${result.results?.length || 0}편으로 조사를 완료했습니다`
+          : `관련 논문 ${result.results?.length || 0}편을 찾았습니다`,
+        counters: { papersReturned: result.results?.length || 0, progressPercent: 100 },
       });
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -472,6 +630,14 @@ function createRelatedSearchJob(input, runner = executeRelatedSearch) {
         status: 'failed',
         progress: progress('failed', 100, 'Related-work search failed.'),
         error: error.message || 'Related-work search failed.',
+        failureDetails: error.details || null,
+      });
+      appendJobActivity(jobId, {
+        phase: metadata.searchIntent === 'research' ? 'research' : 'search',
+        kind: 'failed',
+        status: 'error',
+        title: '논문 조사가 완료되지 못했습니다',
+        detail: error.message || 'Related-work search failed.',
       });
     }
   });
@@ -483,26 +649,21 @@ function getRelatedSearchJob(jobId, offset = 0, limit = 10) {
   pruneJobs();
   const job = jobs.get(String(jobId || ''));
   if (!job) return null;
-  const safeOffset = Math.max(0, Number(offset) || 0);
-  const safeLimit = Math.max(1, Math.min(10, Number(limit) || 10));
-  const snapshot = {
-    id: job.id,
-    status: job.status,
-    progress: job.progress,
-    error: job.error,
-  };
-  if (job.status !== 'completed' || !job.result) return snapshot;
-  const results = job.result.results.slice(safeOffset, safeOffset + safeLimit);
-  return {
-    ...snapshot,
-    ...job.result,
-    offset: safeOffset,
-    limit: safeLimit,
-    results,
-    total: job.result.results.length,
-    nextOffset: safeOffset + results.length,
-    hasMore: safeOffset + results.length < job.result.results.length,
-  };
+  return jobSnapshot(job, { includeResult: true, offset, limit });
+}
+
+function listRelatedSearchJobs({ workspaceId, sourcePaperId } = {}) {
+  pruneJobs();
+  const workspace = cleanText(workspaceId, 240);
+  const source = cleanText(sourcePaperId, 240);
+  if (!workspace) return [];
+  return [...jobs.values()]
+    .filter((job) =>
+      job.metadata.workspaceId === workspace
+      && (!source || job.metadata.sourcePaperId === source),
+    )
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .map((job) => jobSnapshot(job));
 }
 
 function cancelRelatedSearchJob(jobId) {
@@ -513,6 +674,15 @@ function cancelRelatedSearchJob(jobId) {
   job.progress = progress('cancelled', 100, 'Related-work search was cancelled.');
   job.updatedAt = Date.now();
   job.controller.abort(new Error('Related-work search was cancelled'));
+  job.events.push({
+    id: crypto.randomUUID(),
+    at: new Date().toISOString(),
+    phase: job.metadata.searchIntent === 'research' ? 'research' : 'search',
+    kind: 'cancelled',
+    status: 'error',
+    title: '사용자가 논문 조사를 취소했습니다',
+    detail: '', query: '', url: '',
+  });
   return true;
 }
 
@@ -522,5 +692,6 @@ module.exports = {
   executeRelatedSearch,
   createRelatedSearchJob,
   getRelatedSearchJob,
+  listRelatedSearchJobs,
   cancelRelatedSearchJob,
 };

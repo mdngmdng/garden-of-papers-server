@@ -25,9 +25,11 @@ router.post(
 // Google Scholar search
 router.get('/search-scholar', scholarController.searchScholar);
 router.post('/related-search/jobs', relatedWorkController.createJob);
+router.get('/related-search/jobs', relatedWorkController.listJobs);
 router.get('/related-search/jobs/:jobId', relatedWorkController.getJob);
 router.delete('/related-search/jobs/:jobId', relatedWorkController.cancelJob);
 router.post('/research-graph/jobs', researchGraphController.createJob);
+router.get('/research-graph/jobs', researchGraphController.listJobs);
 router.get('/research-graph/jobs/:jobId', researchGraphController.getJob);
 router.delete('/research-graph/jobs/:jobId', researchGraphController.cancelJob);
 
