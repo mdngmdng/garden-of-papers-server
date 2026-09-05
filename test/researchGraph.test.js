@@ -11,6 +11,7 @@ const {
   getResearchGraphJob,
   listResearchGraphJobs,
 } = require('../src/services/researchGraphJobs');
+const researchGraphController = require('../src/controllers/researchGraph');
 
 const bundle = {
   version: 1,
@@ -33,6 +34,26 @@ const bundle = {
     },
   ],
 };
+
+test('rejects outdated graph clients before a backend job is created', () => {
+  let statusCode = 0;
+  let payload = null;
+  const response = {
+    set() {},
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    json(value) {
+      payload = value;
+      return value;
+    },
+  };
+  researchGraphController.createJob({ body: {} }, response);
+  assert.equal(statusCode, 426);
+  assert.equal(payload.code, 'client_upgrade_required');
+  assert.equal(payload.requiredGraphProtocolVersion, 2);
+});
 
 test('creates only citation edges found in the citing paper reference list', async () => {
   const graph = await executeResearchGraph({ researchBundle: bundle }, () => {}, {

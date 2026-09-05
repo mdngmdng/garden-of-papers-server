@@ -118,7 +118,9 @@ function createResearchGraphJob(input, runner = executeResearchGraph) {
   const clientRequestId = clean(input?.clientRequestId, 240);
   if (clientRequestId) {
     const existing = [...jobs.values()].find((job) =>
-      job.clientRequestId === clientRequestId && job.workspaceId === workspaceId,
+      job.clientRequestId === clientRequestId
+      && job.workspaceId === workspaceId
+      && !['failed', 'cancelled'].includes(job.status),
     );
     if (existing) return existing.id;
   }

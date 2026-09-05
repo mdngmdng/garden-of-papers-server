@@ -5,11 +5,21 @@ const {
   listResearchGraphJobs,
 } = require('../services/researchGraphJobs');
 
+const RESEARCH_GRAPH_PROTOCOL_VERSION = 2;
+
 function noStore(res) {
   res.set('Cache-Control', 'private, no-store, max-age=0');
 }
 
 exports.createJob = (req, res) => {
+  if (Number(req.body?.graphProtocolVersion) !== RESEARCH_GRAPH_PROTOCOL_VERSION) {
+    noStore(res);
+    return res.status(426).json({
+      code: 'client_upgrade_required',
+      error: '앱이 구버전입니다. 새로고침한 뒤 인용 그래프를 다시 요청해 주세요.',
+      requiredGraphProtocolVersion: RESEARCH_GRAPH_PROTOCOL_VERSION,
+    });
+  }
   try {
     const jobId = createResearchGraphJob({
       researchBundle: req.body?.researchBundle,

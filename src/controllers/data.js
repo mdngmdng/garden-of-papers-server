@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const mongoose = require('mongoose');
 const { getClient } = require('../services/mongo');
 const syncKeys = require('../services/syncKeys');
@@ -14,6 +15,14 @@ function getIdQuery(id) {
     };
   }
   return { _id: value };
+}
+
+function stableResearchGraphObjectId(projectName, type, clientObjectId) {
+  const digest = crypto.createHash('sha256')
+    .update(`${projectName}\u001e${type}\u001e${clientObjectId}`)
+    .digest('hex')
+    .slice(0, 24);
+  return new mongoose.Types.ObjectId(digest);
 }
 
 // POST /load-data
@@ -197,7 +206,32 @@ exports.uploadData = async (req, res) => {
       delete data.pdfPagePreview;
     }
     data._gopUpdatedAt = new Date();
-    const newData = await collection.insertOne(data);
+    const clientObjectId = String(data.clientObjectId || '').trim();
+    const isResearchGraphObject = clientObjectId.startsWith('research-graph:v2:');
+    let newData;
+    if (isResearchGraphObject) {
+      // All tabs derive the same Mongo id for the same graph job/object. The
+      // upsert makes a retry safe even when the first response was lost.
+      const stableId = stableResearchGraphObjectId(
+        data._projectName,
+        data.type,
+        clientObjectId,
+      );
+      const storedData = { ...data };
+      delete storedData._id;
+      const upsert = await collection.updateOne(
+        { _id: stableId },
+        { $set: storedData },
+        { upsert: true },
+      );
+      newData = {
+        acknowledged: upsert.acknowledged,
+        insertedId: stableId,
+        idempotent: upsert.matchedCount > 0,
+      };
+    } else {
+      newData = await collection.insertOne(data);
+    }
     if (!newData) {
       return res.status(404).json({ status: 'error', message: 'Data not found' });
     }
