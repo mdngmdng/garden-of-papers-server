@@ -32,7 +32,9 @@ test('web research uses the Responses web_search tool and preserves consulted so
       const body = JSON.parse(init.body);
       assert.equal(body.model, config.openai.researchModel);
       assert.equal(body.reasoning.effort, config.openai.researchReasoningEffort);
-      assert.deepEqual(body.tools, [{ type: 'web_search' }]);
+      assert.deepEqual(body.tools, [{ type: 'web_search', search_context_size: 'low' }]);
+      assert.equal(body.max_tool_calls, 12);
+      assert.equal(body.max_output_tokens, 24_000);
       assert.deepEqual(body.include, ['web_search_call.action.sources']);
       assert.equal(body.input[0].content, prompt);
       return {
@@ -123,6 +125,37 @@ test('streams understandable web-search activity without exposing raw reasoning'
   assert.equal(activity.some((event) => event.kind === 'response_complete'), true);
 });
 
+test('recovers a written report when web research reaches its output limit', async (t) => {
+  const previous = config.openai.apiKey;
+  config.openai.apiKey = 'test-key';
+  t.after(() => { config.openai.apiKey = previous; });
+  const activity = [];
+  const usage = [];
+  const result = await runWebResearch(prompt, {
+    onActivity: (event) => activity.push(event),
+    onUsage: (record) => usage.push(record),
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        model: 'gpt-5.6-sol',
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        usage: { input_tokens: 115_683, output_tokens: 24_000 },
+        output: [
+          { type: 'web_search_call', action: { sources: [
+            { url: 'https://doi.org/10.1000/recovered', title: 'Recovered source' },
+          ] } },
+          { type: 'message', content: [{ type: 'output_text', text: '복구된 조사 보고서' }] },
+        ],
+      }),
+    }),
+  });
+  assert.equal(result.report, '복구된 조사 보고서');
+  assert.equal(result.partial, true);
+  assert.equal(usage[0].webSearchCalls, 1);
+  assert.equal(activity.some((event) => event.kind === 'partial_recovery'), true);
+});
+
 test('source extraction rejects duplicate and unsafe URLs', () => {
   const sources = responseSources({ output: [{
     action: { sources: [
@@ -186,6 +219,43 @@ test('research and graph inputs are separated by an immutable, verified bundle',
   assert.deepEqual([...new Set(stages)], [
     'web_research', 'compiling_research', 'verifying_metadata',
   ]);
+});
+
+test('aggregates web research and compilation usage against one request budget', async () => {
+  const activity = [];
+  await executeResearchSearch({ keyword: prompt }, () => {}, {
+    onActivity: (event) => activity.push(event),
+    webResearcher: async (_query, options) => {
+      options.onUsage({
+        stage: 'web_research',
+        model: 'gpt-5.6-sol',
+        usage: { input_tokens: 115_683, output_tokens: 10_000 },
+        webSearchCalls: 8,
+      });
+      return { report: '조사 보고서', sources: [] };
+    },
+    researchCompiler: async (_query, _research, options) => {
+      options.onUsage({
+        stage: 'compiling_research',
+        model: 'gpt-5.6-luna',
+        usage: { input_tokens: 5_000, output_tokens: 1_000 },
+        webSearchCalls: 0,
+      });
+      return { rewrittenResearchPrompt: 'compiled query', papers: [], claims: [] };
+    },
+    scholarSearch: async () => ({ results: [] }),
+  });
+
+  const completed = activity.find((event) => event.kind === 'budget_complete');
+  assert.ok(completed);
+  assert.equal(completed.status, 'completed');
+  assert.deepEqual(completed.counters, {
+    inputTokens: 120_683,
+    outputTokens: 11_000,
+    webSearchCalls: 8,
+    estimatedCostUsd: 0.744932,
+    budgetUsd: 2,
+  });
 });
 
 test('Scholar verification requires a strong title match', () => {

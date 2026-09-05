@@ -181,7 +181,9 @@ test('OpenAI planner uses configured model, strict schema and original Korean pr
   const previous = config.openai.apiKey;
   config.openai.apiKey = 'fake-test-key';
   t.after(() => { config.openai.apiKey = previous; });
+  const usage = [];
   const parsed = await planPromptSearch(prompt, {
+    onUsage: (record) => usage.push(record),
     fetchImpl: async (_url, init) => {
       const body = JSON.parse(init.body);
       assert.equal(body.model, config.openai.model);
@@ -191,11 +193,22 @@ test('OpenAI planner uses configured model, strict schema and original Korean pr
       assert.equal(JSON.parse(body.input[0].content).prompt, prompt);
       return {
         ok: true,
-        json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({ queries: ['embodiment virtual reality memory'] }) }] }] }),
+        json: async () => ({
+          model: 'gpt-5.6-sol',
+          status: 'completed',
+          usage: { input_tokens: 100, output_tokens: 20 },
+          output: [{ content: [{ type: 'output_text', text: JSON.stringify({ queries: ['embodiment virtual reality memory'] }) }] }],
+        }),
       };
     },
   });
   assert.deepEqual(parsed.queries, ['embodiment virtual reality memory']);
+  assert.deepEqual(usage, [{
+    stage: 'scholarly_prompt_plan',
+    model: 'gpt-5.6-sol',
+    usage: { input_tokens: 100, output_tokens: 20 },
+    webSearchCalls: 0,
+  }]);
   for (const payload of [
     { status: 'incomplete', output: [] },
     { status: 'completed', output: [{ content: [{ type: 'refusal', refusal: 'no' }] }] },

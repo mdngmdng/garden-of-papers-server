@@ -90,22 +90,27 @@ async function structuredResponse(name, schema, instructions, input, options = {
     ...(options.signal ? [options.signal] : []),
     AbortSignal.timeout(options.timeoutMs || 60_000),
   ]);
+  const model = options.model || config.openai.model;
+  const requestBody = {
+    model,
+    store: false,
+    instructions,
+    input: [{ role: 'user', content: JSON.stringify(input) }],
+    max_output_tokens: options.maxOutputTokens || 4_000,
+    text: {
+      format: { type: 'json_schema', name, strict: true, schema },
+    },
+  };
+  if (options.reasoningEffort) {
+    requestBody.reasoning = { effort: options.reasoningEffort };
+  }
   const request = () => (options.fetchImpl || fetch)(OPENAI_URL, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${config.openai.apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({
-      model: config.openai.model,
-      store: false,
-      instructions,
-      input: [{ role: 'user', content: JSON.stringify(input) }],
-      max_output_tokens: options.maxOutputTokens || 4_000,
-      text: {
-        format: { type: 'json_schema', name, strict: true, schema },
-      },
-    }),
+    body: JSON.stringify(requestBody),
     signal,
   });
   let payload;
@@ -128,6 +133,14 @@ async function structuredResponse(name, schema, instructions, input, options = {
       continue;
     }
     throw error;
+  }
+  if (payload?.usage && typeof options.onUsage === 'function') {
+    options.onUsage({
+      stage: options.usageStage || name,
+      model: payload.model || model,
+      usage: payload.usage,
+      webSearchCalls: 0,
+    });
   }
   if (payload.status === 'incomplete' || payload.status === 'failed') {
     throw new Error('OpenAI did not complete the search response.');

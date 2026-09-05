@@ -4,6 +4,13 @@ const path = require('path');
 
 const configuredResearchEffort = process.env.OPENAI_RESEARCH_REASONING_EFFORT || 'high';
 
+function boundedNumber(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? Math.max(minimum, Math.min(maximum, parsed))
+    : fallback;
+}
+
 function resolveGrobidUrl(value) {
   const configured = value || 'http://localhost:8070';
   try {
@@ -39,10 +46,36 @@ module.exports = {
     model: process.env.OPENAI_MODEL || 'gpt-5.6',
     researchModel:
       process.env.OPENAI_RESEARCH_MODEL || process.env.OPENAI_MODEL || 'gpt-5.6',
+    researchCompileModel:
+      process.env.OPENAI_RESEARCH_COMPILE_MODEL || 'gpt-5.6-luna',
     researchReasoningEffort:
       ['low', 'medium', 'high', 'xhigh'].includes(configuredResearchEffort)
         ? configuredResearchEffort
         : 'high',
+    researchBudgetUsd: boundedNumber(
+      process.env.OPENAI_RESEARCH_BUDGET_USD,
+      2,
+      0.25,
+      20,
+    ),
+    researchMaxToolCalls: Math.round(boundedNumber(
+      process.env.OPENAI_RESEARCH_MAX_TOOL_CALLS,
+      12,
+      1,
+      50,
+    )),
+    researchMaxOutputTokens: Math.round(boundedNumber(
+      process.env.OPENAI_RESEARCH_MAX_OUTPUT_TOKENS,
+      24_000,
+      2_000,
+      128_000,
+    )),
+    researchCompileMaxOutputTokens: Math.round(boundedNumber(
+      process.env.OPENAI_RESEARCH_COMPILE_MAX_OUTPUT_TOKENS,
+      8_000,
+      1_000,
+      32_000,
+    )),
     citationGraphModel:
       process.env.OPENAI_CITATION_GRAPH_MODEL || 'gpt-5.6-sol',
     embeddingModel:
