@@ -7,20 +7,16 @@ const FIELDS = 'externalIds,title,authors,year,citationCount,url';
 // API 키 헤더 (rate limit 향상: DOI=10req/s, search=1req/s)
 // 키가 403이면 키 없이 시도 (무인증: 100 req/5min)
 function getHeaders() {
-  // TODO: S2 API 키가 활성화되면 아래 주석 해제
-  // const headers = {};
-  // if (config.s2ApiKey) {
-  //   headers['x-api-key'] = config.s2ApiKey;
-  // }
-  // return headers;
-  return {};
+  const headers = {};
+  if (config.s2ApiKey) headers['x-api-key'] = config.s2ApiKey;
+  return headers;
 }
 
 /**
  * DOI로 Semantic Scholar 논문 조회
  * @returns {{ corpusId, paperId, title, authors, year, citationCount, externalIds, url }} | null
  */
-async function lookupByDoi(doi) {
+async function lookupByDoi(doi, { signal } = {}) {
   if (!doi) return null;
 
   try {
@@ -28,6 +24,7 @@ async function lookupByDoi(doi) {
       params: { fields: FIELDS },
       headers: getHeaders(),
       timeout: 10000,
+      signal,
     });
     return normalizePaper(res.data);
   } catch (err) {
@@ -47,7 +44,7 @@ async function lookupByDoi(doi) {
  * 가장 관련도 높은 1건 반환
  * @returns {{ corpusId, paperId, title, authors, year, citationCount, externalIds, url }} | null
  */
-async function searchByTitle(title) {
+async function searchByTitle(title, { signal } = {}) {
   if (!title) return null;
 
   try {
@@ -59,6 +56,7 @@ async function searchByTitle(title) {
       },
       headers: getHeaders(),
       timeout: 10000,
+      signal,
     });
 
     const papers = res.data?.data || [];
@@ -78,6 +76,35 @@ async function searchByTitle(title) {
     }
     console.warn(`[S2] Title search error ("${title.substring(0, 50)}"):`, err.message);
     return null;
+  }
+}
+
+/**
+ * Return the works explicitly listed in a paper's reference list.
+ * These records are suitable for verified graph edges; search relevance is not.
+ */
+async function fetchReferences(paperId, { limit = 100, signal } = {}) {
+  if (!paperId) return [];
+  const safeLimit = Math.max(1, Math.min(1_000, Number(limit) || 100));
+  try {
+    const res = await axios.get(
+      `${S2_BASE}/paper/${encodeURIComponent(paperId)}/references`,
+      {
+        params: { fields: FIELDS, limit: safeLimit },
+        headers: getHeaders(),
+        timeout: 30_000,
+        signal,
+      },
+    );
+    return (res.data?.data || []).flatMap((entry) => {
+      const normalized = normalizePaper(entry?.citedPaper);
+      return normalized ? [normalized] : [];
+    });
+  } catch (err) {
+    if (err.response?.status === 404) return [];
+    const error = new Error(`Semantic Scholar references failed: ${err.message}`);
+    error.status = err.response?.status;
+    throw error;
   }
 }
 
@@ -121,4 +148,4 @@ function normalizePaper(data) {
   };
 }
 
-module.exports = { lookupByDoi, searchByTitle };
+module.exports = { fetchReferences, lookupByDoi, searchByTitle };

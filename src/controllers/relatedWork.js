@@ -26,7 +26,7 @@ exports.createJob = (req, res) => {
         ? req.body.sourcePapers
         : [],
       keyword: String(req.body?.keyword || '').trim(),
-      searchIntent: ['claim_support', 'prompt_search'].includes(req.body?.searchIntent)
+      searchIntent: ['claim_support', 'prompt_search', 'research'].includes(req.body?.searchIntent)
         ? req.body.searchIntent
         : '',
       excludedPapers: Array.isArray(req.body?.excludedPapers)

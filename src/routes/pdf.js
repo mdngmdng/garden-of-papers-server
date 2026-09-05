@@ -4,6 +4,7 @@ const multer = require('multer');
 const pdfController = require('../controllers/pdf');
 const scholarController = require('../controllers/scholar');
 const relatedWorkController = require('../controllers/relatedWork');
+const researchGraphController = require('../controllers/researchGraph');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -26,6 +27,9 @@ router.get('/search-scholar', scholarController.searchScholar);
 router.post('/related-search/jobs', relatedWorkController.createJob);
 router.get('/related-search/jobs/:jobId', relatedWorkController.getJob);
 router.delete('/related-search/jobs/:jobId', relatedWorkController.cancelJob);
+router.post('/research-graph/jobs', researchGraphController.createJob);
+router.get('/research-graph/jobs/:jobId', researchGraphController.getJob);
+router.delete('/research-graph/jobs/:jobId', researchGraphController.cancelJob);
 
 // Google Scholar citedBy
 router.post('/fetch_citations/:projectName', scholarController.fetchCitedBy);

@@ -30,4 +30,6 @@ test('job controller forwards prompt intent and canvas exclusions into the exist
   assert.deepEqual(submitted.excludedPapers, [{ paperId: 'canvas-a', title: 'Already collected' }]);
   controller.createJob({ body: { keyword: 'A claim', searchIntent: 'claim_support' } }, res);
   assert.equal(submitted.searchIntent, 'claim_support');
+  controller.createJob({ body: { keyword: 'Map a field', searchIntent: 'research' } }, res);
+  assert.equal(submitted.searchIntent, 'research');
 });

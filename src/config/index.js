@@ -2,6 +2,8 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 
+const configuredResearchEffort = process.env.OPENAI_RESEARCH_REASONING_EFFORT || 'high';
+
 function resolveGrobidUrl(value) {
   const configured = value || 'http://localhost:8070';
   try {
@@ -35,6 +37,12 @@ module.exports = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '',
     model: process.env.OPENAI_MODEL || 'gpt-5.6',
+    researchModel:
+      process.env.OPENAI_RESEARCH_MODEL || process.env.OPENAI_MODEL || 'gpt-5.6',
+    researchReasoningEffort:
+      ['low', 'medium', 'high', 'xhigh'].includes(configuredResearchEffort)
+        ? configuredResearchEffort
+        : 'high',
     citationGraphModel:
       process.env.OPENAI_CITATION_GRAPH_MODEL || 'gpt-5.6-sol',
     embeddingModel:
