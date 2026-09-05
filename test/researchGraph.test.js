@@ -36,7 +36,7 @@ const bundle = {
 
 test('creates only citation edges found in the citing paper reference list', async () => {
   const graph = await executeResearchGraph({ researchBundle: bundle }, () => {}, {
-    semanticScholarService: {
+    astaService: {
       lookupByDoi: async (doi) => ({
         paperId: doi.endsWith('/a') ? 's2-a' : 's2-b',
         title: doi.endsWith('/a') ? 'Paper A' : 'Paper B',
@@ -57,8 +57,48 @@ test('creates only citation edges found in the citing paper reference list', asy
   })), [{
     source: 'scholar-a',
     target: 'scholar-b',
-    provider: 'semantic-scholar-reference-list',
+    provider: 'asta-reference-list',
   }]);
+});
+
+test('uses one Asta batch reference lookup for resolved graph papers', async () => {
+  let batchCalls = 0;
+  const graph = await executeResearchGraph({ researchBundle: bundle }, () => {}, {
+    astaService: {
+      lookupByDoi: async (doi) => ({
+        paperId: doi.endsWith('/a') ? 'asta-a' : 'asta-b',
+        title: doi.endsWith('/a') ? 'Paper A' : 'Paper B',
+        doi,
+      }),
+      searchByTitle: async () => null,
+      fetchReferencesBatch: async (paperIds) => {
+        batchCalls += 1;
+        assert.deepEqual(paperIds, ['asta-a', 'asta-b']);
+        return new Map([
+          ['asta-a', [{ paperId: 'asta-b', title: 'Paper B' }]],
+          ['asta-b', []],
+        ]);
+      },
+    },
+  });
+  assert.equal(batchCalls, 1);
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].verificationProvider, 'asta-reference-list');
+});
+
+test('fails instead of completing an empty graph when Asta is unavailable', async () => {
+  await assert.rejects(
+    executeResearchGraph({ researchBundle: bundle }, () => {}, {
+      astaService: {
+        lookupByDoi: async () => {
+          throw new Error('Asta authentication failed');
+        },
+        searchByTitle: async () => null,
+        fetchReferences: async () => [],
+      },
+    }),
+    /ASTA 논문 식별자 조회에 실패/,
+  );
 });
 
 test('paper filtering and edge matching never promote unverified research mentions', () => {

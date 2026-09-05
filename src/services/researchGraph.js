@@ -1,5 +1,5 @@
 const crypto = require('node:crypto');
-const semanticScholar = require('./semanticScholar');
+const asta = require('./asta');
 
 const MAX_GRAPH_PAPERS = 20;
 const CANONICALIZE_CONCURRENCY = 2;
@@ -133,8 +133,9 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
   const papers = normalizeGraphPapers(bundle, input.paperIds);
   if (!papers.length) throw new Error('No verified research papers are available to graph.');
   const signal = options.signal;
-  const service = options.semanticScholarService || semanticScholar;
+  const service = options.astaService || asta;
   const warnings = [];
+  let canonicalizationErrors = 0;
   const onActivity = typeof options.onActivity === 'function'
     ? options.onActivity
     : () => {};
@@ -154,6 +155,7 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
       try {
         return await canonicalizePaper(paper, service, signal);
       } catch (error) {
+        canonicalizationErrors += 1;
         warnings.push(`Could not resolve "${paper.title}": ${error.message}`);
         return null;
       }
@@ -168,7 +170,7 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
         phase: 'graph', kind: 'canonical_record',
         status: resolved ? 'completed' : 'error',
         title: resolved
-          ? 'Semantic Scholar에서 정확한 논문 식별자를 확인했습니다'
+          ? 'ASTA에서 정확한 논문 식별자를 확인했습니다'
           : '정확히 일치하는 논문 식별자를 찾지 못했습니다',
         detail: clean(paper?.title, 1_000),
         counters: {
@@ -179,6 +181,11 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
       });
     },
   );
+  if (!canonical.some(Boolean) && canonicalizationErrors > 0) {
+    throw new Error(
+      'ASTA 논문 식별자 조회에 실패했습니다. 인용관계가 없는 그래프로 완료하지 않았습니다.',
+    );
+  }
   const nodes = papers.map((paper, index) => ({
     ...paper,
     semanticScholarId: clean(canonical[index]?.paperId, 240),
@@ -187,7 +194,7 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
   }));
   nodes.forEach((node) => {
     if (node.canonicalStatus === 'unresolved') {
-      warnings.push(`No exact Semantic Scholar identity was found for "${node.title}"; no citation edges were inferred for it.`);
+      warnings.push(`No exact ASTA identity was found for "${node.title}"; no citation edges were inferred for it.`);
     }
   });
   const canonicalTargets = nodes.filter((node) => node.semanticScholarId);
@@ -196,27 +203,56 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
     stage: 'verifying_citations', percent: 44,
     message: 'Checking each paper’s actual reference list…',
   });
-  // Reference calls are intentionally sequential to stay below the public API's
-  // burst limits. A configured S2 key is sent by semanticScholar.js.
+  let batchReferenceError = null;
+  let batchReferences = null;
+  if (canonicalTargets.length && typeof service.fetchReferencesBatch === 'function') {
+    onActivity({
+      phase: 'graph', kind: 'reference_batch', status: 'active',
+      title: `ASTA에서 논문 ${canonicalTargets.length}편의 실제 참고문헌을 불러오고 있습니다`,
+      counters: { referenceListsTotal: canonicalTargets.length },
+    });
+    try {
+      batchReferences = await service.fetchReferencesBatch(
+        canonicalTargets.map((node) => node.semanticScholarId),
+        { limit: 1_000, signal },
+      );
+    } catch (error) {
+      batchReferenceError = error;
+    }
+  }
+  let referenceErrors = 0;
   for (let index = 0; index < nodes.length; index++) {
     if (signal?.aborted) throw signal.reason || new Error('Graph generation was cancelled.');
     const node = nodes[index];
+    let referenceLookupFailed = false;
     if (node.semanticScholarId) {
-      try {
-        referencesByIndex[index] = await service.fetchReferences(
-          node.semanticScholarId,
-          { limit: 1_000, signal },
-        );
-      } catch (error) {
-        warnings.push(`Could not inspect references for "${node.title}": ${error.message}`);
+      if (batchReferences) {
+        referencesByIndex[index] = batchReferences.get(node.semanticScholarId) || [];
+      } else if (batchReferenceError) {
+        referenceLookupFailed = true;
+        referenceErrors += 1;
+        warnings.push(`Could not inspect references for "${node.title}": ${batchReferenceError.message}`);
+      } else {
+        try {
+          referencesByIndex[index] = await service.fetchReferences(
+            node.semanticScholarId,
+            { limit: 1_000, signal },
+          );
+        } catch (error) {
+          referenceLookupFailed = true;
+          referenceErrors += 1;
+          warnings.push(`Could not inspect references for "${node.title}": ${error.message}`);
+        }
       }
     }
     onActivity({
       phase: 'graph', kind: 'reference_list',
-      status: node.semanticScholarId ? 'completed' : 'error',
-      title: node.semanticScholarId
-        ? `참고문헌 ${referencesByIndex[index].length}개를 대조했습니다`
-        : '논문 식별자가 없어 참고문헌 대조를 건너뛰었습니다',
+      status: node.semanticScholarId && !referenceLookupFailed ? 'completed' : 'error',
+      title: !node.semanticScholarId
+        ? '논문 식별자가 없어 참고문헌 대조를 건너뛰었습니다'
+        : referenceLookupFailed
+          ? 'ASTA 참고문헌 조회에 실패했습니다'
+          : `참고문헌 ${referencesByIndex[index].length}개를 대조했습니다`,
       detail: node.title,
       counters: {
         referenceListsChecked: index + 1,
@@ -229,6 +265,11 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
       percent: 44 + Math.round(((index + 1) / nodes.length) * 48),
       message: `Checked ${index + 1}/${nodes.length} reference lists…`,
     });
+  }
+  if (canonicalTargets.length && referenceErrors === canonicalTargets.length) {
+    throw new Error(
+      'ASTA 참고문헌 조회에 실패했습니다. 인용관계를 확인할 수 없어 그래프 생성을 중단했습니다.',
+    );
   }
   const edges = [];
   const seenEdges = new Set();
@@ -247,7 +288,7 @@ async function executeResearchGraph(input, onProgress = () => {}, options = {}) 
         sourcePaperId: source.paperId,
         targetPaperId: target.paperId,
         relationship: 'cite',
-        verificationProvider: 'semantic-scholar-reference-list',
+        verificationProvider: 'asta-reference-list',
         verifiedAt: new Date().toISOString(),
         citationContextStatus: 'pending_pdf',
       });

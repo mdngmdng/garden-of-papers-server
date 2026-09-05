@@ -5,6 +5,7 @@ const {
 const config = require('../config');
 
 const PAPER_FIELDS = [
+  'title',
   'abstract',
   'authors',
   'year',
@@ -14,6 +15,9 @@ const PAPER_FIELDS = [
   'journal',
   'tldr',
 ].join(',');
+
+const GRAPH_PAPER_FIELDS = 'title,authors,year,url';
+const GRAPH_REFERENCE_FIELDS = 'title,references';
 
 let nextAstaRequestAt = 0;
 let rateReservationTail = Promise.resolve();
@@ -60,6 +64,41 @@ function toolPayloads(result) {
     }
   }
   return payloads;
+}
+
+function toolResultPayload(result, source = 'tool') {
+  if (result?.isError) {
+    const detail = (result.content || [])
+      .filter((content) => content?.type === 'text')
+      .map((content) => content.text)
+      .join(' ')
+      .trim();
+    throw new Error(detail || `Asta ${source} reported an error`);
+  }
+  const structured = result?.structuredContent;
+  if (structured && typeof structured === 'object') {
+    if (Object.hasOwn(structured, 'result')) return structured.result;
+    if (Object.hasOwn(structured, 'data')) return structured.data;
+    if (Object.hasOwn(structured, 'results')) return structured.results;
+    if (Object.keys(structured).length) return structured;
+  }
+  for (const content of result?.content || []) {
+    if (content?.type !== 'text') continue;
+    const parsed = parseJsonText(content.text);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function paperRecords(result, source) {
+  const payload = toolResultPayload(result, source);
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload.filter(Boolean);
+  for (const key of ['papers', 'results', 'data']) {
+    if (Array.isArray(payload?.[key])) return payload[key].filter(Boolean);
+  }
+  if (payload?.paper && typeof payload.paper === 'object') return [payload.paper];
+  return typeof payload === 'object' ? [payload] : [];
 }
 
 function looksLikePaperCandidate(value) {
@@ -162,12 +201,55 @@ function normalizePaperCandidate(candidate, source) {
       || candidate?.citationCount
       || 0,
     ),
+    doi: firstText(paper?.doi, paper?.externalIds?.DOI),
     url: firstText(paper?.url, candidate?.url),
     abstract: firstText(paper?.abstract, tldr, snippet),
     openAccessPdfUrl: firstText(openAccessPdf, candidate?.openAccessPdfUrl),
     evidenceSnippets: snippet ? [snippet.slice(0, 4_000)] : [],
     retrievalProvider: source,
     astaScore: Number(candidate?.score ?? candidate?.relevanceScore) || undefined,
+  };
+}
+
+function normalizeGraphPaper(paper) {
+  if (!paper || typeof paper !== 'object') return null;
+  const paperId = firstText(
+    paper.paperId,
+    paper.paper_id,
+    paper.id,
+    paper.corpusId ? `CorpusId:${paper.corpusId}` : '',
+  );
+  const title = firstText(paper.title);
+  if (!paperId || !title) return null;
+  return {
+    paperId,
+    title,
+    authors: authorNames(paper.authors),
+    year: Number(paper.year) || null,
+    citationCount: Number(paper.citationCount || paper.citation_count) || 0,
+    doi: firstText(paper.doi, paper.externalIds?.DOI),
+    url: firstText(paper.url),
+  };
+}
+
+function normalizeGraphReference(reference) {
+  if (!reference || typeof reference !== 'object') return null;
+  const paper = reference.citedPaper && typeof reference.citedPaper === 'object'
+    ? reference.citedPaper
+    : reference;
+  const normalized = normalizeGraphPaper(paper);
+  if (normalized) return normalized;
+  const title = firstText(paper.title);
+  const paperId = firstText(paper.paperId, paper.paper_id, paper.id);
+  if (!paperId && !title) return null;
+  return {
+    paperId,
+    title,
+    authors: authorNames(paper.authors),
+    year: Number(paper.year) || null,
+    citationCount: Number(paper.citationCount || paper.citation_count) || 0,
+    doi: firstText(paper.doi, paper.externalIds?.DOI),
+    url: firstText(paper.url),
   };
 }
 
@@ -417,14 +499,18 @@ async function callToolWithRetry(
   name,
   args,
   signal,
-  { sleep = wait, random = Math.random } = {},
+  {
+    sleep = wait,
+    random = Math.random,
+    timeoutMs = config.asta.requestTimeoutMs,
+  } = {},
 ) {
   let lastError;
   for (let attempt = 0; attempt <= config.asta.maxRetries; attempt += 1) {
     try {
       const result = await client.callTool(
         { name, arguments: args },
-        { timeout: config.asta.requestTimeoutMs, signal },
+        { timeout: timeoutMs, signal },
       );
       const detail = toolErrorDetail(result);
       if (detail && retryable(new Error(detail))) {
@@ -480,15 +566,87 @@ async function withClient(callback) {
     name: 'garden-of-papers-server',
     version: '1.0.0',
   });
+  let closing = false;
   client.onerror = (error) => {
+    if (closing && /abort/i.test(String(error?.message || error))) return;
     console.warn(`[Asta] MCP transport warning: ${error.message}`);
   };
   try {
     await client.connect(transport);
     return await callback(client);
   } finally {
+    closing = true;
     await client.close().catch(() => {});
   }
+}
+
+function notFoundResult(result) {
+  if (!result?.isError) return false;
+  return /404|not found|no paper/i.test((result.content || [])
+    .filter((content) => content?.type === 'text')
+    .map((content) => content.text)
+    .join(' '));
+}
+
+async function lookupByDoi(doi, { signal } = {}) {
+  const normalized = asText(doi)
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')
+    .replace(/^doi:\s*/i, '');
+  if (!normalized) return null;
+  return withClient(async (client) => {
+    const result = await callToolWithRetry(client, 'get_paper', {
+      paper_id: `DOI:${normalized}`,
+      fields: GRAPH_PAPER_FIELDS,
+    }, signal);
+    if (notFoundResult(result)) return null;
+    return normalizeGraphPaper(paperRecords(result, 'get_paper')[0]);
+  });
+}
+
+async function searchByTitle(title, { signal } = {}) {
+  const normalized = asText(title).slice(0, 1_000);
+  if (!normalized) return null;
+  return withClient(async (client) => {
+    const result = await callToolWithRetry(client, 'search_paper_by_title', {
+      title: normalized,
+      fields: GRAPH_PAPER_FIELDS,
+    }, signal);
+    if (notFoundResult(result)) return null;
+    return normalizeGraphPaper(
+      paperRecords(result, 'search_paper_by_title')[0],
+    );
+  });
+}
+
+async function fetchReferencesBatch(paperIds, { limit = 1_000, signal } = {}) {
+  const ids = [...new Set((paperIds || []).map(asText).filter(Boolean))];
+  const referencesByPaperId = new Map(ids.map((paperId) => [paperId, []]));
+  if (!ids.length) return referencesByPaperId;
+  const safeLimit = Math.max(1, Math.min(1_000, Number(limit) || 1_000));
+  return withClient(async (client) => {
+    const result = await callToolWithRetry(client, 'get_paper_batch', {
+      ids,
+      fields: GRAPH_REFERENCE_FIELDS,
+    }, signal, { timeoutMs: config.asta.referenceTimeoutMs });
+    for (const paper of paperRecords(result, 'get_paper_batch')) {
+      const paperId = firstText(paper?.paperId, paper?.paper_id, paper?.id);
+      if (!paperId || !referencesByPaperId.has(paperId)) continue;
+      referencesByPaperId.set(
+        paperId,
+        (Array.isArray(paper.references) ? paper.references : [])
+          .map(normalizeGraphReference)
+          .filter(Boolean)
+          .slice(0, safeLimit),
+      );
+    }
+    return referencesByPaperId;
+  });
+}
+
+async function fetchReferences(paperId, options = {}) {
+  if (!asText(paperId)) return [];
+  const references = await fetchReferencesBatch([paperId], options);
+  return references.get(paperId) || [];
 }
 
 async function searchRelatedPapers(descriptions, { signal } = {}) {
@@ -535,8 +693,12 @@ module.exports = {
   isConfigured,
   parseJsonText,
   toolPayloads,
+  toolResultPayload,
+  paperRecords,
   collectCandidates,
   normalizePaperCandidate,
+  normalizeGraphPaper,
+  normalizeGraphReference,
   normalizeToolResult,
   mergeAstaPapers,
   errorStatus,
@@ -546,5 +708,9 @@ module.exports = {
   reserveAstaRequestSlot,
   createAstaFetch,
   callToolWithRetry,
+  lookupByDoi,
+  searchByTitle,
+  fetchReferences,
+  fetchReferencesBatch,
   searchRelatedPapers,
 };

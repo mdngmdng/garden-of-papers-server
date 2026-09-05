@@ -38,7 +38,6 @@ module.exports = {
     s3Bucket: process.env.AWS_S3_BUCKET || 'garden-of-papers',
   },
   grobidUrl: resolveGrobidUrl(process.env.GROBID_URL),
-  s2ApiKey: process.env.S2_API_KEY || '',
   serpApiKey: process.env.SERPAPI_KEY || '',
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   openai: {
@@ -94,6 +93,9 @@ module.exports = {
       process.env.ASTA_MCP_ENDPOINT || 'https://asta-tools.allen.ai/mcp/v1',
     requestTimeoutMs: Number(
       process.env.ASTA_REQUEST_TIMEOUT_MS || 120_000,
+    ),
+    referenceTimeoutMs: Number(
+      process.env.ASTA_REFERENCE_TIMEOUT_MS || 300_000,
     ),
     snippetLimit: Number(process.env.ASTA_SNIPPET_LIMIT || 60),
     relevanceLimit: Number(process.env.ASTA_RELEVANCE_LIMIT || 40),

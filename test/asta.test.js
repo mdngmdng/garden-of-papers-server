@@ -4,11 +4,39 @@ const {
   callToolWithRetry,
   createAstaFetch,
   mergeAstaPapers,
+  normalizeGraphReference,
   normalizeToolResult,
+  paperRecords,
   parseJsonText,
   parseRetryAfter,
   retryable,
 } = require('../src/services/asta');
+
+test('unwraps Asta graph records from structured and text MCP results', () => {
+  assert.deepEqual(paperRecords({
+    structuredContent: { result: { paperId: 'p1', title: 'Paper One' } },
+  }, 'get_paper'), [{ paperId: 'p1', title: 'Paper One' }]);
+  assert.deepEqual(paperRecords({
+    content: [{
+      type: 'text',
+      text: '[{"paperId":"p2","title":"Paper Two"}]',
+    }],
+  }, 'get_paper_batch'), [{ paperId: 'p2', title: 'Paper Two' }]);
+});
+
+test('normalizes compact Asta reference-list entries', () => {
+  assert.deepEqual(normalizeGraphReference({
+    paperId: 'reference-1', title: 'Referenced Paper',
+  }), {
+    paperId: 'reference-1',
+    title: 'Referenced Paper',
+    authors: [],
+    year: null,
+    citationCount: 0,
+    doi: '',
+    url: '',
+  });
+});
 
 test('parses JSON embedded in an MCP text content block', () => {
   assert.deepEqual(
