@@ -47,7 +47,7 @@ function normalizeScholarResult(result) {
  * Google Scholar 일반 검색.
  * SerpAPI의 organic_results를 웹 클라이언트의 ScholarResult 형식으로 정규화한다.
  */
-async function searchScholar(query, offset = 0, limit = 10) {
+async function searchScholar(query, offset = 0, limit = 10, { signal } = {}) {
   if (!query || String(query).trim().length < 2) {
     throw new Error('query must contain at least two characters');
   }
@@ -65,6 +65,7 @@ async function searchScholar(query, offset = 0, limit = 10) {
       hl: 'en',
     },
     timeout: 30000,
+    signal,
   });
   if (response.data?.error) {
     throw new Error(response.data.error);

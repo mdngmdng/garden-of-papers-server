@@ -4,6 +4,7 @@ const grobid = require('./grobid');
 const s3 = require('./s3');
 const pdfStorage = require('./pdfStorage');
 const { searchScholar } = require('./serpapi');
+const { executePromptSearch } = require('./promptSearch');
 const {
   fallbackSearchPlan,
   manuscriptText,
@@ -163,11 +164,18 @@ function relationshipRequirements(sources) {
 }
 
 function normalizeSearchIntent(value) {
-  return value === 'claim_support' ? 'claim_support' : '';
+  return ['claim_support', 'prompt_search'].includes(value) ? value : '';
 }
 
 function validateRelatedSearchInput(input) {
   const keyword = cleanText(input?.keyword, 4_000);
+  if (input?.searchIntent === 'prompt_search') {
+    if (keyword.length < 2) throw new Error('AI 검색할 질문을 입력해 주세요. Enter a research question.');
+    if (String(input?.keyword || '').length > 4_000) {
+      throw new Error('AI 검색 질문은 4,000자 이내로 입력해 주세요.');
+    }
+    return;
+  }
   const sources = normalizeSourcePapers(input?.sourcePapers);
   if (
     manuscriptText(input?.manuscript || {}).length < 20
@@ -256,6 +264,9 @@ async function explainCandidateBatches(
 
 async function executeRelatedSearch(input, onProgress = () => {}, options = {}) {
   validateRelatedSearchInput(input);
+  if (input.searchIntent === 'prompt_search') {
+    return executePromptSearch(input, onProgress, options);
+  }
   const keyword = String(input.keyword || '').trim();
   const searchIntent = normalizeSearchIntent(input.searchIntent);
   const signal = options.signal;

@@ -26,9 +26,12 @@ exports.createJob = (req, res) => {
         ? req.body.sourcePapers
         : [],
       keyword: String(req.body?.keyword || '').trim(),
-      searchIntent: req.body?.searchIntent === 'claim_support'
-        ? 'claim_support'
+      searchIntent: ['claim_support', 'prompt_search'].includes(req.body?.searchIntent)
+        ? req.body.searchIntent
         : '',
+      excludedPapers: Array.isArray(req.body?.excludedPapers)
+        ? req.body.excludedPapers
+        : [],
     });
     noStore(res);
     return res.status(202).json({
