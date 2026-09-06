@@ -289,7 +289,7 @@ exports.updateData = async (req, res) => {
     abovePageIndex, paperWidth, paperHeight,
     referenceTextArray, highlightTexts, copiedOrigianlPaperId,
     lastPageNavigationTime, paperIndex, parentPaperId, parentOffsetX,
-    parentOffsetY, color, noteType,
+    parentOffsetY, color, noteType, claimEvidence,
     textAlignmentIndex, fontSizeIndex, startPaperId, endPaperId, labelPosIndex,
     scaleFactor, ptCurveIds, ptArray, parentPageIndex,
     citationContextParagraph, citationSentenceRangePageIndex,
@@ -299,7 +299,7 @@ exports.updateData = async (req, res) => {
     citationGraphSelection, citationGraphNoteId, citationGraphModel,
     linkHighlightTexts, summaryNoteId,
     translations, citationHits, pageSizeList, referenceList, citationStatus,
-    pdfPagePreview,
+    pdfPagePreview, pdfExcerpts,
   } = req.body;
 
   try {
@@ -365,6 +365,8 @@ exports.updateData = async (req, res) => {
     update.labelPosIndex = labelPosIndex;
     update.scaleFactor = scaleFactor;
     if (parentPaperId !== '') update.parentPaperId = parentPaperId;
+    if (claimEvidence !== undefined) update.claimEvidence = claimEvidence;
+    if (Array.isArray(pdfExcerpts)) update.pdfExcerpts = pdfExcerpts;
     if (Number.isFinite(parentOffsetX) && Number.isFinite(parentOffsetY)) {
       update.parentOffsetX = parentOffsetX;
       update.parentOffsetY = parentOffsetY;

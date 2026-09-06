@@ -166,12 +166,12 @@ function relationshipRequirements(sources) {
 }
 
 function normalizeSearchIntent(value) {
-  return ['claim_support', 'prompt_search', 'research'].includes(value) ? value : '';
+  return ['claim_support', 'claim_evidence', 'prompt_search', 'research'].includes(value) ? value : '';
 }
 
 function validateRelatedSearchInput(input) {
   const keyword = cleanText(input?.keyword, 4_000);
-  if (input?.searchIntent === 'prompt_search' || input?.searchIntent === 'research') {
+  if (input?.searchIntent === 'claim_evidence' || input?.searchIntent === 'prompt_search' || input?.searchIntent === 'research') {
     if (keyword.length < 2) throw new Error('AI 검색할 질문을 입력해 주세요. Enter a research question.');
     if (String(input?.keyword || '').length > 4_000) {
       throw new Error('AI 검색 질문은 4,000자 이내로 입력해 주세요.');
@@ -383,6 +383,9 @@ async function explainCandidateBatches(
 
 async function executeRelatedSearch(input, onProgress = () => {}, options = {}) {
   validateRelatedSearchInput(input);
+  if (input.searchIntent === 'claim_evidence') {
+    return require('./claimEvidence').executeClaimEvidenceSearch(input, onProgress, options);
+  }
   if (input.searchIntent === 'research') {
     return executeResearchSearch(input, onProgress, options);
   }

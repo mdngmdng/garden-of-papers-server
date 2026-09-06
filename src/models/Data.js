@@ -41,6 +41,8 @@ const dataSchema = new mongoose.Schema({
   textAlignmentIndex: Number,
   color: { r: Number, g: Number, b: Number, a: Number },
   noteType: String,
+  claimEvidence: mongoose.Schema.Types.Mixed,
+  pdfExcerpts: [mongoose.Schema.Types.Mixed],
   startPaperId: String,
   endPaperId: String,
   labelPosIndex: { item1: Number, item2: Number },
