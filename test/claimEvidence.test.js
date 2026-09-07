@@ -1,13 +1,14 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { assessClaimEvidence, parseEvidenceInput, executeClaimEvidenceSearch, claimSearchInstructions } = require('../src/services/claimEvidence');
+const { assessClaimEvidence, parseEvidenceInput, executeClaimEvidenceSearch, claimSearchInstructions, planClaimRetrieval } = require('../src/services/claimEvidence');
 const { executeRelatedSearch } = require('../src/services/relatedSearchJobs');
 const passages = [
   { id: 'p0:0', pageIndex: 0, text: 'Participants completed the task faster using the assistant.' },
   { id: 'p1:0', pageIndex: 1, text: 'The improvement was restricted to inexperienced participants.' },
 ];
 const body = { claim: 'AI improves productivity.', paperTitle: 'A controlled study', passages };
-const output = { explanation: '효과의 적용 범위를 제한합니다.', evidence: [{ passageId: 'p1:0', relation: 'qualify', rationale: '숙련도에 따라 효과가 달랐습니다.', scope: '초보 참여자' }] };
+const recommendationCheck = { status: 'qualified', explanation: '초보자에 한정된 결과입니다.' };
+const output = { recommendationCheck, explanation: '효과의 적용 범위를 제한합니다.', evidence: [{ passageId: 'p1:0', relation: 'qualify', rationale: '숙련도에 따라 효과가 달랐습니다.', scope: '초보 참여자' }] };
 
 test('quotes and page numbers come from supplied passages, never generated text', async () => {
   const result = await assessClaimEvidence(body, { respond: async (_name, schema, prompt, input) => {
@@ -26,7 +27,7 @@ test('rejects invented and duplicate passage IDs and unsupported labels', async 
   await assert.rejects(assessClaimEvidence(body, { respond: async () => ({ ...output, evidence: [output.evidence[0], output.evidence[0]] }) }), /유효하지/);
 });
 test('allows honest no-evidence results', async () => {
-  const result = await assessClaimEvidence(body, { respond: async () => ({ explanation: '관련 주제이지만 직접 근거가 없습니다.', evidence: [] }) });
+  const result = await assessClaimEvidence(body, { respond: async () => ({ recommendationCheck: { status: 'inconclusive', explanation: '주제 유사성만 확인했습니다.' }, explanation: '관련 주제이지만 직접 근거가 없습니다.', evidence: [] }) });
   assert.deepEqual(result.evidence, []);
 });
 test('bounds PDF input and rejects malformed or duplicate source records', () => {
@@ -57,4 +58,26 @@ test('the public job dispatcher routes claim_evidence to GPT instead of Gemini',
     ...options(), planner: () => { throw new Error('Gemini must not run'); },
   });
   assert.equal(result.searchMode, 'claim_evidence');
+});
+
+test('plans multilingual retrieval from the preserved recommendation without inventing evidence', async () => {
+  const result = await planClaimRetrieval({ ...body, claim: '생성형 AI의 생산성 효과는 숙련도에 따라 다르다.', recommendationReason: '초보자의 성과 향상을 보고했기 때문에 추천했다.' },
+    { respond: async (_name, _schema, prompt, input) => {
+      assert.match(prompt, /contrary or null/);
+      assert.match(input.recommendationReason, /초보자/);
+      return { queries: ['novice productivity assistance', 'experience heterogeneous gains', 'no improvement limitations'] };
+    } });
+  assert.equal(result.protocolVersion, 2);
+  assert.equal(result.queries.length, 3);
+});
+test('checks the original recommendation separately from the claim relation', async () => {
+  const result = await assessClaimEvidence({ ...body, recommendationReason: 'An unconditional improvement was reported.' }, {
+    respond: async (_name, _schema, prompt, input) => {
+      assert.match(prompt, /hypothesis, NOT evidence/);
+      assert.equal(input.recommendationReason, 'An unconditional improvement was reported.');
+      return output;
+    },
+  });
+  assert.equal(result.recommendationCheck.status, 'qualified');
+  await assert.rejects(assessClaimEvidence(body, { respond: async () => ({ ...output, recommendationCheck: undefined }) }), /추천 이유/);
 });

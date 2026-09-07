@@ -25,6 +25,7 @@ router.post(
 // Google Scholar search
 router.get('/search-scholar', scholarController.searchScholar);
 router.post('/claim-evidence/assess', require('../controllers/claimEvidence').assess);
+router.post('/claim-evidence/review', require('../controllers/claimEvidence').review);
 router.post('/related-search/jobs', relatedWorkController.createJob);
 router.get('/related-search/jobs', relatedWorkController.listJobs);
 router.get('/related-search/jobs/:jobId', relatedWorkController.getJob);

@@ -973,7 +973,13 @@ exports.downloadPdf = async (req, res) => {
   req.once('aborted', onRequestAborted);
   res.once('close', onResponseClosed);
   const acquireTimeout = setTimeout(
-    () => abortController.abort(),
+    () => {
+      // A server deadline must finish the HTTP response; client aborts do not.
+      if (!req.aborted && !res.destroyed && !res.writableEnded && !res.headersSent) {
+        res.status(504).json({ error: 'Stored PDF acquisition timed out' });
+      }
+      abortStream();
+    },
     PDF_STREAM_ACQUIRE_TIMEOUT_MS,
   );
   const slowTimer = setTimeout(() => {
@@ -985,6 +991,7 @@ exports.downloadPdf = async (req, res) => {
 
   try {
     const key = await pdfStorage.resolvePdfS3Key(projectName, fileid);
+    if (abortController.signal.aborted || req.aborted || res.destroyed) return;
     const range = typeof req.headers.range === 'string'
       ? req.headers.range
       : undefined;
