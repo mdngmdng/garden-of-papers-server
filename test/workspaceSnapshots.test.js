@@ -645,3 +645,18 @@ test('restores a manual snapshot as a new live revision', async () => {
     [1],
   );
 });
+
+test('full and delta saves preserve request arrays omitted by old writers; explicit clearing remains reversible', async () => {
+  const collection = new MemorySnapshotCollection(); const service = createWorkspaceSnapshotService(() => collection);
+  const initial = workspace();
+  initial.objects = [{ id: 'note', type: 'GX.MARONote', claimEvidence: { version: 1, links: [], candidates: [], requests: [{ id: 'request' }] } }];
+  await service.ensure(initial);
+  const old = structuredClone(initial); delete old.objects[0].claimEvidence.requests;
+  const full = await service.save({ projectName: 'garden', baseRevision: 0, mutationId: 'old-full', state: old });
+  assert.deepEqual(full.state.objects[0].claimEvidence.requests, [{ id: 'request' }]);
+  await service.patch({ projectName: 'garden', baseRevision: 1, mutationId: 'old-patch', delta: { camera: old.camera, upsertedObjects: old.objects, removedObjectIds: [] } });
+  const kept = await service.load('garden'); assert.deepEqual(kept.objects[0].claimEvidence.requests, [{ id: 'request' }]);
+  kept.objects[0].claimEvidence.requests = [];
+  const cleared = await service.save({ projectName: 'garden', baseRevision: 2, mutationId: 'current-clear', state: kept });
+  assert.deepEqual(cleared.state.objects[0].claimEvidence.requests, []);
+});

@@ -1,3 +1,4 @@
+const { preserveEvidenceRequests } = require('./evidenceRequestCompatibility');
 const { getClient } = require('./mongo');
 const { gzipSync, gunzipSync } = require('node:zlib');
 
@@ -920,6 +921,7 @@ function createWorkspaceSnapshotService(
     const nextRevision = current.revision + 1;
     const savedState = {
       ...structuredClone(state),
+      objects: (() => { const old = new Map(publicState(current).objects.map(o => [o.id, o])); return state.objects.map(o => preserveEvidenceRequests(old.get(o.id), structuredClone(o))); })(),
       ownerName: current.ownerName,
       projectName,
       id: projectName,
@@ -1025,7 +1027,7 @@ function createWorkspaceSnapshotService(
     );
     for (const object of delta.upsertedObjects) {
       const id = requiredString(object?.id, 'object.id');
-      byId.set(id, structuredClone(object));
+      byId.set(id, preserveEvidenceRequests(byId.get(id), structuredClone(object)));
     }
 
     const timestamp = now();

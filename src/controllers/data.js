@@ -365,7 +365,12 @@ exports.updateData = async (req, res) => {
     update.labelPosIndex = labelPosIndex;
     update.scaleFactor = scaleFactor;
     if (parentPaperId !== '') update.parentPaperId = parentPaperId;
-    if (claimEvidence !== undefined) update.claimEvidence = claimEvidence;
+    if (claimEvidence !== undefined) {
+      if (claimEvidence && typeof claimEvidence === 'object' && !Object.hasOwn(claimEvidence, 'requests')) {
+        for (const [key, value] of Object.entries(claimEvidence)) update['claimEvidence.' + key] = value;
+      } else update.claimEvidence = claimEvidence;
+    }
+    if (Array.isArray(req.body.evidenceRequests)) update.evidenceRequests = req.body.evidenceRequests;
     if (Array.isArray(pdfExcerpts)) update.pdfExcerpts = pdfExcerpts;
     if (Number.isFinite(parentOffsetX) && Number.isFinite(parentOffsetY)) {
       update.parentOffsetX = parentOffsetX;

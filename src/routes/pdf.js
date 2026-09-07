@@ -6,6 +6,9 @@ const scholarController = require('../controllers/scholar');
 const relatedWorkController = require('../controllers/relatedWork');
 const researchGraphController = require('../controllers/researchGraph');
 
+router.post('/evidence-candidates/plan', require('../controllers/evidenceCandidates').plan);
+router.post('/evidence-candidates/assess', require('../controllers/evidenceCandidates').assess);
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 router.get('/pdf_metadata/:projectName/:fileid', pdfController.getMetadata);
