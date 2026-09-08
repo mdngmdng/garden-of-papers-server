@@ -2339,9 +2339,13 @@ function createLLMWikiService({
   pdfBridgeRegistrar = pdfBridge.registerPendingRequest,
   openAIRequest = defaultOpenAIRequest,
   now = () => new Date(),
+  savedRevisionLoader = (id) => require('./workspaceSnapshots').workspaceSnapshotService.loadRevision(id),
+  savedWorkspaceLoader = (id) => require('./workspaceSnapshots').workspaceSnapshotService.load(id),
+  reconciliationIntervalMs = 5_000,
 } = {}) {
   let indexesReady = null;
   const syncJobs = new Map();
+  const reconciliationChecks = new Map();
   const chatQueues = new Map();
   const sourceRecoveryJobs = new Map();
 
@@ -2469,14 +2473,41 @@ function createLLMWikiService({
     return document;
   }
 
-  async function status(workspaceIdValue) {
+  async function status(workspaceIdValue, { reconcile = false } = {}) {
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
     const document = await (await collection()).findOne(
       { _id: workspaceId },
       { projection: { 'papers.sourceTextGzip': 0 } },
     );
+    if (reconcile) void reconcileSavedWorkspace(workspaceId, document?.revision);
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
     return publicStatus(document);
+  }
+
+  /** Recover missed save notifications after repairs, restores or server restarts. */
+  function reconcileSavedWorkspace(workspaceIdValue, wikiRevision) {
+    const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
+    const pending = reconciliationChecks.get(workspaceId);
+    if (pending) return pending;
+    const check = Promise.resolve().then(async () => {
+      const savedRevision = await savedRevisionLoader(workspaceId);
+      // A restored canonical board can also have a lower revision than the Wiki.
+      if (savedRevision === wikiRevision || syncJobs.has(workspaceId)) return;
+      // Load the latest saved snapshot, never an optimistic browser copy.
+      const state = await savedWorkspaceLoader(workspaceId);
+      await sync(workspaceId, state);
+    }).catch((error) => {
+      console.error(`LLM Wiki automatic catch-up failed for ${workspaceId}:`, error?.message || error);
+    }).finally(() => {
+      // Coalesce status polling from multiple clients, and retry failed checks
+      // after a short cooldown instead of requiring another user edit.
+      const timer = setTimeout(() => {
+        if (reconciliationChecks.get(workspaceId) === check) reconciliationChecks.delete(workspaceId);
+      }, reconciliationIntervalMs);
+      timer.unref?.();
+    });
+    reconciliationChecks.set(workspaceId, check);
+    return check;
   }
 
   async function syncUnlocked(workspaceId, state) {
@@ -2931,6 +2962,7 @@ function createLLMWikiService({
     latestLog,
     removeWorkspace,
     requestSync,
+    reconcileSavedWorkspace,
     status,
     sync,
   };

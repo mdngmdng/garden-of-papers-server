@@ -150,6 +150,9 @@ function fixture(options = {}) {
       return { status: 'ok' };
     },
     now: () => new Date(timestamp += 1_000),
+    savedRevisionLoader: options.savedRevisionLoader,
+    savedWorkspaceLoader: options.savedWorkspaceLoader,
+    reconciliationIntervalMs: options.reconciliationIntervalMs,
   });
   return {
     collection,
@@ -160,6 +163,117 @@ function fixture(options = {}) {
     bridgeRequests,
   };
 }
+
+test('status recovers a missed save notification using the latest canonical workspace', async () => {
+  let saved = workspace({ revision: 1 });
+  let loads = 0;
+  const { service, markdownStore } = fixture({
+    savedRevisionLoader: async () => saved.revision,
+    savedWorkspaceLoader: async () => { loads += 1; return saved; },
+  });
+  await service.sync('garden', saved);
+  // Simulate a DB repair that bypassed the ordinary onWorkspaceSaved callback.
+  saved = workspace({ revision: 2 });
+  saved.objects[0].title = 'Restored paper';
+  saved.objects[1].text = 'Restored annotation';
+  const stale = await service.status('garden', { reconcile: true });
+  assert.equal(stale.revision, 1);
+  await service.reconcileSavedWorkspace('garden', stale.revision);
+  const current = await service.status('garden');
+  assert.equal(current.revision, 2);
+  assert.equal(current.papers[0].title, 'Restored paper');
+  assert.match(await markdownStore.read(current.papers[0].wikiFilePath), /Restored annotation/);
+  assert.equal(loads, 1);
+});
+
+test('fresh Wiki status checks only revision metadata and coalesces concurrent readers', async () => {
+  let probes = 0;
+  const { service } = fixture({
+    savedRevisionLoader: async () => { probes += 1; return 1; },
+    savedWorkspaceLoader: async () => { throw new Error('must not load the full board'); },
+  });
+  await service.sync('garden', workspace());
+  await Promise.all(Array.from({ length: 8 }, () => service.status('garden', { reconcile: true })));
+  await service.reconcileSavedWorkspace('garden', 1);
+  assert.equal(probes, 1);
+});
+
+test('status does not enqueue duplicate work while a normal save is already being indexed', async () => {
+  let finishLoad;
+  let markStarted;
+  const started = new Promise((resolve) => { markStarted = resolve; });
+  const { service } = fixture({
+    savedRevisionLoader: async () => 2,
+    savedWorkspaceLoader: async () => { throw new Error('duplicate snapshot load'); },
+    sourceTextLoader: async () => {
+      markStarted();
+      return new Promise((resolve) => { finishLoad = resolve; });
+    },
+  });
+  const syncing = service.sync('garden', workspace({ revision: 2 }));
+  await started;
+  await service.reconcileSavedWorkspace('garden', undefined);
+  finishLoad('PDF text');
+  assert.equal((await syncing).revision, 2);
+});
+
+test('the HTTP status route enables automatic canonical reconciliation', async (t) => {
+  const { llmWikiService } = require('../src/services/llmWiki');
+  const controller = require('../src/controllers/llmWiki');
+  const calls = [];
+  t.mock.method(llmWikiService, 'status', async (...args) => { calls.push(args); return { revision: 3 }; });
+  const response = { status(code) { this.code = code; return this; }, json(payload) { this.payload = payload; return this; } };
+  await controller.status({ params: { id: 'garden' } }, response);
+  assert.deepEqual(calls, [['garden', { reconcile: true }]]);
+  assert.equal(response.code, 200);
+  assert.deepEqual(response.payload, { revision: 3 });
+});
+
+test('status initializes a missing Wiki and accepts restored canonical revision numbers', async () => {
+  const saved = workspace({ revision: 2 });
+  const { service } = fixture({
+    savedRevisionLoader: async () => saved.revision,
+    savedWorkspaceLoader: async () => saved,
+    reconciliationIntervalMs: 0,
+  });
+  await assert.rejects(service.status('garden', { reconcile: true }), { status: 404 });
+  await service.reconcileSavedWorkspace('garden', undefined);
+  assert.equal((await service.status('garden')).revision, 2);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  saved.revision = 1;
+  saved.objects[0].title = 'Canonical restored title';
+  await service.status('garden', { reconcile: true });
+  await service.reconcileSavedWorkspace('garden', 2);
+  assert.equal((await service.status('garden')).revision, 1);
+  assert.equal((await service.status('garden')).papers[0].title, saved.objects[0].title);
+});
+
+test('a failed catch-up is retried on a later status poll without a new board edit', async (t) => {
+  let fail = true;
+  let loads = 0;
+  const errors = [];
+  t.mock.method(console, 'error', (...args) => errors.push(args));
+  const { service } = fixture({
+    savedRevisionLoader: async () => 2,
+    savedWorkspaceLoader: async () => {
+      loads += 1;
+      if (fail) throw new Error('temporary DB failure');
+      return workspace({ revision: 2 });
+    },
+    reconciliationIntervalMs: 0,
+  });
+  await service.sync('garden', workspace());
+  await service.status('garden', { reconcile: true });
+  await service.reconcileSavedWorkspace('garden', 1);
+  assert.equal((await service.status('garden')).revision, 1);
+  assert.equal(errors.length, 1);
+  fail = false;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await service.status('garden', { reconcile: true });
+  await service.reconcileSavedWorkspace('garden', 1);
+  assert.equal((await service.status('garden')).revision, 2);
+  assert.equal(loads, 2);
+});
 
 test('syncs PDF, metadata, notes, highlights, positions, and a Markdown audit log', async () => {
   const { collection, markdownStore, service, sourceLoads } = fixture();

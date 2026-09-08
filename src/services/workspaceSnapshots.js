@@ -578,6 +578,19 @@ function createWorkspaceSnapshotService(
     return publicState(document);
   }
 
+  /** Check Wiki freshness without loading or decompressing the canvas payload. */
+  async function loadRevision(projectNameValue) {
+    const projectName = requiredString(projectNameValue, 'projectName');
+    const document = await (await collection()).findOne(
+      { _id: projectName },
+      { projection: { _id: 0, revision: 1 } },
+    );
+    if (!document) {
+      throw new WorkspaceSnapshotError('Workspace snapshot not found', 404, 'not_found');
+    }
+    return document.revision;
+  }
+
   async function remove(projectNameValue) {
     const projectName = requiredString(projectNameValue, 'projectName');
     const snapshots = await collection();
@@ -1185,6 +1198,7 @@ function createWorkspaceSnapshotService(
     list,
     listHistory,
     load,
+    loadRevision,
     remove,
     patch,
     restoreHistory,

@@ -203,6 +203,19 @@ class MemoryHistoryCollection {
   }
 }
 
+test('loads only the canonical revision for Wiki freshness checks without decoding the board', async () => {
+  const collection = new MemorySnapshotCollection();
+  const reads = [];
+  collection.findOne = async (query, options) => {
+    reads.push({ query, options });
+    return query._id === 'garden' ? { revision: 7 } : null;
+  };
+  const service = createWorkspaceSnapshotService(() => collection);
+  assert.equal(await service.loadRevision('garden'), 7);
+  assert.deepEqual(reads[0], { query: { _id: 'garden' }, options: { projection: { _id: 0, revision: 1 } } });
+  await assert.rejects(service.loadRevision('missing'), { status: 404 });
+});
+
 function fixture(onWorkspaceSaved = null) {
   const collection = new MemorySnapshotCollection();
   const historyCollection = new MemoryHistoryCollection();

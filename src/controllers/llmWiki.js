@@ -29,7 +29,7 @@ function sendError(res, error) {
 
 exports.status = async (req, res) => {
   try {
-    return res.status(200).json(await llmWikiService.status(req.params.id));
+    return res.status(200).json(await llmWikiService.status(req.params.id, { reconcile: true }));
   } catch (error) {
     return sendError(res, error);
   }
