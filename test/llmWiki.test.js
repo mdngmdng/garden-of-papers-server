@@ -990,6 +990,27 @@ test('persists manuscript-only answers from attached memos without PDF evidence 
   assert.ok(draftRequest.input.includes('나의 연구 결과'));
 });
 
+test('persists an explicit rewrite response kind and recovers it without generating a second answer', async () => {
+  let calls = 0;
+  const { service } = fixture({ openAIRequest: async request => {
+    if (request.textFormat?.name === 'wiki_manuscript_draft') {
+      calls++;
+      assert.match(request.input, /원래 본문/);
+      return JSON.stringify({ text: '고친 본문 \\cite{existing}', error: '' });
+    }
+    return 'Wiki synchronization';
+  } });
+  await service.sync('garden', workspace());
+  const context = { sources: [], rewrite: { title: '원고', heading: '', text: '원래 본문 \\cite{existing}', before: '앞 글', after: '뒤 글' } };
+  await service.enqueueChat('garden', '간결하게', 'rewrite-request', [], 'rewrite-thread', [], context);
+  const result = await waitForThreadAnswer(service, 'rewrite-thread', 'rewrite-request');
+  const answer = result.messages.find(message => message.replyTo === 'rewrite-request');
+  assert.equal(answer.outputKind, 'manuscript-rewrite');
+  assert.equal(answer.text, '고친 본문 \\cite{existing}');
+  await service.enqueueChat('garden', '간결하게', 'rewrite-request', [], 'rewrite-thread', [], context);
+  assert.equal(calls, 1);
+});
+
 test('passes memo citation catalogs through generation and persists cite markup for manuscript insertion', async () => {
   let draftRequest;
   const text = '연구 맥락을 유지한다 \\cite{memo_ref_1}.';

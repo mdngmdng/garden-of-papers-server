@@ -1,6 +1,31 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { normalizeManuscriptDraft, requestWikiManuscriptDraft } = require('../src/services/wikiManuscriptDraft');
+
+test('rewrites an existing passage without attachments, preserving its own citation keys and placeholders', async () => {
+  const rewrite = { title: '원고', heading: '서론', text: '원래 본문 \\cite{original_key} [x]', before: '앞 문맥', after: '뒤 문맥' };
+  const manuscriptDraft = normalizeManuscriptDraft({ sources: [], rewrite });
+  assert.deepEqual(manuscriptDraft.rewrite, rewrite);
+  const answer = await requestWikiManuscriptDraft({ question: '간결하게', manuscriptDraft, openAIRequest: async request => {
+    assert.match(request.instructions, /Rewrite only the selected manuscript passage/);
+    assert.match(request.input, /앞 문맥/);
+    assert.match(request.instructions, /never include neighboring passages/);
+    return JSON.stringify({ text: '짧은 본문 \\cite{original_key} [x]', error: '' });
+  } });
+  assert.equal(answer.text, '짧은 본문 \\cite{original_key} [x]');
+  for (const text of ['', 'a'.repeat(40001)]) assert.throws(() => normalizeManuscriptDraft({ sources: [], rewrite: { ...rewrite, text } }));
+  assert.throws(() => normalizeManuscriptDraft({ sources: [], rewrite: { ...rewrite, before: 'a'.repeat(4001) } }));
+});
+
+test('rejects rewrites that drop original citations, add invented references, or remove citation placeholders', async () => {
+  for (const text of ['빠진 인용 [x]', '새 인용 \\cite{unknown} [x]', '빠진 표시 \\cite{original_key}']) {
+    let calls = 0;
+    await assert.rejects(requestWikiManuscriptDraft({ question: '간결하게', manuscriptDraft: { sources: [],
+      rewrite: { title: '', heading: '', text: '원래 본문 \\cite{original_key} [x]', before: '', after: '' } },
+      openAIRequest: async () => { calls++; return JSON.stringify({ text, error: '' }); } }), { code: 'invalid_manuscript_citations' });
+    assert.equal(calls, 2);
+  }
+});
 const source = { paperId: 'memo', paperKey: 'stable-memo', title: '문서', text: '공간적 배치로 연구 자료의 맥락을 유지한다.' };
 const citedSource = { ...source, text: '<!--gop-quote:q1-->\n> 공간적 배치로 연구 자료의 맥락을 유지한다.', citations: [
   { key: 'memo_ref_1', paperId: 'pdf', paperKey: 'stable-pdf', title: 'Spatial Research', authors: ['Jane Kim'], year: '2024',

@@ -1391,7 +1391,7 @@ function publicChatMessages(messages) {
     role: message?.role === 'assistant' ? 'assistant' : 'user',
     text: cleanText(message?.text, 100_000),
     ...(message?.answerStatus === 'failed' ? { answerStatus: 'failed' } : {}),
-    ...(message?.outputKind === 'manuscript' ? { outputKind: 'manuscript' } : {}),
+    ...(['manuscript', 'manuscript-rewrite'].includes(message?.outputKind) ? { outputKind: message.outputKind } : {}),
     createdAt: iso(message?.createdAt),
     sources: Array.isArray(message?.sources)
       ? message.sources.slice(0, MAX_BROAD_RETRIEVED_PAPERS).map((source) => ({
@@ -2903,7 +2903,8 @@ function createLLMWikiService({
         try {
           const input = `${retrieval.context}\n\n# Shared recent conversation\n${chatHistory(document)}\n\n# User question\n${question}`;
           if (manuscriptDraft) {
-            extracted = await requestWikiManuscriptDraft({ openAIRequest, question, manuscriptDraft });
+            extracted = await requestWikiManuscriptDraft({ openAIRequest, question, manuscriptDraft,
+              paperContext: manuscriptDraft.rewrite && contextPaperIds.length ? retrieval.context : '' });
             answer = extracted.text;
             answerStatus = extracted.answerStatus;
           } else if (threadId) {
@@ -2937,7 +2938,7 @@ function createLLMWikiService({
           id: crypto.randomUUID(),
           replyTo: requestId,
           role: 'assistant',
-          ...(manuscriptDraft ? { outputKind: 'manuscript' } : {}),
+          ...(manuscriptDraft ? { outputKind: manuscriptDraft.rewrite ? 'manuscript-rewrite' : 'manuscript' } : {}),
           text: extracted?.text ?? answer,
           ...(extracted ? { quotes: extracted.quotes } : {}),
           ...(extracted?.generation ? { generation: extracted.generation } : {}),
