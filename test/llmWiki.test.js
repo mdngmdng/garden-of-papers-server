@@ -135,6 +135,11 @@ function workspace({ revision = 1, includePaper = true, includeNote = true, x = 
   };
 }
 
+function structuredAnswer(summary = '핵심 설명.', evidenceIds = ['S1']) {
+  return JSON.stringify({ summary, sections: evidenceIds.length ? [{ heading: '원문 근거', evidenceIds, explanation: '이어지는 설명.' }] : [],
+    evidenceStatus: evidenceIds.length ? 'supported' : 'not_needed', limitation: '' });
+}
+
 function fixture(options = {}) {
   const collection = new MemoryCollection();
   const markdownStore = new MemoryMarkdownStore();
@@ -152,6 +157,7 @@ function fixture(options = {}) {
     openAIRequest: async (request) => {
       modelInput = request.input;
       if (options.openAIRequest) return options.openAIRequest(request);
+      if (request.textFormat) return structuredAnswer();
       return 'ILoveSketch의 저자는 Seok-Hyung Bae, Ravin Balakrishnan, Karan Singh입니다.';
     },
     pdfBridgeRegistrar: async (request) => {
@@ -968,7 +974,7 @@ async function waitForThreadAnswer(service, threadId, requestId) {
 
 test('isolates paper conversations from one another and from the legacy shared chat', async () => {
   const prompts = [];
-  const { service } = fixture({ openAIRequest: async (request) => { prompts.push(request.input); return '답변입니다.'; } });
+  const { service } = fixture({ openAIRequest: async (request) => { prompts.push(request.input); return request.textFormat ? structuredAnswer('답변입니다.', []) : '답변입니다.'; } });
   await service.sync('garden', workspace());
   await service.chat('garden', 'SHARED_ONLY_QUESTION');
   await service.enqueueChat('garden', 'THREAD_A_FIRST', 'a-1', ['paper-ilovesketch'], 'thread-a');
@@ -990,7 +996,10 @@ test('isolates paper conversations from one another and from the legacy shared c
 test('returns verified original quotations at their place in the answer', async () => {
   const { service } = fixture({ openAIRequest: async (request) => {
     assert.match(request.instructions, /verbatim excerpt/);
-    return '핵심 설명. <wiki-quote paper-id="paper-ilovesketch">ILoveSketch full PDF text from the cached TEI document.</wiki-quote> 이어지는 설명.';
+    assert.equal(request.textFormat.strict, true);
+    assert.match(request.input, /"paperId":"paper-ilovesketch"/);
+    assert.match(request.input, /"id":"S1"/);
+    return structuredAnswer();
   } });
   await service.sync('garden', workspace());
   await service.enqueueChat('garden', '핵심을 인용해서 알려줘', 'quote-request', ['paper-ilovesketch'], 'quote-thread');
@@ -1004,22 +1013,13 @@ test('returns verified original quotations at their place in the answer', async 
   assert.match(answer.text, /이어지는 설명/);
 });
 
-test('refuses to attach fabricated or incorrectly attributed quotations', () => {
-  const { extractWikiThreadQuotes } = require('../src/services/wikiThreadQuotes');
-  const papers = [{ id: 'paper', title: 'Original', sourceText: 'A sentence that really occurs in this paper.' }];
-  const result = extractWikiThreadQuotes('<wiki-quote paper-id="paper">An invented sentence that does not occur.</wiki-quote>' +
-    '<wiki-quote paper-id="another">A sentence that really occurs in this paper.</wiki-quote>', papers);
-  assert.deepEqual(result.quotes, []);
-  assert.doesNotMatch(result.text, /\[\[wiki-quote:/);
-});
-
 test('deduplicates concurrent retries in one thread and preserves earlier answers for queued follow-ups', async () => {
   const prompts = [];
   let release;
   const pending = new Promise((resolve) => { release = resolve; });
   const { collection, service } = fixture({ openAIRequest: async (request) => {
     prompts.push(request.input);
-    return prompts.length === 1 ? pending : 'SECOND_ANSWER';
+    return prompts.length === 1 ? pending : structuredAnswer('SECOND_ANSWER', []);
   } });
   await service.sync('garden', workspace());
   await Promise.all([
@@ -1028,7 +1028,7 @@ test('deduplicates concurrent retries in one thread and preserves earlier answer
   ]);
   await service.enqueueChat('garden', 'SECOND_QUESTION', 'r2', [], 'thread');
   assert.equal(collection.document.chatThreads.thread.filter((item) => item.id === 'r1').length, 1);
-  release('FIRST_ANSWER');
+  release(structuredAnswer('FIRST_ANSWER', []));
   await waitForThreadAnswer(service, 'thread', 'r2');
   assert.equal(prompts.length, 2);
   assert.match(prompts[1], /FIRST_ANSWER/);
@@ -1042,6 +1042,37 @@ test('recovers a persisted question after a server restart without duplicating i
   const result = await waitForThreadAnswer(service, 'recovered', 'pending');
   assert.equal(result.messages.filter((message) => message.id === 'pending').length, 1);
   assert.equal(result.messages.length, 2);
+});
+
+test('retries a malformed answer without persisting drafts or duplicating the user turn', async () => {
+  const prompts = [];
+  const { collection, service } = fixture({ openAIRequest: async (request) => {
+    prompts.push(request.input);
+    return prompts.length === 1 ? 'Wait typo quote tags. Need exact.' : structuredAnswer();
+  } });
+  await service.sync('garden', workspace());
+  collection.document.chatThreads = { repair: [
+    { id: 'old-user', role: 'user', text: '처음 질문', createdAt: '2026-09-08' },
+    { id: 'old-answer', role: 'assistant', replyTo: 'old-user', text: '설명. < 整理 > Wait typo quote tags. Need exact.', createdAt: '2026-09-08' },
+  ] };
+  await service.enqueueChat('garden', '사용자 검증 방법은?', 'retry-draft', ['paper-ilovesketch'], 'repair');
+  const result = await waitForThreadAnswer(service, 'repair', 'retry-draft');
+  assert.equal(prompts.length, 2);
+  assert.ok(prompts.every((input) => !input.includes('Wait typo')));
+  assert.equal(result.messages.filter((message) => message.id === 'retry-draft').length, 1);
+  assert.equal(result.messages.filter((message) => message.replyTo === 'retry-draft').length, 1);
+  assert.equal(result.messages.at(-1).quotes.length, 1);
+});
+
+test('reports exhausted answer validation as a failure, without saving malformed text or claiming sources', async () => {
+  const { service } = fixture({ openAIRequest: async () => '정확한 catalog ID가 없어 인용할 수 없다.' });
+  await service.sync('garden', workspace());
+  await service.enqueueChat('garden', '핵심은?', 'bad', ['paper-ilovesketch'], 'failure');
+  const { messages } = await waitForThreadAnswer(service, 'failure', 'bad');
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].answerStatus, 'failed');
+  assert.deepEqual(messages[1].sources, []);
+  assert.doesNotMatch(messages[1].text, /catalog|wiki-quote/);
 });
 
 test('rejects unsafe thread field paths and excludes chat papers from research search nodes', async () => {

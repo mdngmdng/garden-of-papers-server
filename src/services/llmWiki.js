@@ -9,7 +9,8 @@ const s3 = require('./s3');
 const pdfStorage = require('./pdfStorage');
 const pdfBridge = require('./pdfBridge');
 const pdfText = require('./pdfText');
-const { WIKI_THREAD_QUOTE_INSTRUCTIONS, extractWikiThreadQuotes } = require('./wikiThreadQuotes');
+const { outputText } = require('./openAIResponse');
+const { buildQuoteEvidence, hasDraftArtifacts, requestWikiThreadAnswer } = require('./wikiThreadAnswer');
 
 const DATABASE = 'GardenOfPapersSystem';
 const COLLECTION = 'LLMWikiSnapshots';
@@ -1388,6 +1389,7 @@ function publicChatMessages(messages) {
     replyTo: cleanText(message?.replyTo, 128),
     role: message?.role === 'assistant' ? 'assistant' : 'user',
     text: cleanText(message?.text, 100_000),
+    ...(message?.answerStatus === 'failed' ? { answerStatus: 'failed' } : {}),
     createdAt: iso(message?.createdAt),
     sources: Array.isArray(message?.sources)
       ? message.sources.slice(0, MAX_BROAD_RETRIEVED_PAPERS).map((source) => ({
@@ -1405,21 +1407,13 @@ function publicChatMessages(messages) {
   })).filter((message) => message.id && message.text);
 }
 
-function outputText(payload) {
-  return (payload?.output || [])
-    .filter((item) => item?.type === 'message')
-    .flatMap((item) => Array.isArray(item.content) ? item.content : [])
-    .filter((content) => content?.type === 'output_text')
-    .map((content) => cleanText(content.text, 100_000))
-    .filter(Boolean)
-    .join('\n\n');
-}
-
 async function defaultOpenAIRequest({
   instructions,
   input,
   maxOutputTokens = 4_000,
   reasoningEffort = 'low',
+  textFormat,
+  onResponse,
 }) {
   if (!config.openai.apiKey) {
     throw new LLMWikiError(
@@ -1441,10 +1435,13 @@ async function defaultOpenAIRequest({
       instructions,
       input,
       max_output_tokens: maxOutputTokens,
+      ...(textFormat ? { text: { format: textFormat } } : {}),
     }),
     signal: AbortSignal.timeout(120_000),
   });
   const payload = await response.json().catch(() => ({}));
+  onResponse?.({ responseId: payload.id, status: payload.status, model: payload.model,
+    incompleteReason: payload.incomplete_details?.reason, outputTokens: payload.usage?.output_tokens });
   if (!response.ok) {
     throw new LLMWikiError(
       cleanText(payload?.error?.message, 1_000) || `OpenAI request failed (${response.status})`,
@@ -1989,6 +1986,7 @@ function buildFocusedReadContext(document, question, contextPaperIds = []) {
     const abstract = cleanText(paper.abstract, 8_000);
     included.push([
       `# Focused Markdown reading: ${paper.title}`,
+      `Paper ID: ${paper.id}`,
       `Authors: ${paper.authors.join(', ') || 'Unknown'} | Year: ${paper.year || 'Unknown'} | Venue: ${paper.venue || 'Unknown'}`,
       `Selection reason: ${target.reason}`,
       abstract ? `## Abstract\n${abstract}` : '',
@@ -2323,6 +2321,8 @@ const CHAT_INSTRUCTIONS = [
 
 function chatHistory(document) {
   const messages = publicChatMessages(document.chatMessages)
+    .filter((message) => message.role !== 'assistant' || (message.answerStatus !== 'failed'
+      && !hasDraftArtifacts(message.text.replace(/\[\[wiki-quote:[\w-]+\]\]/g, ''))))
     .slice(-MAX_CHAT_HISTORY_MESSAGES);
   if (!messages.length) return '(no previous conversation)';
   const parts = messages.map((message) =>
@@ -2891,20 +2891,29 @@ function createLLMWikiService({
           }
         }
         let answer;
+        let extracted;
+        let answerStatus;
         try {
-          answer = await openAIRequest({
-            instructions: threadId ? `${CHAT_INSTRUCTIONS} ${WIKI_THREAD_QUOTE_INSTRUCTIONS}` : CHAT_INSTRUCTIONS,
-            input: `${retrieval.context}\n\n# Shared recent conversation\n${chatHistory(document)}\n\n# User question\n${question}`,
-            maxOutputTokens: 5_000,
-            reasoningEffort: retrieval.readingReport?.mode === 'retrieved-passages'
-              ? 'low'
-              : 'medium',
-          });
+          const input = `${retrieval.context}\n\n# Shared recent conversation\n${chatHistory(document)}\n\n# User question\n${question}`;
+          if (threadId) {
+            extracted = await requestWikiThreadAnswer({ openAIRequest, instructions: CHAT_INSTRUCTIONS,
+              input, question, evidence: buildQuoteEvidence(document.papers, retrieval.readingReport, queryTerms(question)) });
+            answer = extracted.text;
+          } else {
+            answer = await openAIRequest({ instructions: CHAT_INSTRUCTIONS, input, maxOutputTokens: 8000,
+              reasoningEffort: retrieval.readingReport?.mode === 'retrieved-passages' ? 'low' : 'medium' });
+          }
         } catch (error) {
           console.error(`LLM Wiki answer failed for ${workspaceId}:`, error);
-          answer = '답변 생성에 실패했습니다. 잠시 후 다시 질문해 주세요.';
+          answer = '답변을 완성하고 원문 인용을 확인하지 못했습니다. 다시 질문해 주세요.';
+          answerStatus = 'failed';
         }
-        const sources = directlyCitedSources(retrieval, answer, document.papers);
+        const citedSources = directlyCitedSources(retrieval, answer, document.papers);
+        const sources = answerStatus === 'failed' ? [] : [...new Map([
+          ...citedSources,
+          ...(extracted?.quotes || []).map((quote) => ({ id: quote.paperId, title: quote.title,
+            filePath: document.papers.find((paper) => paper.id === quote.paperId)?.filePath })),
+        ].map((source) => [source.id, source])).values()];
 
         // A chat reset may happen while the model is working. In that case the
         // cleared question must not be resurrected by a late answer.
@@ -2913,13 +2922,14 @@ function createLLMWikiService({
         if (!(latestMessages || []).some((message) => message?.id === requestId)) {
           return;
         }
-        const extracted = threadId ? extractWikiThreadQuotes(answer, document.papers, retrieval.readingReport) : null;
         const assistantMessage = {
           id: crypto.randomUUID(),
           replyTo: requestId,
           role: 'assistant',
           text: extracted?.text ?? answer,
           ...(extracted ? { quotes: extracted.quotes } : {}),
+          ...(extracted?.generation ? { generation: extracted.generation } : {}),
+          ...(answerStatus ? { answerStatus } : {}),
           createdAt: iso(now()),
           sources,
           readingReport: retrieval.readingReport,
@@ -3033,4 +3043,5 @@ module.exports = {
   llmWikiService: createLLMWikiService(),
   normalizeWorkspace,
   outputText,
+  defaultOpenAIRequest,
 };
