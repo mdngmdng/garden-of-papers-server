@@ -1,4 +1,5 @@
 const { preserveEvidenceRequests } = require('./evidenceRequestCompatibility');
+const { repairDuplicatePersistenceKeys, repairLegacyIncomingKeys } = require('./persistenceIdentity');
 const { getClient } = require('./mongo');
 const { gzipSync, gunzipSync } = require('node:zlib');
 
@@ -141,7 +142,7 @@ function validateObjectIdentities(objects, previousObjects = []) {
   }
 }
 
-function publicState(document) {
+function decodeStoredState(document) {
   if (document?.stateEncoding === SNAPSHOT_ENCODING && document.statePayload) {
     const payload = document.statePayload;
     const bytes = Buffer.isBuffer(payload)
@@ -160,6 +161,11 @@ function publicState(document) {
     );
   }
   return withoutRetiredSketches(document?.state ?? null);
+}
+
+function publicState(document) {
+  const state = decodeStoredState(document);
+  return state ? { ...state, objects: repairDuplicatePersistenceKeys(state.objects) } : state;
 }
 
 function stateStorageFields(state, serializedState) {
@@ -900,7 +906,6 @@ function createWorkspaceSnapshotService(
         'invalid_request',
       );
     }
-    validateState(state, projectName);
     const snapshots = await collection();
     const current = await snapshots.findOne({ _id: projectName });
     if (!current) {
@@ -914,6 +919,10 @@ function createWorkspaceSnapshotService(
       const replayedState = publicState(current);
       return { state: replayedState, replayed: true };
     }
+    if (Array.isArray(state?.objects)) {
+      state = { ...state, objects: repairLegacyIncomingKeys(state.objects, decodeStoredState(current).objects) };
+    }
+    validateState(state, projectName);
     if (current.revision !== baseRevision) {
       throw new WorkspaceSnapshotError(
         'Workspace revision conflict',
@@ -1030,13 +1039,14 @@ function createWorkspaceSnapshotService(
     const removed = new Set(
       delta.removedObjectIds.map((id) => requiredString(id, 'removedObjectId')),
     );
-    validateObjectIdentities(delta.upsertedObjects, currentState.objects);
+    const upsertedObjects = repairLegacyIncomingKeys(delta.upsertedObjects, decodeStoredState(current).objects);
+    validateObjectIdentities(upsertedObjects, currentState.objects);
     const byId = new Map(
       currentState.objects
         .filter((object) => !removed.has(object.id))
         .map((object) => [object.id, object]),
     );
-    for (const object of delta.upsertedObjects) {
+    for (const object of upsertedObjects) {
       const id = requiredString(object?.id, 'object.id');
       byId.set(id, preserveEvidenceRequests(byId.get(id), structuredClone(object)));
     }

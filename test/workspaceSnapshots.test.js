@@ -258,6 +258,33 @@ test('rejects duplicate object ids and changed client identities without saving'
   assert.deepEqual(await service.load('garden'), stored);
 });
 
+for (const method of ['save', 'patch']) {
+  test(`${method} repairs already-stored pasted notes without removing their content`, async () => {
+    const { service, collection } = fixture();
+    const initial = workspace();
+    await service.ensure(initial);
+    const notes = ['a', 'b', 'c', 'd', 'e'].map(id => ({ id, type: 'GX.MARONote', persistenceKey: 'copied-key', text: `note ${id}` }));
+    collection.document.state.objects = structuredClone(notes);
+    const loaded = await service.load('garden');
+    assert.equal(new Set(loaded.objects.map(o => o.persistenceKey)).size, 5);
+    const request = { projectName: 'garden', baseRevision: 0, mutationId: 'repair',
+      state: { ...initial, objects: notes }, delta: { camera: initial.camera, upsertedObjects: notes, removedObjectIds: [] } };
+    await service[method](request);
+    // Replaying an old browser's pre-repair payload must keep the same receipt.
+    const replayed = await service[method](request);
+    assert.equal(replayed.replayed, true);
+    const saved = await service.load('garden');
+    assert.equal(saved.revision, 1);
+    assert.deepEqual(saved.objects.map(o => [o.id, o.text]), notes.map(o => [o.id, o.text]));
+    assert.equal(new Set(collection.document.state.objects.map(o => o.persistenceKey)).size, 5);
+    assert.equal(saved.objects[0].persistenceKey, 'copied-key');
+    assert.equal(saved.objects[1].persistenceKey, 'recovered:b');
+    const newCollision = { ...saved, objects: [...saved.objects, { ...saved.objects[0], id: 'new-copy' }] };
+    await assert.rejects(service.save({ ...request, baseRevision: 1, mutationId: 'new-collision', state: newCollision }),
+      error => error.code === 'duplicate_object_identity');
+  });
+}
+
 test('triggers Wiki synchronization from every successful canonical save', async () => {
   const synchronized = [];
   const { service } = fixture(async (state) => synchronized.push(state));
