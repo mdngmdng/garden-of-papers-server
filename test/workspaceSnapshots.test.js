@@ -223,6 +223,28 @@ function fixture(onWorkspaceSaved = null) {
   };
 }
 
+test('rejects duplicate object ids and changed client identities without saving', async () => {
+  const { service } = fixture();
+  const initial = workspace();
+  initial.objects = [{ id: 'threddy', type: 'GX.MAROScientificPaper', persistenceKey: 'stable-threddy' }];
+  await service.ensure(initial);
+  const stored = await service.load('garden');
+  const bad = structuredClone(initial);
+  bad.objects.push({ ...bad.objects[0], persistenceKey: 'other-paper' });
+  await assert.rejects(service.save({ projectName: 'garden', baseRevision: 0, mutationId: 'duplicate', state: bad }),
+    error => error.code === 'duplicate_object_identity');
+  bad.objects = [bad.objects[1]];
+  await assert.rejects(service.save({ projectName: 'garden', baseRevision: 0, mutationId: 'identity', state: bad }),
+    error => error.code === 'object_identity_conflict');
+  await assert.rejects(service.patch({ projectName: 'garden', baseRevision: 0, mutationId: 'patch-identity',
+    delta: { camera: initial.camera, upsertedObjects: bad.objects, removedObjectIds: [] } }),
+    error => error.code === 'object_identity_conflict');
+  await assert.rejects(service.patch({ projectName: 'garden', baseRevision: 0, mutationId: 'patch-duplicates',
+    delta: { camera: initial.camera, upsertedObjects: [...initial.objects, ...initial.objects], removedObjectIds: [] } }),
+    error => error.code === 'duplicate_object_identity');
+  assert.deepEqual(await service.load('garden'), stored);
+});
+
 test('triggers Wiki synchronization from every successful canonical save', async () => {
   const synchronized = [];
   const { service } = fixture(async (state) => synchronized.push(state));

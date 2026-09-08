@@ -108,6 +108,7 @@ function validateState(state, expectedProjectName) {
       'invalid_request',
     );
   }
+  validateObjectIdentities(state.objects);
   const serializedState = JSON.stringify(state);
   const bytes = Buffer.byteLength(serializedState, 'utf8');
   if (bytes > MAX_SNAPSHOT_BYTES) {
@@ -118,6 +119,26 @@ function validateState(state, expectedProjectName) {
     );
   }
   return { projectName, ownerName, serializedState };
+}
+
+function validateObjectIdentities(objects, previousObjects = []) {
+  const ids = new Set();
+  const identities = new Set();
+  const previous = new Map(previousObjects.map((object) => [object.id, object]));
+  for (const object of objects) {
+    const id = requiredString(object?.id, 'object.id');
+    const identity = object.persistenceKey && `${object.type}:${object.persistenceKey}`;
+    if (ids.has(id) || (identity && identities.has(identity))) {
+      throw new WorkspaceSnapshotError('Duplicate workspace object identity', 400, 'duplicate_object_identity');
+    }
+    const existing = previous.get(id);
+    if (existing?.persistenceKey && object.persistenceKey &&
+        (existing.persistenceKey !== object.persistenceKey || existing.type !== object.type)) {
+      throw new WorkspaceSnapshotError('Workspace object identity changed', 409, 'object_identity_conflict');
+    }
+    ids.add(id);
+    if (identity) identities.add(identity);
+  }
 }
 
 function publicState(document) {
@@ -892,7 +913,12 @@ function createWorkspaceSnapshotService(
     const nextRevision = current.revision + 1;
     const savedState = {
       ...structuredClone(state),
-      objects: (() => { const old = new Map(publicState(current).objects.map(o => [o.id, o])); return state.objects.map(o => preserveEvidenceRequests(old.get(o.id), structuredClone(o))); })(),
+      objects: (() => {
+        const previousObjects = publicState(current).objects;
+        validateObjectIdentities(state.objects, previousObjects);
+        const old = new Map(previousObjects.map(o => [o.id, o]));
+        return state.objects.map(o => preserveEvidenceRequests(old.get(o.id), structuredClone(o)));
+      })(),
       ownerName: current.ownerName,
       projectName,
       id: projectName,
@@ -991,6 +1017,7 @@ function createWorkspaceSnapshotService(
     const removed = new Set(
       delta.removedObjectIds.map((id) => requiredString(id, 'removedObjectId')),
     );
+    validateObjectIdentities(delta.upsertedObjects, currentState.objects);
     const byId = new Map(
       currentState.objects
         .filter((object) => !removed.has(object.id))

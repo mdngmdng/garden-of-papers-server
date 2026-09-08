@@ -422,7 +422,12 @@ exports.updateData = async (req, res) => {
 
     try {
       const updatedData = await collection.findOneAndUpdate(
-        getIdQuery(_id),
+        {
+          ...getIdQuery(_id),
+          ...(req.body.clientObjectId ? {
+            clientObjectId: { $in: [req.body.clientObjectId, '', null] },
+          } : {}),
+        },
         {
           $set: update,
           ...(Object.keys(unset).length ? { $unset: unset } : {}),
@@ -431,6 +436,9 @@ exports.updateData = async (req, res) => {
       );
 
       if (!updatedData) {
+        if (req.body.clientObjectId) {
+          return res.status(409).json({ status: 'error', code: 'object_identity_conflict', message: 'Object identity does not match the saved object' });
+        }
         return res.status(404).json({ status: 'error', message: 'Data not found' });
       }
 

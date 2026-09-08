@@ -63,6 +63,8 @@ function canonicalUrl(value) {
   }
 }
 
+const { compatiblePdfIdentity } = require('./paperIdentityCompatibility');
+
 function normalizeTitle(value) {
   return cleanText(value, 1_000)
     .normalize('NFKC')
@@ -370,6 +372,7 @@ async function findIndexedPdf(identity, options = {}) {
     .limit(10)
     .toArray();
   for (const candidate of candidates) {
+    if (!compatiblePdfIdentity(identity, candidate.identityKeys)) continue;
     if (await validateLibraryCandidate(candidate, s3)) return candidate;
   }
   return null;
@@ -408,6 +411,10 @@ async function findLegacyPdf(projectName, identity, options = {}) {
       } });
     const sourceFileId = cleanText(sourceDocument?.fileId, 300);
     if (!sourceFileId) continue;
+    const sourceIdentity = identityFromLegacyDocument(sourceDocument);
+    // Include a title even if the old record has no year/author key.
+    const sourceTitle = sourceIdentity.title;
+    if (!compatiblePdfIdentity(identity, sourceTitle ? [`title:${sourceTitle}|year:`] : [])) continue;
     const originalKey = await resolvePdfS3Key(
       sourceProjectName,
       sourceFileId,
