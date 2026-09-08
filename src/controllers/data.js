@@ -324,6 +324,11 @@ exports.updateData = async (req, res) => {
     if (type !== '') update.type = type;
     if (pos.x !== 0 || pos.y !== 0 || pos.z !== 0) update.pos = pos;
     update.textValue = textValue;
+    // Keep human-edit provenance in the legacy mirror, including undo to an AI draft.
+    if (req.body.aiEditedAt === null) unset.aiEditedAt = '';
+    else if (typeof req.body.aiEditedAt === 'string' && Number.isFinite(Date.parse(req.body.aiEditedAt))) {
+      update.aiEditedAt = req.body.aiEditedAt;
+    }
     if (paperName !== '') update.paperName = paperName;
     if (year !== '') update.year = year;
     if (resourceLink !== '') update.resourceLink = resourceLink;
