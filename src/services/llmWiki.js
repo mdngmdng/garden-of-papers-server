@@ -2808,12 +2808,19 @@ function createLLMWikiService({
     const messageField = threadId ? `chatThreads.${threadId}` : 'chatMessages';
     const queueKey = threadId ? `${workspaceId}:thread:${threadId}` : workspaceId;
     const snapshots = await collection();
-    const document = await hydrateMarkdownSources(
-      hydrateStoredSources(
-        await snapshots.findOne({ _id: workspaceId }),
-      ),
-      markdownStore,
-    );
+    const snapshotRewrite = Boolean(manuscriptDraft?.rewrite) && contextPaperIds.length === 0;
+    // Text and memo snapshots need no PDF decoding, Markdown reads or retrieval.
+    // Keep their durable conversation independent of the first canvas sync.
+    if (snapshotRewrite) {
+      const emptyWorkspace = { papers: [], unlinkedNotes: [], relationships: [], searchNodes: [] };
+      await snapshots.updateOne({ _id: workspaceId }, {
+        $setOnInsert: { ...emptyWorkspace, projectName: workspaceId, revision: -1,
+          counts: counts(emptyWorkspace), latestDiff: diffWorkspace(null, emptyWorkspace) },
+      }, { upsert: true });
+    }
+    const stored = await snapshots.findOne({ _id: workspaceId }, snapshotRewrite
+      ? { projection: { [messageField]: 1 } } : undefined);
+    const document = snapshotRewrite ? stored : await hydrateMarkdownSources(hydrateStoredSources(stored), markdownStore);
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
 
     if (threadId) document.chatMessages = document.chatThreads?.[threadId] || [];
@@ -2867,7 +2874,7 @@ function createLLMWikiService({
       .catch(() => undefined)
       .then(async () => {
         // Read history after earlier turns in this conversation have finished.
-        const historySnapshot = await snapshots.findOne({ _id: workspaceId });
+        const historySnapshot = await snapshots.findOne({ _id: workspaceId }, { projection: { [messageField]: 1 } });
         const history = threadId ? historySnapshot?.chatThreads?.[threadId] : historySnapshot?.chatMessages;
         const questionIndex = (history || []).findIndex((message) => message.id === requestId);
         if (questionIndex < 0) return;
@@ -2883,8 +2890,10 @@ function createLLMWikiService({
             contextPaperIds,
           );
         }
-        let retrieval = buildFocusedReadContext(document, question, contextPaperIds)
-          || buildChatContext(document, question, contextPaperIds);
+        let retrieval = snapshotRewrite
+          ? { context: '', sources: [], directSources: [], readingReport: null }
+          : buildFocusedReadContext(document, question, contextPaperIds)
+            || buildChatContext(document, question, contextPaperIds);
         if (fullTextRequested) {
           try {
             retrieval = await buildDeepReadContext(
@@ -2920,7 +2929,7 @@ function createLLMWikiService({
           answer = '답변을 완성하고 원문 인용을 확인하지 못했습니다. 다시 질문해 주세요.';
           answerStatus = 'failed';
         }
-        const citedSources = directlyCitedSources(retrieval, answer, document.papers);
+        const citedSources = manuscriptDraft ? [] : directlyCitedSources(retrieval, answer, document.papers);
         const sources = answerStatus === 'failed' || manuscriptDraft ? [] : [...new Map([
           ...citedSources,
           ...(extracted?.quotes || []).map((quote) => ({ id: quote.paperId, title: quote.title,
@@ -2929,7 +2938,7 @@ function createLLMWikiService({
 
         // A chat reset may happen while the model is working. In that case the
         // cleared question must not be resurrected by a late answer.
-        const latest = await snapshots.findOne({ _id: workspaceId });
+        const latest = await snapshots.findOne({ _id: workspaceId }, { projection: { [messageField]: 1 } });
         const latestMessages = threadId ? latest?.chatThreads?.[threadId] : latest?.chatMessages;
         if (!(latestMessages || []).some((message) => message?.id === requestId)) {
           return;

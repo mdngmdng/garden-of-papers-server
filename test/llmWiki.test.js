@@ -24,7 +24,7 @@ class MemoryCollection {
       if ((valueAt(field.slice(0, -3)) || []).some((message) => message.id === condition.$ne)) return { matchedCount: 0 };
     }
     this.document = {
-      ...(this.document || { _id: query._id }),
+      ...(this.document || { _id: query._id, ...structuredClone(update.$setOnInsert) }),
       ...structuredClone(update.$set),
     };
     for (const [field, operation] of Object.entries(update.$push || {})) {
@@ -1009,6 +1009,64 @@ test('persists an explicit rewrite response kind and recovers it without generat
   assert.equal(answer.text, '고친 본문 \\cite{existing}');
   await service.enqueueChat('garden', '간결하게', 'rewrite-request', [], 'rewrite-thread', [], context);
   assert.equal(calls, 1);
+});
+
+test('rewrites a captured block before any Wiki sync and retains the answer through the first sync', async () => {
+  let calls = 0;
+  const { service, collection, markdownStore } = fixture({ openAIRequest: async request => {
+    calls++;
+    assert.match(request.input, /선택한 원문/);
+    assert.match(request.input, /첨부 메모 원문/);
+    return JSON.stringify({ text: '다듬은 본문', error: '' });
+  } });
+  const context = { sources: [{ paperId: 'memo', paperKey: 'memo', title: '메모', text: '첨부 메모 원문' }],
+    rewrite: { title: '원고', heading: '', text: '선택한 원문', before: '앞 글', after: '' } };
+  await service.enqueueChat('garden', '간결하게', 'early-rewrite', [], 'early-thread', [], context);
+  const result = await waitForThreadAnswer(service, 'early-thread', 'early-rewrite');
+  assert.equal(result.messages.at(-1).outputKind, 'manuscript-rewrite');
+  assert.equal(result.messages.at(-1).text, '다듬은 본문');
+  assert.equal(collection.document.revision, -1);
+  assert.equal((await service.status('garden')).counts.papers, 0);
+  assert.equal(markdownStore.files.size, 0);
+  await service.sync('garden', workspace());
+  assert.deepEqual((await service.getChat('garden', 'early-thread')).messages, result.messages);
+  await service.enqueueChat('garden', '간결하게', 'early-rewrite', [], 'early-thread', [], context);
+  assert.equal(calls, 1);
+});
+
+test('does not read unrelated PDF Markdown for a rewrite containing only captured text', async () => {
+  let rewriteInput = '';
+  const { service, collection, markdownStore } = fixture({ openAIRequest: async request => {
+    rewriteInput = request.input;
+    return JSON.stringify({ text: '고친 글', error: '' });
+  } });
+  await service.sync('garden', workspace());
+  for (const paper of collection.document.papers) { delete paper.sourceText; delete paper.sourceTextGzip; }
+  let reads = 0;
+  markdownStore.read = async () => { reads++; throw new Error('Unrelated PDF must not be read'); };
+  await service.enqueueChat('garden', '다듬어', 'fast-rewrite', [], 'fast-thread', [],
+    { sources: [], rewrite: { title: '원고', heading: '', text: '원래 글', before: '', after: '' } });
+  const result = await waitForThreadAnswer(service, 'fast-thread', 'fast-rewrite');
+  assert.equal(result.messages.at(-1).text, '고친 글');
+  assert.match(rewriteInput, /원래 글/);
+  assert.doesNotMatch(rewriteInput, /ILoveSketch/);
+  assert.equal(reads, 0);
+  assert.equal(collection.document.revision, 1);
+});
+
+test('still includes explicitly attached PDF context in a rewrite', async () => {
+  let rewriteInput = '';
+  const { service } = fixture({ openAIRequest: async request => {
+    rewriteInput = request.input;
+    return JSON.stringify({ text: '논문을 참고해 고친 글', error: '' });
+  } });
+  await service.sync('garden', workspace());
+  await service.enqueueChat('garden', '첨부 논문을 참고해 다듬어', 'pdf-rewrite', ['paper-ilovesketch'], 'pdf-thread', [],
+    { sources: [], rewrite: { title: '원고', heading: '', text: '원래 글', before: '', after: '' } });
+  const result = await waitForThreadAnswer(service, 'pdf-thread', 'pdf-rewrite');
+  assert.equal(result.messages.at(-1).text, '논문을 참고해 고친 글');
+  assert.match(rewriteInput, /원래 글/);
+  assert.match(rewriteInput, /ILoveSketch full PDF text/);
 });
 
 test('passes memo citation catalogs through generation and persists cite markup for manuscript insertion', async () => {
