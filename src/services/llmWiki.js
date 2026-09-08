@@ -11,6 +11,7 @@ const pdfBridge = require('./pdfBridge');
 const pdfText = require('./pdfText');
 const { outputText } = require('./openAIResponse');
 const { buildQuoteEvidence, hasDraftArtifacts, requestWikiThreadAnswer } = require('./wikiThreadAnswer');
+const { normalizeManuscriptDraft, requestWikiManuscriptDraft } = require('./wikiManuscriptDraft');
 
 const DATABASE = 'GardenOfPapersSystem';
 const COLLECTION = 'LLMWikiSnapshots';
@@ -1390,6 +1391,7 @@ function publicChatMessages(messages) {
     role: message?.role === 'assistant' ? 'assistant' : 'user',
     text: cleanText(message?.text, 100_000),
     ...(message?.answerStatus === 'failed' ? { answerStatus: 'failed' } : {}),
+    ...(message?.outputKind === 'manuscript' ? { outputKind: 'manuscript' } : {}),
     createdAt: iso(message?.createdAt),
     sources: Array.isArray(message?.sources)
       ? message.sources.slice(0, MAX_BROAD_RETRIEVED_PAPERS).map((source) => ({
@@ -2792,12 +2794,17 @@ function createLLMWikiService({
     contextPaperIdsValue = [],
     threadIdValue,
     historyValue = [],
+    manuscriptDraftValue,
   ) {
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
     const question = requiredString(questionValue, 'question', 8_000);
     const requestId = requiredString(requestIdValue, 'requestId', 128);
     const contextPaperIds = optionalStringList(contextPaperIdsValue);
     const threadId = validThreadId(threadIdValue);
+    let manuscriptDraft;
+    try { manuscriptDraft = normalizeManuscriptDraft(manuscriptDraftValue); }
+    catch (error) { throw new LLMWikiError(error.message, 400, 'invalid_manuscript_draft'); }
+    if (manuscriptDraft && !threadId) throw new LLMWikiError('원고 작성은 Wiki 대화 종이에서 요청해 주세요.', 400, 'invalid_manuscript_draft');
     const messageField = threadId ? `chatThreads.${threadId}` : 'chatMessages';
     const queueKey = threadId ? `${workspaceId}:thread:${threadId}` : workspaceId;
     const snapshots = await collection();
@@ -2867,7 +2874,7 @@ function createLLMWikiService({
         const previousQuestions = new Set(history.slice(0, questionIndex).filter((message) => message.role === 'user').map((message) => message.id));
         document.chatMessages = history.filter((message, index) => index < questionIndex ||
           (message.role === 'assistant' && previousQuestions.has(message.replyTo)));
-        const fullTextRequested = requestsFullTextReview(question);
+        const fullTextRequested = !manuscriptDraft && requestsFullTextReview(question);
         if (fullTextRequested) {
           await hydrateRequestedFullTextSources(
             workspaceId,
@@ -2895,7 +2902,11 @@ function createLLMWikiService({
         let answerStatus;
         try {
           const input = `${retrieval.context}\n\n# Shared recent conversation\n${chatHistory(document)}\n\n# User question\n${question}`;
-          if (threadId) {
+          if (manuscriptDraft) {
+            extracted = await requestWikiManuscriptDraft({ openAIRequest, question, manuscriptDraft });
+            answer = extracted.text;
+            answerStatus = extracted.answerStatus;
+          } else if (threadId) {
             extracted = await requestWikiThreadAnswer({ openAIRequest, instructions: CHAT_INSTRUCTIONS,
               input, question, evidence: buildQuoteEvidence(document.papers, retrieval.readingReport, queryTerms(question)) });
             answer = extracted.text;
@@ -2909,7 +2920,7 @@ function createLLMWikiService({
           answerStatus = 'failed';
         }
         const citedSources = directlyCitedSources(retrieval, answer, document.papers);
-        const sources = answerStatus === 'failed' ? [] : [...new Map([
+        const sources = answerStatus === 'failed' || manuscriptDraft ? [] : [...new Map([
           ...citedSources,
           ...(extracted?.quotes || []).map((quote) => ({ id: quote.paperId, title: quote.title,
             filePath: document.papers.find((paper) => paper.id === quote.paperId)?.filePath })),
@@ -2926,13 +2937,14 @@ function createLLMWikiService({
           id: crypto.randomUUID(),
           replyTo: requestId,
           role: 'assistant',
+          ...(manuscriptDraft ? { outputKind: 'manuscript' } : {}),
           text: extracted?.text ?? answer,
           ...(extracted ? { quotes: extracted.quotes } : {}),
           ...(extracted?.generation ? { generation: extracted.generation } : {}),
           ...(answerStatus ? { answerStatus } : {}),
           createdAt: iso(now()),
           sources,
-          readingReport: retrieval.readingReport,
+          readingReport: manuscriptDraft ? null : retrieval.readingReport,
         };
         await snapshots.updateOne(
           { _id: workspaceId },

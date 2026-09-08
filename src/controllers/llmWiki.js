@@ -68,6 +68,7 @@ exports.chat = async (req, res) => {
         req.body?.contextPaperIds,
         req.body?.threadId,
         req.body?.history,
+        req.body?.manuscriptDraft,
       ),
     );
   } catch (error) {
