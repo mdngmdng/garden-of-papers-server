@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { generatePdfPreview } = require('../src/services/pdfPreview');
 const {
   paperIdentityKeys,
   resolvePdfS3Key,
@@ -24,6 +25,9 @@ function fakeMongo() {
               async updateOne(filter, update, options) {
                 updates.push({ key, filter, update, options });
               },
+              async updateMany(filter, update, options) {
+                updates.push({ key, filter, update, options });
+              },
             });
           }
           return collections.get(key);
@@ -32,6 +36,32 @@ function fakeMongo() {
     },
   };
 }
+
+test('generates an uploaded PDF preview before its SaveFile row exists', async () => {
+  const mongoClient = fakeMongo();
+  const pdf = Buffer.from('%PDF-1.7\nnew upload');
+  const image = Buffer.alloc(2048, 1);
+  const uploads = [];
+  const preview = await generatePdfPreview('new-board', 'new-file', 0, {
+    mongoClient,
+    pdfBuffer: pdf,
+    s3: {
+      async headPdf() { return { size: pdf.length }; },
+      async uploadPdfPreview(key, buffer, type) { uploads.push({ key, buffer, type }); },
+    },
+    async render(buffer, pageIndex) {
+      assert.deepEqual(buffer, pdf);
+      assert.equal(pageIndex, 0);
+      return { buffer: image, width: 320, height: 414, pageCount: 5 };
+    },
+  });
+  assert.equal(preview.sourceId, 'new-file');
+  assert.equal(preview.width, 320);
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].type, 'image/webp');
+  assert.ok(mongoClient.updates.some(({ key, update }) =>
+    key === 'new-board/PdfMeta' && update.$set?.previewStatus === 'ready'));
+});
 
 test('normalizes stable paper identities across DOI and URL variants', () => {
   const keys = paperIdentityKeys({

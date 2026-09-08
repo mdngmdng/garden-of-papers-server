@@ -162,6 +162,8 @@ function legacyPaperQuery(identity = {}) {
 }
 
 function identityFromLegacyDocument(document = {}) {
+  // Preview jobs may run before the browser saves the newly uploaded fileId.
+  if (!document) return {};
   return {
     resultId: document.resultId,
     doi: document.doi,
