@@ -9,6 +9,7 @@ const s3 = require('./s3');
 const pdfStorage = require('./pdfStorage');
 const pdfBridge = require('./pdfBridge');
 const pdfText = require('./pdfText');
+const { WIKI_THREAD_QUOTE_INSTRUCTIONS, extractWikiThreadQuotes } = require('./wikiThreadQuotes');
 
 const DATABASE = 'GardenOfPapersSystem';
 const COLLECTION = 'LLMWikiSnapshots';
@@ -423,7 +424,7 @@ function normalizeWorkspace(state, expectedId) {
     searchNodes: state.objects
       .filter((object) =>
         object?.type === 'GX.MAROBlankPaper'
-        && object.paperKind !== 'manuscript',
+        && object.paperKind !== 'manuscript' && object.paperKind !== 'wiki-thread',
       )
       .map(normalizeSearchNode)
       .filter((node) => node.id)
@@ -1396,6 +1397,11 @@ function publicChatMessages(messages) {
       }))
       : [],
     readingReport: publicReadingReport(message?.readingReport),
+    ...(Array.isArray(message?.quotes) ? { quotes: message.quotes.slice(0, 8).map((quote) => ({
+      id: cleanText(quote.id, 128), paperId: cleanText(quote.paperId, 256),
+      title: cleanText(quote.title, 1000), text: cleanText(quote.text, 2400),
+      ...(Number.isInteger(quote.pageIndex) && quote.pageIndex >= 0 ? { pageIndex: quote.pageIndex } : {}),
+    })) } : {}),
   })).filter((message) => message.id && message.text);
 }
 
@@ -2320,7 +2326,8 @@ function chatHistory(document) {
     .slice(-MAX_CHAT_HISTORY_MESSAGES);
   if (!messages.length) return '(no previous conversation)';
   const parts = messages.map((message) =>
-    `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.text}`,
+    `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.text.replace(/\[\[wiki-quote:([\w-]+)\]\]/g,
+      (marker, id) => { const quote = message.quotes?.find((item) => item.id === id); return quote ? `${quote.text} — ${quote.title}` : marker; })}`,
   );
   const selected = [];
   let remaining = MAX_CHAT_HISTORY_CHARACTERS;
@@ -2477,7 +2484,7 @@ function createLLMWikiService({
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
     const document = await (await collection()).findOne(
       { _id: workspaceId },
-      { projection: { 'papers.sourceTextGzip': 0 } },
+      { projection: { 'papers.sourceTextGzip': 0, chatThreads: 0 } },
     );
     if (reconcile) void reconcileSavedWorkspace(workspaceId, document?.revision);
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
@@ -2783,11 +2790,16 @@ function createLLMWikiService({
     questionValue,
     requestIdValue,
     contextPaperIdsValue = [],
+    threadIdValue,
+    historyValue = [],
   ) {
     const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
     const question = requiredString(questionValue, 'question', 8_000);
     const requestId = requiredString(requestIdValue, 'requestId', 128);
     const contextPaperIds = optionalStringList(contextPaperIdsValue);
+    const threadId = validThreadId(threadIdValue);
+    const messageField = threadId ? `chatThreads.${threadId}` : 'chatMessages';
+    const queueKey = threadId ? `${workspaceId}:thread:${threadId}` : workspaceId;
     const snapshots = await collection();
     const document = await hydrateMarkdownSources(
       hydrateStoredSources(
@@ -2797,17 +2809,28 @@ function createLLMWikiService({
     );
     if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
 
+    if (threadId) document.chatMessages = document.chatThreads?.[threadId] || [];
+
     const existingMessages = publicChatMessages(document.chatMessages);
-    if (existingMessages.some((message) => message.id === requestId)) {
+    const existingQuestion = existingMessages.find((message) => message.id === requestId);
+    if (existingQuestion && existingQuestion.text !== question) {
+      throw new LLMWikiError('This request id belongs to another question', 409, 'request_conflict');
+    }
+    if (existingQuestion && (existingMessages.some((message) => message.replyTo === requestId) || chatQueues.has(queueKey))) {
       return {
         workspaceId,
         requestId,
+        ...(threadId ? { threadId } : {}),
         accepted: true,
         messages: existingMessages,
       };
     }
 
     const createdAt = iso(now());
+    // A duplicated canvas paper starts a new conversation with its visible history.
+    const seed = threadId && existingMessages.length === 0 && Array.isArray(historyValue)
+      ? historyValue.slice(-12).filter((item) => item && ['user', 'assistant'].includes(item.role) && typeof item.text === 'string')
+        .map((item) => ({ id: crypto.randomUUID(), role: item.role, text: cleanText(item.text, 2000), createdAt })) : [];
     const userMessage = {
       id: requestId,
       role: 'user',
@@ -2815,12 +2838,12 @@ function createLLMWikiService({
       createdAt,
       sources: [],
     };
-    await snapshots.updateOne(
-      { _id: workspaceId },
+    const inserted = existingQuestion ? null : await snapshots.updateOne(
+      { _id: workspaceId, [`${messageField}.id`]: { $ne: requestId } },
       {
         $push: {
-          chatMessages: {
-            $each: [userMessage],
+          [messageField]: {
+            $each: [...seed, userMessage],
             $slice: -MAX_SHARED_CHAT_MESSAGES,
           },
         },
@@ -2828,10 +2851,22 @@ function createLLMWikiService({
       },
     );
 
-    const before = chatQueues.get(workspaceId) || Promise.resolve();
+    if (inserted && inserted.matchedCount === 0) {
+      return { ...(await getChat(workspaceId, threadId)), requestId, accepted: true };
+    }
+
+    const before = chatQueues.get(queueKey) || Promise.resolve();
     const operation = before
       .catch(() => undefined)
       .then(async () => {
+        // Read history after earlier turns in this conversation have finished.
+        const historySnapshot = await snapshots.findOne({ _id: workspaceId });
+        const history = threadId ? historySnapshot?.chatThreads?.[threadId] : historySnapshot?.chatMessages;
+        const questionIndex = (history || []).findIndex((message) => message.id === requestId);
+        if (questionIndex < 0) return;
+        const previousQuestions = new Set(history.slice(0, questionIndex).filter((message) => message.role === 'user').map((message) => message.id));
+        document.chatMessages = history.filter((message, index) => index < questionIndex ||
+          (message.role === 'assistant' && previousQuestions.has(message.replyTo)));
         const fullTextRequested = requestsFullTextReview(question);
         if (fullTextRequested) {
           await hydrateRequestedFullTextSources(
@@ -2858,7 +2893,7 @@ function createLLMWikiService({
         let answer;
         try {
           answer = await openAIRequest({
-            instructions: CHAT_INSTRUCTIONS,
+            instructions: threadId ? `${CHAT_INSTRUCTIONS} ${WIKI_THREAD_QUOTE_INSTRUCTIONS}` : CHAT_INSTRUCTIONS,
             input: `${retrieval.context}\n\n# Shared recent conversation\n${chatHistory(document)}\n\n# User question\n${question}`,
             maxOutputTokens: 5_000,
             reasoningEffort: retrieval.readingReport?.mode === 'retrieved-passages'
@@ -2874,14 +2909,17 @@ function createLLMWikiService({
         // A chat reset may happen while the model is working. In that case the
         // cleared question must not be resurrected by a late answer.
         const latest = await snapshots.findOne({ _id: workspaceId });
-        if (!(latest?.chatMessages || []).some((message) => message?.id === requestId)) {
+        const latestMessages = threadId ? latest?.chatThreads?.[threadId] : latest?.chatMessages;
+        if (!(latestMessages || []).some((message) => message?.id === requestId)) {
           return;
         }
+        const extracted = threadId ? extractWikiThreadQuotes(answer, document.papers, retrieval.readingReport) : null;
         const assistantMessage = {
           id: crypto.randomUUID(),
           replyTo: requestId,
           role: 'assistant',
-          text: answer,
+          text: extracted?.text ?? answer,
+          ...(extracted ? { quotes: extracted.quotes } : {}),
           createdAt: iso(now()),
           sources,
           readingReport: retrieval.readingReport,
@@ -2890,7 +2928,7 @@ function createLLMWikiService({
           { _id: workspaceId },
           {
             $push: {
-              chatMessages: {
+              [messageField]: {
                 $each: [assistantMessage],
                 $slice: -MAX_SHARED_CHAT_MESSAGES,
               },
@@ -2899,22 +2937,23 @@ function createLLMWikiService({
           },
         );
       });
-    chatQueues.set(workspaceId, operation);
+    chatQueues.set(queueKey, operation);
     void operation
       .catch((error) => {
         console.error(`LLM Wiki queued chat failed for ${workspaceId}:`, error);
       })
       .finally(() => {
-        if (chatQueues.get(workspaceId) === operation) chatQueues.delete(workspaceId);
+        if (chatQueues.get(queueKey) === operation) chatQueues.delete(queueKey);
       });
 
     return {
       workspaceId,
       requestId,
+      ...(threadId ? { threadId } : {}),
       accepted: true,
       messages: publicChatMessages([
-        ...(document.chatMessages || []),
-        userMessage,
+        ...existingMessages, ...seed,
+        ...(existingQuestion ? [] : [userMessage]),
       ]),
     };
   }
@@ -2930,6 +2969,23 @@ function createLLMWikiService({
       { $set: { chatMessages: [], chatUpdatedAt: clearedAt } },
     );
     return { workspaceId, messages: [], clearedAt: iso(clearedAt) };
+  }
+
+  function validThreadId(value) {
+    if (value === undefined || value === null || value === '') return '';
+    if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value) || ['__proto__', 'prototype', 'constructor'].includes(value)) {
+      throw new LLMWikiError('Invalid conversation id', 400, 'invalid_thread');
+    }
+    return value;
+  }
+
+  async function getChat(workspaceIdValue, threadIdValue) {
+    const workspaceId = requiredString(workspaceIdValue, 'workspaceId');
+    const threadId = validThreadId(threadIdValue);
+    const field = threadId ? `chatThreads.${threadId}` : 'chatMessages';
+    const document = await (await collection()).findOne({ _id: workspaceId }, { projection: { [field]: 1 } });
+    if (!document) throw new LLMWikiError('LLM Wiki has not synced yet', 404, 'not_found');
+    return { workspaceId, threadId, messages: publicChatMessages(threadId ? document.chatThreads?.[threadId] : document.chatMessages) };
   }
 
   async function removeWorkspace(workspaceIdValue) {
@@ -2959,6 +3015,7 @@ function createLLMWikiService({
     chat,
     clearChat,
     enqueueChat,
+    getChat,
     latestLog,
     removeWorkspace,
     requestSync,

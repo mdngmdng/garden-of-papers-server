@@ -66,6 +66,8 @@ exports.chat = async (req, res) => {
         req.body?.question,
         req.body?.requestId,
         req.body?.contextPaperIds,
+        req.body?.threadId,
+        req.body?.history,
       ),
     );
   } catch (error) {
@@ -81,6 +83,12 @@ exports.clearChat = async (req, res) => {
   } catch (error) {
     return sendError(res, error);
   }
+};
+
+exports.getChat = async (req, res) => {
+  try {
+    return res.status(200).json(await llmWikiService.getChat(req.params.id, req.query.threadId));
+  } catch (error) { return sendError(res, error); }
 };
 
 exports.latestLog = async (req, res) => {

@@ -18,17 +18,26 @@ class MemoryCollection {
   }
 
   async updateOne(query, update) {
+    const valueAt = (field) => field.split('.').reduce((value, key) => value?.[key], this.document);
+    for (const [field, condition] of Object.entries(query)) {
+      if (!field.endsWith('.id') || !condition?.$ne) continue;
+      if ((valueAt(field.slice(0, -3)) || []).some((message) => message.id === condition.$ne)) return { matchedCount: 0 };
+    }
     this.document = {
       ...(this.document || { _id: query._id }),
       ...structuredClone(update.$set),
     };
     for (const [field, operation] of Object.entries(update.$push || {})) {
-      const current = Array.isArray(this.document[field]) ? this.document[field] : [];
+      const keys = field.split('.');
+      const leaf = keys.pop();
+      let target = this.document;
+      for (const key of keys) target = target[key] ??= {};
+      const current = Array.isArray(target[leaf]) ? target[leaf] : [];
       const values = Array.isArray(operation?.$each)
         ? structuredClone(operation.$each)
         : [structuredClone(operation)];
       const combined = [...current, ...values];
-      this.document[field] = Number.isInteger(operation?.$slice)
+      target[leaf] = Number.isInteger(operation?.$slice)
         ? combined.slice(operation.$slice)
         : combined;
     }
@@ -946,6 +955,104 @@ test('clears the complete shared chat history for the board', async () => {
   assert.deepEqual(result.messages, []);
   assert.deepEqual(collection.document.chatMessages, []);
   assert.deepEqual((await service.status('garden')).messages, []);
+});
+
+async function waitForThreadAnswer(service, threadId, requestId) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await service.getChat('garden', threadId);
+    if (result.messages.some((message) => message.replyTo === requestId)) return result;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail('Conversation answer was not persisted');
+}
+
+test('isolates paper conversations from one another and from the legacy shared chat', async () => {
+  const prompts = [];
+  const { service } = fixture({ openAIRequest: async (request) => { prompts.push(request.input); return '답변입니다.'; } });
+  await service.sync('garden', workspace());
+  await service.chat('garden', 'SHARED_ONLY_QUESTION');
+  await service.enqueueChat('garden', 'THREAD_A_FIRST', 'a-1', ['paper-ilovesketch'], 'thread-a');
+  await waitForThreadAnswer(service, 'thread-a', 'a-1');
+  await service.enqueueChat('garden', 'THREAD_B_FIRST', 'b-1', [], 'thread-b');
+  await waitForThreadAnswer(service, 'thread-b', 'b-1');
+  assert.doesNotMatch(prompts.at(-1), /THREAD_A_FIRST|SHARED_ONLY_QUESTION/);
+  await service.enqueueChat('garden', 'THREAD_A_FOLLOWUP', 'a-2', ['paper-ilovesketch'], 'thread-a');
+  await waitForThreadAnswer(service, 'thread-a', 'a-2');
+  assert.match(prompts.at(-1), /THREAD_A_FIRST/);
+  assert.doesNotMatch(prompts.at(-1), /THREAD_B_FIRST|SHARED_ONLY_QUESTION/);
+  assert.equal((await service.getChat('garden', 'thread-a')).messages.length, 4);
+  assert.equal((await service.getChat('garden', 'thread-b')).messages.length, 2);
+  assert.equal((await service.status('garden')).messages.length, 2);
+  await service.clearChat('garden');
+  assert.equal((await service.getChat('garden', 'thread-a')).messages.length, 4);
+});
+
+test('returns verified original quotations at their place in the answer', async () => {
+  const { service } = fixture({ openAIRequest: async (request) => {
+    assert.match(request.instructions, /verbatim excerpt/);
+    return '핵심 설명. <wiki-quote paper-id="paper-ilovesketch">ILoveSketch full PDF text from the cached TEI document.</wiki-quote> 이어지는 설명.';
+  } });
+  await service.sync('garden', workspace());
+  await service.enqueueChat('garden', '핵심을 인용해서 알려줘', 'quote-request', ['paper-ilovesketch'], 'quote-thread');
+  const result = await waitForThreadAnswer(service, 'quote-thread', 'quote-request');
+  const answer = result.messages.at(-1);
+  assert.equal(answer.quotes.length, 1);
+  assert.equal(answer.quotes[0].paperId, 'paper-ilovesketch');
+  assert.equal(answer.quotes[0].text, 'ILoveSketch full PDF text from the cached TEI document.');
+  assert.ok(answer.text.includes(`[[wiki-quote:${answer.quotes[0].id}]]`));
+  assert.match(answer.text, /핵심 설명/);
+  assert.match(answer.text, /이어지는 설명/);
+});
+
+test('refuses to attach fabricated or incorrectly attributed quotations', () => {
+  const { extractWikiThreadQuotes } = require('../src/services/wikiThreadQuotes');
+  const papers = [{ id: 'paper', title: 'Original', sourceText: 'A sentence that really occurs in this paper.' }];
+  const result = extractWikiThreadQuotes('<wiki-quote paper-id="paper">An invented sentence that does not occur.</wiki-quote>' +
+    '<wiki-quote paper-id="another">A sentence that really occurs in this paper.</wiki-quote>', papers);
+  assert.deepEqual(result.quotes, []);
+  assert.doesNotMatch(result.text, /\[\[wiki-quote:/);
+});
+
+test('deduplicates concurrent retries in one thread and preserves earlier answers for queued follow-ups', async () => {
+  const prompts = [];
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const { collection, service } = fixture({ openAIRequest: async (request) => {
+    prompts.push(request.input);
+    return prompts.length === 1 ? pending : 'SECOND_ANSWER';
+  } });
+  await service.sync('garden', workspace());
+  await Promise.all([
+    service.enqueueChat('garden', 'FIRST_QUESTION', 'r1', [], 'thread'),
+    service.enqueueChat('garden', 'FIRST_QUESTION', 'r1', [], 'thread'),
+  ]);
+  await service.enqueueChat('garden', 'SECOND_QUESTION', 'r2', [], 'thread');
+  assert.equal(collection.document.chatThreads.thread.filter((item) => item.id === 'r1').length, 1);
+  release('FIRST_ANSWER');
+  await waitForThreadAnswer(service, 'thread', 'r2');
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /FIRST_ANSWER/);
+});
+
+test('recovers a persisted question after a server restart without duplicating it', async () => {
+  const { collection, service } = fixture();
+  await service.sync('garden', workspace());
+  collection.document.chatThreads = { recovered: [{ id: 'pending', role: 'user', text: '저자는?', createdAt: '2026-09-08' }] };
+  await service.enqueueChat('garden', '저자는?', 'pending', [], 'recovered');
+  const result = await waitForThreadAnswer(service, 'recovered', 'pending');
+  assert.equal(result.messages.filter((message) => message.id === 'pending').length, 1);
+  assert.equal(result.messages.length, 2);
+});
+
+test('rejects unsafe thread field paths and excludes chat papers from research search nodes', async () => {
+  const { service } = fixture();
+  const state = workspace();
+  state.objects.push({ id: 'chat-paper', type: 'GX.MAROBlankPaper', paperKind: 'wiki-thread', query: 'A private question' });
+  await service.sync('garden', state);
+  assert.equal((await service.status('garden')).counts.searchNodes, 0);
+  for (const id of ['x.y', '$set', '__proto__', 'constructor']) {
+    await assert.rejects(() => service.getChat('garden', id), /Invalid conversation/);
+  }
 });
 
 test('organizes attached and independent canvas post-its with their locations', async () => {
