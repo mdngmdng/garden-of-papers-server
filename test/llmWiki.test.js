@@ -979,8 +979,8 @@ test('persists manuscript-only answers from attached memos without PDF evidence 
     return 'Wiki synchronization';
   } });
   await service.sync('garden', workspace());
-  await service.enqueueChat('garden', '연구 메모로 원고 써줘', 'draft-request', [], 'draft-thread', [],
-    { sources: [{ paperId: 'memo', paperKey: 'memo', title: '연구 메모', text: '나의 연구 결과' }] });
+  await service.enqueueChat('garden', '문서로 원고 써줘', 'draft-request', [], 'draft-thread', [],
+    { sources: [{ paperId: 'memo', paperKey: 'memo', title: '문서', text: '나의 연구 결과' }] });
   const result = await waitForThreadAnswer(service, 'draft-thread', 'draft-request');
   const answer = result.messages.find((message) => message.replyTo === 'draft-request');
   assert.equal(answer.outputKind, 'manuscript');

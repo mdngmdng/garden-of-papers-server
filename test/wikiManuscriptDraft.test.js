@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { normalizeManuscriptDraft, requestWikiManuscriptDraft } = require('../src/services/wikiManuscriptDraft');
-const source = { paperId: 'memo', paperKey: 'stable-memo', title: '연구 메모', text: '공간적 배치로 연구 자료의 맥락을 유지한다.' };
+const source = { paperId: 'memo', paperKey: 'stable-memo', title: '문서', text: '공간적 배치로 연구 자료의 맥락을 유지한다.' };
 const citedSource = { ...source, text: '<!--gop-quote:q1-->\n> 공간적 배치로 연구 자료의 맥락을 유지한다.', citations: [
   { key: 'memo_ref_1', paperId: 'pdf', paperKey: 'stable-pdf', title: 'Spatial Research', authors: ['Jane Kim'], year: '2024',
     quotes: [{ id: 'q1', text: source.text, pageIndex: 2 }] },
@@ -46,14 +46,14 @@ test('retries omitted or hallucinated citations without appending unrelated refe
     openAIRequest: async () => JSON.stringify({ text: '본문 \\cite{unknown}.', error: '' }) }), { code: 'invalid_manuscript_citations' });
 });
 
-test('accepts long memo attachments separately from the question and rejects malformed, empty and excessive material', () => {
+test('accepts long document attachments separately from the question and rejects malformed, empty and excessive material', () => {
   assert.equal(normalizeManuscriptDraft(undefined), null);
   assert.equal(normalizeManuscriptDraft({ sources: [{ ...source, text: '가'.repeat(12000) }] }).sources[0].text.length, 12000);
   for (const value of [{}, { sources: [] }, { sources: [null] }, { sources: [{ ...source, text: '' }] },
     { sources: [source, source] }, { sources: [{ ...source, text: '가'.repeat(120001) }] }]) assert.throws(() => normalizeManuscriptDraft(value));
 });
 
-test('requests insertable manuscript prose from all memo snapshots without imposing the paper Q&A format', async () => {
+test('requests insertable manuscript prose from all document snapshots without imposing the paper Q&A format', async () => {
   const calls = [];
   const text = '첫 문단입니다.\n\n둘째 문단입니다.';
   const answer = await requestWikiManuscriptDraft({ question: '원고 본문 써줘', manuscriptDraft: { sources: [source] },
@@ -68,7 +68,7 @@ test('requests insertable manuscript prose from all memo snapshots without impos
 
 test('does not turn insufficient material or incomplete responses into an insertable block', async () => {
   const answer = await requestWikiManuscriptDraft({ question: '정량 결과를 써줘', manuscriptDraft: { sources: [source] },
-    openAIRequest: async () => JSON.stringify({ text: '', error: '측정 결과가 메모에 없습니다.' }) });
+    openAIRequest: async () => JSON.stringify({ text: '', error: '측정 결과가 문서에 없습니다.' }) });
   assert.equal(answer.answerStatus, 'failed');
   let calls = 0;
   const recovered = await requestWikiManuscriptDraft({ question: '원고 써줘', manuscriptDraft: { sources: [source] },
