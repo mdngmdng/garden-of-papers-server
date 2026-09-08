@@ -6,7 +6,6 @@ const SNAPSHOT_DATABASE = 'GardenOfPapersSystem';
 const SNAPSHOT_COLLECTION = 'WorkspaceSnapshots';
 const SNAPSHOT_HISTORY_COLLECTION = 'WorkspaceSnapshotHistory';
 const SNAPSHOT_HISTORY_DELTA_COLLECTION = 'WorkspaceSnapshotDeltas';
-const SNAPSHOT_HISTORY_LIMIT = 10;
 const INLINE_SNAPSHOT_BYTES = 12 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 40 * 1024 * 1024;
 const MAX_STORED_SNAPSHOT_BYTES = 14 * 1024 * 1024;
@@ -501,33 +500,6 @@ function createWorkspaceSnapshotService(
     if (prepared.previousState) {
       await recordTransitionSafely(prepared.previousState, state);
     }
-
-    const expired = await history
-      .find(
-        { projectName, reason: 'manual' },
-        { projection: { _id: 1, revision: 1 } },
-      )
-      .sort({ savedAt: -1 })
-      .skip(SNAPSHOT_HISTORY_LIMIT)
-      .toArray();
-    if (expired.length) {
-      const expiredRevisions = expired
-        .map((entry) => entry.revision)
-        .filter(Number.isInteger);
-      await history.deleteMany({
-        _id: { $in: expired.map((entry) => entry._id) },
-      });
-      if (expiredRevisions.length) {
-        const deltas = await historyDeltaCollection();
-        await deltas.deleteMany({
-          projectName,
-          $or: [
-            { fromRevision: { $in: expiredRevisions } },
-            { toRevision: { $in: expiredRevisions } },
-          ],
-        });
-      }
-    }
   }
 
   function notifyWorkspaceSaved(state) {
@@ -646,7 +618,6 @@ function createWorkspaceSnapshotService(
         },
       )
       .sort({ savedAt: -1 })
-      .limit(SNAPSHOT_HISTORY_LIMIT)
       .toArray();
     let currentDocument = null;
     if (!current.summary || !current.camera) {
@@ -1202,7 +1173,6 @@ function syncSavedWorkspaceToWiki(state) {
 module.exports = {
   INLINE_SNAPSHOT_BYTES,
   MAX_SNAPSHOT_BYTES,
-  SNAPSHOT_HISTORY_LIMIT,
   WorkspaceSnapshotError,
   createWorkspaceSnapshotService,
   workspaceSnapshotService: createWorkspaceSnapshotService(

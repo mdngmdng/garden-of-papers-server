@@ -3,7 +3,6 @@ const test = require('node:test');
 const { Binary } = require('mongodb');
 const {
   INLINE_SNAPSHOT_BYTES,
-  SNAPSHOT_HISTORY_LIMIT,
   WorkspaceSnapshotError,
   createWorkspaceSnapshotService,
 } = require('../src/services/workspaceSnapshots');
@@ -436,10 +435,11 @@ test('compresses and restores boards that exceed the safe inline Mongo size', as
   );
 });
 
-test('keeps autosaves live while retaining only the latest ten manual snapshots', async () => {
-  const { historyCollection, historyDeltaCollection, service } = fixture();
+test('retains all manual snapshots and restores the oldest after reopening with more than ten saved', async () => {
+  const { collection, historyCollection, historyDeltaCollection, service } = fixture();
+  const snapshotCount = 13;
   let state = await service.ensure(workspace());
-  for (let index = 0; index < SNAPSHOT_HISTORY_LIMIT + 3; index += 1) {
+  for (let index = 0; index < snapshotCount; index += 1) {
     state.camera.x = index + 1;
     const saved = await service.save({
       projectName: 'garden',
@@ -451,17 +451,41 @@ test('keeps autosaves live while retaining only the latest ten manual snapshots'
     await service.createHistorySnapshot('garden');
   }
 
-  const history = await service.listHistory('garden');
-  assert.equal(history.entries.length, SNAPSHOT_HISTORY_LIMIT + 1);
+  const reopened = createWorkspaceSnapshotService(
+    () => collection,
+    () => new Date(),
+    null,
+    () => historyCollection,
+    () => historyDeltaCollection,
+  );
+  const history = await reopened.listHistory('garden');
+  assert.equal(history.entries.length, snapshotCount + 1);
   assert.equal(history.entries[0].reason, 'current');
   assert.deepEqual(
     history.entries.slice(1).map((entry) => entry.revision),
-    [13, 12, 11, 10, 9, 8, 7, 6, 5, 4],
+    Array.from({ length: snapshotCount }, (_, index) => snapshotCount - index),
   );
-  assert.equal(historyCollection.documents.size, SNAPSHOT_HISTORY_LIMIT);
+  assert.equal(historyCollection.documents.size, snapshotCount);
   assert.equal(
     historyDeltaCollection.documents.size,
-    SNAPSHOT_HISTORY_LIMIT - 1,
+    snapshotCount - 1,
+  );
+  const transition = await reopened.getHistoryTransition('garden', 1, 2);
+  assert.equal(transition.forward.camera.x, 2);
+  assert.equal(transition.backward.camera.x, 1);
+
+  const restored = await reopened.restoreHistory({
+    projectName: 'garden',
+    historyId: history.entries.at(-1).id,
+    baseRevision: state.revision,
+    mutationId: 'writer:restore-oldest',
+  });
+  assert.equal(restored.state.camera.x, 1);
+  assert.equal(restored.state.revision, snapshotCount + 1);
+  const after = await reopened.listHistory('garden');
+  assert.deepEqual(
+    after.entries.slice(1).map((entry) => entry.id),
+    history.entries.slice(1).map((entry) => entry.id),
   );
 });
 
