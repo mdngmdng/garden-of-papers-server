@@ -2,6 +2,49 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { normalizeManuscriptDraft, requestWikiManuscriptDraft } = require('../src/services/wikiManuscriptDraft');
 const source = { paperId: 'memo', paperKey: 'stable-memo', title: '연구 메모', text: '공간적 배치로 연구 자료의 맥락을 유지한다.' };
+const citedSource = { ...source, text: '<!--gop-quote:q1-->\n> 공간적 배치로 연구 자료의 맥락을 유지한다.', citations: [
+  { key: 'memo_ref_1', paperId: 'pdf', paperKey: 'stable-pdf', title: 'Spatial Research', authors: ['Jane Kim'], year: '2024',
+    quotes: [{ id: 'q1', text: source.text, pageIndex: 2 }] },
+] };
+
+test('preserves source-paper catalogs and rejects stale markers, conflicting keys and malformed metadata', () => {
+  assert.deepEqual(normalizeManuscriptDraft({ sources: [citedSource] }), { sources: [citedSource] });
+  for (const broken of [
+    { ...citedSource, text: 'The quote was removed' },
+    { ...citedSource, citations: [{ ...citedSource.citations[0], key: 'invented' }] },
+    { ...citedSource, citations: [{ ...citedSource.citations[0], quotes: [{ id: 'q1', text: 'quote', pageIndex: -1 }] }] },
+    { ...citedSource, citations: [{ ...citedSource.citations[0], authors: [42] }] },
+  ]) assert.throws(() => normalizeManuscriptDraft({ sources: [broken] }));
+  const second = { ...citedSource, paperId: 'other-memo', paperKey: 'other-memo', citations: [{ ...citedSource.citations[0], paperKey: 'other-pdf' }] };
+  assert.throws(() => normalizeManuscriptDraft({ sources: [citedSource, second] }), /인용 키/);
+  assert.doesNotThrow(() => normalizeManuscriptDraft({ sources: [citedSource, { ...citedSource, paperId: 'other-memo', paperKey: 'other-memo' }] }));
+});
+
+test('generates cite syntax from known quote sources and leaves numbering and References to the editor', async () => {
+  let sent;
+  const text = '공간적 배치는 연구 맥락을 유지한다 \\cite{memo_ref_1}.';
+  const answer = await requestWikiManuscriptDraft({ question: '인용 포함해서 원고 써줘', manuscriptDraft: normalizeManuscriptDraft({ sources: [citedSource] }),
+    openAIRequest: async (request) => { sent = request; return JSON.stringify({ text, error: '' }); } });
+  assert.equal(answer.text, text);
+  assert.ok(sent.instructions.includes('\\cite{key}'));
+  assert.ok(sent.instructions.includes('editor assigns numbers'));
+  assert.ok(sent.input.includes('Spatial Research'));
+  assert.ok(sent.input.includes('memo_ref_1'));
+  assert.ok(sent.input.includes('gop-quote:q1'));
+});
+
+test('retries omitted or hallucinated citations without appending unrelated references', async () => {
+  for (const invalid of ['본문만 생성했습니다.', '잘못된 인용 \\cite{invented}.', '빈 인용 \\cite{}.']) {
+    const calls = [];
+    const answer = await requestWikiManuscriptDraft({ question: '원고 써줘', manuscriptDraft: { sources: [citedSource] },
+      openAIRequest: async (request) => { calls.push(request); return JSON.stringify({ text: calls.length === 1 ? invalid : '완성된 본문 \\cite{memo_ref_1}.', error: '' }); } });
+    assert.equal(calls.length, 2);
+    assert.ok(calls[1].instructions.includes('previous response'));
+    assert.equal(answer.text, '완성된 본문 \\cite{memo_ref_1}.');
+  }
+  await assert.rejects(() => requestWikiManuscriptDraft({ question: '원고 써줘', manuscriptDraft: { sources: [citedSource] },
+    openAIRequest: async () => JSON.stringify({ text: '본문 \\cite{unknown}.', error: '' }) }), { code: 'invalid_manuscript_citations' });
+});
 
 test('accepts long memo attachments separately from the question and rejects malformed, empty and excessive material', () => {
   assert.equal(normalizeManuscriptDraft(undefined), null);

@@ -990,6 +990,27 @@ test('persists manuscript-only answers from attached memos without PDF evidence 
   assert.ok(draftRequest.input.includes('나의 연구 결과'));
 });
 
+test('passes memo citation catalogs through generation and persists cite markup for manuscript insertion', async () => {
+  let draftRequest;
+  const text = '연구 맥락을 유지한다 \\cite{memo_ref_1}.';
+  const { service } = fixture({ openAIRequest: async (request) => {
+    if (request.textFormat?.name === 'wiki_manuscript_draft') { draftRequest = request; return JSON.stringify({ text, error: '' }); }
+    return 'Wiki synchronization';
+  } });
+  await service.sync('garden', workspace());
+  await service.enqueueChat('garden', '연구 메모로 원고 써줘', 'cited-draft-request', [], 'cited-draft-thread', [],
+    { sources: [{ paperId: 'memo', paperKey: 'memo', title: '연구 메모', text: '<!--gop-quote:q1-->\n> 연구 맥락을 유지한다.', citations: [
+      { key: 'memo_ref_1', paperId: 'paper-ilovesketch', paperKey: 'paper-ilovesketch', title: 'ILoveSketch', authors: ['Seok-Hyung Bae'], year: '2008',
+        quotes: [{ id: 'q1', text: '연구 맥락을 유지한다.', pageIndex: 0 }] },
+    ] }] });
+  const result = await waitForThreadAnswer(service, 'cited-draft-thread', 'cited-draft-request');
+  const answer = result.messages.find((message) => message.replyTo === 'cited-draft-request');
+  assert.equal(answer.outputKind, 'manuscript');
+  assert.equal(answer.text, text);
+  assert.ok(draftRequest.input.includes('memo_ref_1'));
+  assert.ok(draftRequest.input.includes('ILoveSketch'));
+});
+
 test('isolates paper conversations from one another and from the legacy shared chat', async () => {
   const prompts = [];
   const { service } = fixture({ openAIRequest: async (request) => { prompts.push(request.input); return request.textFormat ? structuredAnswer('답변입니다.', []) : '답변입니다.'; } });
