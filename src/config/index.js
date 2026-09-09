@@ -47,6 +47,9 @@ module.exports = {
       process.env.OPENAI_RESEARCH_MODEL || process.env.OPENAI_MODEL || 'gpt-5.6',
     researchCompileModel:
       process.env.OPENAI_RESEARCH_COMPILE_MODEL || 'gpt-5.6-luna',
+    researchWebTimeoutMs: boundedNumber(process.env.OPENAI_RESEARCH_WEB_TIMEOUT_MS, 360_000, 5_000, 1_800_000),
+    researchIdleTimeoutMs: boundedNumber(process.env.OPENAI_RESEARCH_IDLE_TIMEOUT_MS, 180_000, 5_000, 600_000),
+    researchJobTimeoutMs: boundedNumber(process.env.OPENAI_RESEARCH_JOB_TIMEOUT_MS, 600_000, 10_000, 3_600_000),
     researchReasoningEffort:
       ['low', 'medium', 'high', 'xhigh'].includes(configuredResearchEffort)
         ? configuredResearchEffort

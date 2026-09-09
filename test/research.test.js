@@ -10,6 +10,74 @@ const {
 
 const prompt = '공간 컴퓨팅에서 기억 보조 인터페이스의 연구 지형을 조사해줘.';
 
+test('a response stream timeout reports its last processing stage and response identity', async t => {
+  const previous = config.openai.apiKey;
+  config.openai.apiKey = 'test-key';
+  t.after(() => { config.openai.apiKey = previous; });
+  let upstream;
+  const fetchImpl = async () => new Response(new ReadableStream({ start(controller) {
+    upstream = controller;
+    controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ type: 'response.created', response: { id: 'slow' } }) + '\n\n'
+      + 'data: ' + JSON.stringify({ type: 'response.output_text.delta', delta: '부분 보고서' }) + '\n\n'));
+  } }), { headers: { 'x-request-id': 'req-slow' } });
+  const running = runWebResearch(prompt, { fetchImpl, onDiagnostic(state) {
+    if (state.stage === 'writing') upstream.error(new DOMException('Timed out', 'TimeoutError'));
+  } });
+  await assert.rejects(running, error => {
+    assert.equal(error.name, 'TimeoutError');
+    assert.equal(error.details.stage, 'writing');
+    assert.equal(error.details.responseId, 'slow');
+    assert.equal(error.details.requestId, 'req-slow');
+    assert.equal(error.details.reportCharacters, 6);
+    assert.equal(error.details.lastEventType, 'response.output_text.delta');
+    return true;
+  });
+});
+
+test('a truncated stream is not silently promoted to a completed report', async t => {
+  const previous = config.openai.apiKey;
+  config.openai.apiKey = 'test-key';
+  t.after(() => { config.openai.apiKey = previous; });
+  const bytes = new TextEncoder().encode('data: ' + JSON.stringify({ type: 'response.output_text.delta', delta: 'Truncated report' }) + '\n\n');
+  await assert.rejects(runWebResearch(prompt, { fetchImpl: async () => new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(bytes); controller.close();
+  } })) }), /without a final response/);
+});
+
+test('events keep a research stream alive past one idle interval', { timeout: 2000 }, async t => {
+  const previous = config.openai.apiKey;
+  config.openai.apiKey = 'test-key';
+  t.after(() => { config.openai.apiKey = previous; });
+  let timer;
+  t.after(() => clearInterval(timer));
+  const result = await runWebResearch(prompt, { timeoutMs: 1000, idleTimeoutMs: 150,
+    fetchImpl: async (_url, init) => new Response(new ReadableStream({ start(controller) {
+      let count = 0;
+      const abort = () => { clearInterval(timer); controller.error(init.signal.reason); };
+      init.signal.addEventListener('abort', abort, { once: true });
+      timer = setInterval(() => {
+        const event = ++count === 6
+          ? { type: 'response.completed', response: { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'Completed after six events' }] }] } }
+          : { type: 'response.web_search_call.searching' };
+        controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(event) + '\n\n'));
+        if (count === 6) { clearInterval(timer); init.signal.removeEventListener('abort', abort); controller.close(); }
+      }, 50);
+    } })),
+  });
+  assert.equal(result.report, 'Completed after six events');
+});
+
+test('a cancelled Scholar verification is not returned as a successful empty result', async () => {
+  const controller = new AbortController();
+  const reason = new Error('Job deadline exceeded');
+  await assert.rejects(executeResearchSearch({ keyword: prompt }, () => {}, {
+    signal: controller.signal,
+    webResearcher: async () => ({ report: 'A candidate report', sources: [] }),
+    researchCompiler: async () => ({ papers: [{ title: 'A candidate paper', sourceUrls: [] }], claims: [] }),
+    scholarSearch: async () => { controller.abort(reason); throw reason; },
+  }), error => error === reason);
+});
+
 function scholar(paperId, title, year = 2024) {
   return {
     paperId,

@@ -1,6 +1,7 @@
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { randomUUID } = require('node:crypto');
 const { studyRecordingService, hashChunk } = require('./studyRecordings');
+const { auditResponseStream } = require('./openaiStreamAudit');
 
 const studyContext = new AsyncLocalStorage();
 function parseStudyContext(header) {
@@ -50,6 +51,7 @@ async function auditStudyOperation(name, input, operation, output = value => val
   try { result = await operation(); }
   catch (error) {
     await record('provider.failed', { error: safeStudyValue(String(error)), status: error.response?.status,
+      details: error.details ? safeStudyValue(error.details) : null,
       body: error.response?.data === undefined ? null : safeStudyValue(providerPayload(JSON.stringify(error.response.data))) });
     await record('session.ended', { source: name });
     throw error;
@@ -110,7 +112,15 @@ function createAuditedProviderFetch(fetcher, getContext = () => studyContext.get
     let response;
     try { response = await fetcher(input, init); }
     catch (error) { await record('provider.failed', { error: String(error) }); throw error; }
-    await record('provider.response', { status: response.status, ok: response.ok, body: providerPayload(await response.clone().text()) });
+    if (response.body && response.headers.get('content-type')?.includes('text/event-stream')) {
+      await record('provider.response_headers', { status: response.status, ok: response.ok,
+        requestId: response.headers.get('x-request-id') });
+      return auditResponseStream(response, record);
+    }
+    let text;
+    try { text = await response.clone().text(); }
+    catch (error) { await record('provider.failed', { error: String(error), phase: 'response_body' }); throw error; }
+    await record('provider.response', { status: response.status, ok: response.ok, body: providerPayload(text) });
     await record('session.ended', { source: 'provider' });
     return response;
   };

@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createAuditedProviderFetch, createAuditedAxios, auditStudyOperation, studyAuditMiddleware } = require('../src/services/studyProviderAudit');
 const { hashChunk } = require('../src/services/studyRecordings');
+const { runWebResearch } = require('../src/services/research');
 const context = id => ({ sessionId: id, requestId: 'request-' + id, workspaceId: id, projectName: id, ownerName: 'tester', implementation: 'test' });
 function storageFixture() {
   const sessions = new Map();
@@ -79,4 +80,93 @@ test('fails closed before generation, reports a lost provider response write, an
   other.storage.append = async (...args) => { if (args[1].chunks.some(chunk => chunk.text.includes('provider.response'))) throw Error('DB failed after generation'); await append(...args); };
   await assert.rejects(createAuditedProviderFetch(async () => Response.json({ text: 'undeliverable' }), () => context('test'), other.storage)('https://api.openai.com/v1/responses'));
   assert.equal(other.records()[0].events.at(-1).type, 'provider.request');
+});
+
+const sseBytes = event => new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+const sseResponse = stream => new Response(stream, { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'request-stream' } });
+
+test('delivers and records intermediate SSE before the provider finishes', { timeout: 2000 }, async () => {
+  const { storage, records } = storageFixture();
+  let upstream;
+  const source = new ReadableStream({ start(controller) {
+    upstream = controller;
+    controller.enqueue(sseBytes({ type: 'response.created', response: { id: 'live' } }));
+  } });
+  const fetcher = createAuditedProviderFetch(async () => sseResponse(source), () => context('live'), storage);
+  const response = await fetcher('https://api.openai.com/v1/responses');
+  const reader = response.body.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /response.created/);
+  await new Promise(resolve => setTimeout(resolve, 650));
+  const events = records()[0].events;
+  assert.equal(events.find(e => e.type === 'provider.response_headers').data.requestId, 'request-stream');
+  assert.equal(events.find(e => e.type === 'provider.stream').data.events[0].body.type, 'response.created');
+  assert.ok(!events.some(e => e.type === 'session.ended'));
+  upstream.close();
+  assert.equal((await reader.read()).done, true);
+  assert.equal(records()[0].events.at(-1).type, 'session.ended');
+});
+
+test('retains SSE activity and records a timeout during the response body', async () => {
+  const { storage, records } = storageFixture();
+  let upstream;
+  const source = new ReadableStream({ start(controller) {
+    upstream = controller;
+    controller.enqueue(sseBytes({ type: 'response.web_search_call.searching' }));
+  } });
+  const response = await createAuditedProviderFetch(async () => sseResponse(source), () => context('timeout'), storage)('https://api.openai.com/v1/responses');
+  const reader = response.body.getReader();
+  await reader.read();
+  upstream.error(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+  await assert.rejects(reader.read(), { name: 'TimeoutError' });
+  const events = records()[0].events;
+  assert.equal(events.find(e => e.type === 'provider.stream').data.events[0].body.type, 'response.web_search_call.searching');
+  const failure = events.find(e => e.type === 'provider.failed');
+  assert.equal(failure.data.phase, 'response_stream');
+  assert.equal(failure.data.lastEventType, 'response.web_search_call.searching');
+  assert.equal(events.at(-1).type, 'session.ended');
+});
+
+test('research completes on a recorded terminal SSE without waiting for EOF, preserving UTF-8 and excluding private reasoning', { timeout: 2000 }, async t => {
+  const config = require('../src/config');
+  const previous = config.openai.apiKey;
+  config.openai.apiKey = 'test-key';
+  t.after(() => { config.openai.apiKey = previous; });
+  const { storage, records } = storageFixture();
+  let cancelled = false;
+  const final = { type: 'response.completed', response: { id: 'complete', status: 'completed',
+    output: [{ type: 'reasoning', content: 'PRIVATE_REASONING' },
+      { type: 'message', content: [{ type: 'output_text', text: '한글 보고서🧪' }] }] } };
+  const bytes = new Uint8Array(Buffer.concat([
+    sseBytes({ type: 'response.reasoning_text.delta', delta: 'PRIVATE_REASONING' }),
+    sseBytes({ type: 'response.output_text.delta', delta: '한글 보고서🧪' }), sseBytes(final),
+  ]));
+  const source = new ReadableStream({ start(controller) {
+    for (let index = 0; index < bytes.length; index += 7) controller.enqueue(bytes.slice(index, index + 7));
+    // Deliberately leave the connection open after response.completed.
+  }, cancel() { cancelled = true; } });
+  const fetchImpl = createAuditedProviderFetch(async () => sseResponse(source), () => context('complete'), storage);
+  const result = await runWebResearch('진단 질문', { fetchImpl, timeoutMs: 1000 });
+  assert.equal(result.report, '한글 보고서🧪');
+  assert.ok(cancelled);
+  const events = records()[0].events;
+  assert.ok(!JSON.stringify(events).includes('PRIVATE_REASONING'));
+  assert.ok(events.some(e => e.type === 'provider.stream' && e.data.events.some(e => e.body.type === 'response.completed')));
+  assert.equal(events.at(-1).data.cancelled, false);
+});
+
+test('an SSE journal write failure prevents success and cancels the upstream response', async () => {
+  const { storage, records } = storageFixture();
+  const append = storage.append;
+  storage.append = async (...args) => {
+    if (args[1].chunks.some(c => c.text.includes('provider.stream'))) throw Error('stream journal unavailable');
+    return append(...args);
+  };
+  let cancelled = false;
+  const source = new ReadableStream({ start(controller) {
+    controller.enqueue(sseBytes({ type: 'response.completed', response: { status: 'completed' } }));
+  }, cancel() { cancelled = true; } });
+  const response = await createAuditedProviderFetch(async () => sseResponse(source), () => context('broken'), storage)('https://api.openai.com/v1/responses');
+  await assert.rejects(response.text(), /record could not be saved/);
+  assert.ok(cancelled);
+  assert.ok(!records()[0].events.some(e => e.type === 'session.ended'));
 });
