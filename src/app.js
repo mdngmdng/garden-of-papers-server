@@ -23,6 +23,7 @@ const extensionBridgeRouter = require('./routes/extensionBridge');
 const workspaceSnapshotsRouter = require('./routes/workspaceSnapshots');
 const llmWikiRouter = require('./routes/llmWiki');
 const studyRecordingsRouter = require('./routes/studyRecordings');
+const researchDocumentJobsRouter = require('./routes/researchDocumentJobs');
 
 const app = express();
 
@@ -78,12 +79,14 @@ app.use('/api', workspaceSnapshotsRouter);
 // Automatic canvas -> Markdown wiki sync and workspace-grounded chat.
 app.use('/api/llm-wiki', llmWikiRouter);
 app.use('/api/study-recordings', studyRecordingsRouter);
+app.use('/api/research-document-jobs', researchDocumentJobsRouter);
 
 const server = http.createServer(app);
 
 // Start
 connect()
-  .then(() => {
+  .then(async () => {
+    await require('./services/researchDocumentJobs').researchDocumentJobs().start();
     server.listen(config.port, () => {
       console.log(`HTTP + WebSocket server running on port ${config.port}`);
     });
