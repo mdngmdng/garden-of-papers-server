@@ -1,4 +1,5 @@
-const axios = require('axios');
+const { createAuditedAxios } = require('./studyProviderAudit');
+const axios = createAuditedAxios(require('axios'));
 const config = require('../config');
 
 const BASE_URL = 'https://serpapi.com/search';

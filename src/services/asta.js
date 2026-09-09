@@ -1,3 +1,4 @@
+const { auditStudyOperation } = require('./studyProviderAudit');
 const {
   Client,
   StreamableHTTPClientTransport,
@@ -508,10 +509,10 @@ async function callToolWithRetry(
   let lastError;
   for (let attempt = 0; attempt <= config.asta.maxRetries; attempt += 1) {
     try {
-      const result = await client.callTool(
+      const result = await auditStudyOperation('asta.' + name, args, () => client.callTool(
         { name, arguments: args },
         { timeout: timeoutMs, signal },
-      );
+      ));
       const detail = toolErrorDetail(result);
       if (detail && retryable(new Error(detail))) {
         const error = new Error(detail);

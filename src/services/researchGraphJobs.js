@@ -1,3 +1,4 @@
+const { auditStudyOperation } = require('./studyProviderAudit');
 const crypto = require('node:crypto');
 const { executeResearchGraph, validateResearchBundle } = require('./researchGraph');
 
@@ -154,11 +155,11 @@ function createResearchGraphJob(input, runner = executeResearchGraph) {
       kind: 'started', title: '백엔드가 인용 그래프 검증을 시작했습니다',
     });
     try {
-      const result = await runner(
+      const result = await auditStudyOperation('job.researchGraphJobs', { input, jobId: id }, () => runner(
         input,
         (nextProgress) => updateProgress(id, nextProgress),
         { signal: controller.signal, onActivity: (activity) => appendActivity(id, activity) },
-      );
+      ));
       updateJob(id, {
         status: 'completed',
         progress: progress('completed', 100, 'Verified research graph is ready.'),

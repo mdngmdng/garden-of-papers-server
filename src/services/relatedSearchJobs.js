@@ -1,3 +1,4 @@
+const { auditStudyOperation } = require('./studyProviderAudit');
 const crypto = require('node:crypto');
 const asta = require('./asta');
 const grobid = require('./grobid');
@@ -604,14 +605,14 @@ function createRelatedSearchJob(input, runner = executeRelatedSearch) {
         : '백엔드가 논문 검색을 시작했습니다',
     });
     try {
-      const result = await runner(
+      const result = await auditStudyOperation('job.relatedSearchJobs', { input, jobId: jobId }, () => runner(
         input,
         (nextProgress) => updateJobProgress(jobId, nextProgress),
         {
           signal: controller.signal,
           onActivity: (activity) => appendJobActivity(jobId, activity),
         },
-      );
+      ));
       updateJob(jobId, {
         status: 'completed',
         progress: progress('completed', 100, 'Related papers are ready.'),

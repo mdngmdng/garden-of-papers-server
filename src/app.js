@@ -9,6 +9,9 @@ const config = require('./config');
 const { connect } = require('./services/mongo');
 const { createWebSocketServer } = require('./services/websocket');
 const { spawnUdpRelay } = require('./services/udpRelay');
+const { studyAuditMiddleware, createAuditedProviderFetch } = require('./services/studyProviderAudit');
+
+global.fetch = createAuditedProviderFetch(global.fetch);
 
 // Routes
 const projectsRouter = require('./routes/projects');
@@ -19,6 +22,7 @@ const analyzeRouter = require('./routes/analyze');
 const extensionBridgeRouter = require('./routes/extensionBridge');
 const workspaceSnapshotsRouter = require('./routes/workspaceSnapshots');
 const llmWikiRouter = require('./routes/llmWiki');
+const studyRecordingsRouter = require('./routes/studyRecordings');
 
 const app = express();
 
@@ -31,6 +35,7 @@ app.use(cors({
     'Authorization',
     'Range',
     'ngrok-skip-browser-warning',
+    'x-gop-study-context',
   ],
   exposedHeaders: [
     'Accept-Ranges',
@@ -48,6 +53,7 @@ app.use(cors({
 // load deadline crossing the public tunnel to the browser.
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
+app.use(studyAuditMiddleware);
 
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
@@ -71,6 +77,7 @@ app.use('/api', workspaceSnapshotsRouter);
 
 // Automatic canvas -> Markdown wiki sync and workspace-grounded chat.
 app.use('/api/llm-wiki', llmWikiRouter);
+app.use('/api/study-recordings', studyRecordingsRouter);
 
 const server = http.createServer(app);
 

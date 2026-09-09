@@ -1,4 +1,5 @@
-const axios = require('axios');
+const { createAuditedAxios } = require('./studyProviderAudit');
+const axios = createAuditedAxios(require('axios'));
 const FormData = require('form-data');
 const config = require('../config');
 const { parseReferenceLine } = require('./pdfCitationFallback');
