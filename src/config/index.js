@@ -39,6 +39,7 @@ module.exports = {
   },
   grobidUrl: resolveGrobidUrl(process.env.GROBID_URL),
   serpApiKey: process.env.SERPAPI_KEY || '',
+  openalex: { apiKey: process.env.OPENALEX_API_KEY?.trim() || '' },
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   openai: {
     apiKey: process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '',

@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const config = require('../config');
-const { searchScholar } = require('./serpapi');
+const { createOpenAlexClient, verifyOpenAlexPaper } = require('./openalex');
 const { filterCandidates, structuredResponse } = require('./promptSearch');
 const { parseSseBlock } = require('./openaiStreamAudit');
 const { researchDeadline } = require('./researchDeadline');
@@ -599,34 +599,30 @@ function compileResearch(prompt, webResearch, options) {
   });
 }
 
-function selectScholarMatch(candidate, results) {
-  let best = null;
-  for (const result of results || []) {
-    const score = titleScore(candidate.title, result.title);
-    if (score < 0.65) continue;
-    if (candidate.year && result.year && Math.abs(candidate.year - result.year) > 1) continue;
-    const weighted = score + (candidate.year === result.year ? 0.1 : 0);
-    if (!best || weighted > best.score) best = { score: weighted, result };
-  }
-  return best?.result || null;
-}
-
 async function verifyPapers(candidates, onProgress, options) {
   const verified = new Array(candidates.length);
   let next = 0;
   let finished = 0;
-  const scholar = options.scholarSearch || searchScholar;
+  const client = createOpenAlexClient({
+    signal: options.signal,
+    fetchImpl: options.openalexFetch,
+    onRetry: ({ seconds }) => emitActivity(options, {
+      kind: 'metadata_retry', status: 'active',
+      title: 'OpenAlex 서지 조회를 재시도합니다',
+      detail: `일시적인 API 오류로 ${seconds}초 뒤에 다시 조회합니다.`,
+    }),
+  });
+  const verify = options.paperVerifier || verifyOpenAlexPaper;
   await Promise.all(Array.from({ length: Math.min(VERIFY_CONCURRENCY, candidates.length) }, async () => {
     while (next < candidates.length) {
       if (options.signal?.aborted) throw options.signal.reason;
       const index = next++;
       const candidate = candidates[index];
       try {
-        const page = await scholar(`"${candidate.title}"`, 0, 5, { signal: options.signal });
-        verified[index] = selectScholarMatch(candidate, page?.results);
+        verified[index] = await verify(candidate, { client, signal: options.signal });
       } catch (error) {
         if (options.signal?.aborted) throw options.signal.reason || error;
-        verified[index] = null;
+        verified[index] = { status: 'error', provider: 'openalex', errors: [String(error.message || 'Metadata verification failed.').slice(0, 300)] };
       }
       finished++;
       onProgress(finished, candidates.length, candidate, verified[index]);
@@ -708,9 +704,10 @@ async function executeResearchSearch(input, onProgress = () => {}, options = {})
     counters: { papersFound: rawPapers.length, papersTotal: rawPapers.length },
   });
   onProgress({ stage: 'verifying_metadata', percent: 68, message: textFor(prompt,
-    '논문 제목과 메타데이터를 Google Scholar에서 대조하고 있습니다…',
-    'Verifying paper titles and metadata with Google Scholar…') });
-  const verifiedRecords = await verifyPapers(rawPapers, (finished, total, candidate, matched) => {
+    '논문 식별자와 서지정보를 OpenAlex에서 대조하고 있습니다…',
+    'Verifying paper identifiers and metadata with OpenAlex…') });
+  const verifications = await verifyPapers(rawPapers, (finished, total, candidate, verification) => {
+    const matched = verification.status === 'verified';
     onProgress({
       stage: 'verifying_metadata',
       percent: 68 + Math.round((finished / Math.max(1, total)) * 24),
@@ -719,9 +716,11 @@ async function executeResearchSearch(input, onProgress = () => {}, options = {})
     emitActivity(settings, {
       kind: 'metadata_verification',
       title: matched
-        ? textFor(prompt, 'Google Scholar에서 논문을 확인했습니다', 'Verified a paper in Google Scholar')
-        : textFor(prompt, '정확히 일치하는 Scholar 서지를 찾지 못했습니다', 'No exact Scholar record was found'),
-      detail: clean(candidate?.title, 1_000),
+        ? textFor(prompt, 'OpenAlex에서 논문을 확인했습니다', 'Verified a paper in OpenAlex')
+        : verification.status === 'error'
+          ? textFor(prompt, 'OpenAlex 조회 오류로 검증을 완료하지 못했습니다', 'An OpenAlex error prevented verification')
+          : textFor(prompt, 'OpenAlex에서 일치하는 서지를 확인하지 못했습니다', 'No matching OpenAlex record was found'),
+      detail: clean(candidate?.title, 1_000) + (verification.status === 'error' ? ` — ${(verification.errors || []).join(' ')}` : ''),
       status: matched ? 'completed' : 'error',
       counters: {
         papersChecked: finished,
@@ -730,27 +729,37 @@ async function executeResearchSearch(input, onProgress = () => {}, options = {})
       },
     });
   }, settings);
+  const verifiedRecords = verifications.map(verification => verification.status === 'verified' ? verification.record : null);
   const allowedUrls = new Set(webResearch.sources.map((source) => source.url));
   const bundlePapers = rawPapers.map((paper, index) => {
-    const scholar = verifiedRecords[index];
+    const record = verifiedRecords[index];
+    const verification = verifications[index];
     return {
       researchPaperId: `research-paper-${index + 1}`,
-      paperId: scholar?.paperId || '',
-      title: clean(scholar?.title || paper.title, 1_000),
-      authors: scholar?.authors?.length
-        ? scholar.authors.slice(0, 30)
+      paperId: record?.paperId || '',
+      title: clean(record?.title || paper.title, 1_000),
+      originalTitle: clean(paper.title, 1_000),
+      authors: record?.authors?.length
+        ? record.authors.slice(0, 100)
         : (paper.authors || []).map((author) => clean(author, 200)).filter(Boolean),
-      year: scholar?.year ?? paper.year ?? null,
-      doi: clean(paper.doi, 300),
-      url: clean(scholar?.url || paper.url, 2_000),
+      year: record?.year ?? paper.year ?? null,
+      doi: clean(record?.doi || paper.doi, 300),
+      url: clean(record?.url || paper.url, 2_000),
       sourceUrls: safeSourceUrls(paper.sourceUrls, allowedUrls),
       inclusionReason: clean(paper.inclusionReason, 1_500),
       supportedClaims: (paper.supportedClaims || []).map((claim) => clean(claim, 1_000)).filter(Boolean),
-      verified: Boolean(scholar),
+      verified: Boolean(record),
+      verificationStatus: verification.status,
+      verificationProvider: 'openalex',
+      verificationMethod: verification.method,
+      verificationError: (verification.errors || []).join(' ').slice(0, 1_000),
     };
   });
   const researchIdByTitle = new Map(
-    bundlePapers.map((paper) => [normalizedTitle(paper.title), paper.researchPaperId]),
+    bundlePapers.flatMap((paper) => [
+      [normalizedTitle(paper.title), paper.researchPaperId],
+      [normalizedTitle(paper.originalTitle), paper.researchPaperId],
+    ]),
   );
   const resolveTitles = (titles) => [...new Set((titles || []).flatMap((title) => {
     const exact = researchIdByTitle.get(normalizedTitle(title));
@@ -790,17 +799,21 @@ async function executeResearchSearch(input, onProgress = () => {}, options = {})
     return {
       ...paper,
       relevanceExplanation: bundlePaper?.inclusionReason || '',
-      retrievalProvider: 'openai-web-research+serpapi-google-scholar',
+      retrievalProvider: 'openai-web-research+openalex',
     };
   });
   const citations = verifiedResults.slice(0, 20).map((paper, index) => ({
     paperId: paper.paperId,
     label: String.fromCharCode(65 + index),
   }));
-  const unverifiedCount = bundlePapers.filter((paper) => !paper.verified).length;
+  const unverifiedCount = bundlePapers.filter((paper) => paper.verificationStatus === 'not_found').length;
+  const verificationErrorCount = bundlePapers.filter((paper) => paper.verificationStatus === 'error').length;
   const warnings = unverifiedCount ? [textFor(prompt,
-    `조사에서 언급된 논문 중 ${unverifiedCount}편은 Google Scholar에서 정확히 대조되지 않아 그래프 후보에서 제외했습니다.`,
-    `${unverifiedCount} papers mentioned in the research could not be matched exactly in Google Scholar and were excluded from graph candidates.`)] : [];
+    `논문 ${unverifiedCount}편은 OpenAlex에서 일치하는 서지를 확인하지 못해 그래프 후보에 포함하지 않았습니다. 미확인 후보와 출처는 아래에 보존했습니다.`,
+    `${unverifiedCount} papers could not be matched in OpenAlex and were left out of graph candidates. The unverified candidates and sources are preserved below.`)] : [];
+  if (verificationErrorCount) warnings.push(textFor(prompt,
+    `논문 ${verificationErrorCount}편은 OpenAlex 조회 오류로 검증하지 못했습니다. 논문이 없다는 뜻이 아니며, 후보를 보존했으므로 검색을 다시 실행할 수 있습니다.`,
+    `${verificationErrorCount} papers could not be verified because OpenAlex requests failed. This does not mean the papers do not exist; the candidates are preserved and the search can be retried.`));
   if (webResearch.partial) warnings.push(textFor(prompt,
     '웹조사가 출력 상한에 도달했지만, 그때까지 확보된 보고서와 출처를 복구해 결과를 완성했습니다.',
     'Web research reached its output limit, but the collected report and sources were recovered to complete the result.'));
@@ -810,7 +823,7 @@ async function executeResearchSearch(input, onProgress = () => {}, options = {})
   return {
     keyword: prompt,
     searchMode: 'research',
-    provider: 'openai-web-research+serpapi-google-scholar',
+    provider: 'openai-web-research+openalex',
     retrievalQuery: researchBundle.rewrittenResearchPrompt,
     scholarQuery: '',
     results: verifiedResults,
@@ -820,8 +833,8 @@ async function executeResearchSearch(input, onProgress = () => {}, options = {})
       text: researchBundle.report,
       citations,
       evidenceBasis: textFor(prompt,
-        '웹 조사 결과를 바탕으로 작성했으며 논문 메타데이터는 Google Scholar와 대조했습니다. 인용관계와 PDF 문맥은 그래프 생성 단계에서 별도로 검증합니다.',
-        'Based on web research with paper metadata checked against Google Scholar. Citation relationships and PDF context are verified separately when the graph is built.'),
+        '웹 조사 결과를 바탕으로 작성했으며, 아래 근거 논문은 OpenAlex의 DOI·제목·서지정보와 대조했습니다. 인용관계와 PDF 문맥은 그래프 생성 단계에서 별도로 검증합니다.',
+        'Based on web research; the papers listed below were checked against OpenAlex identifiers, titles, and metadata. Citation relationships and PDF context are verified separately when the graph is built.'),
     },
     warnings,
   };
@@ -832,5 +845,4 @@ module.exports = {
   executeResearchSearch,
   responseSources,
   runWebResearch,
-  selectScholarMatch,
 };

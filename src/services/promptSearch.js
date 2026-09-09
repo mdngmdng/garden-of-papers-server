@@ -79,7 +79,7 @@ function filterCandidates(pages, excludedPapers) {
     const keys = identityKeys(paper);
     if (keys.some((key) => excluded.has(key) || seen.has(key))) continue;
     keys.forEach((key) => seen.add(key));
-    results.push({ ...paper, retrievalProvider: 'serpapi-google-scholar' });
+    results.push({ ...paper, retrievalProvider: paper.retrievalProvider || 'serpapi-google-scholar' });
   }
   return results;
 }

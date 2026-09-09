@@ -5,8 +5,8 @@ const {
   executeResearchSearch,
   responseSources,
   runWebResearch,
-  selectScholarMatch,
 } = require('../src/services/research');
+const { selectTitleMatch } = require('../src/services/openalex');
 
 const prompt = '공간 컴퓨팅에서 기억 보조 인터페이스의 연구 지형을 조사해줘.';
 
@@ -67,14 +67,14 @@ test('events keep a research stream alive past one idle interval', { timeout: 20
   assert.equal(result.report, 'Completed after six events');
 });
 
-test('a cancelled Scholar verification is not returned as a successful empty result', async () => {
+test('a cancelled OpenAlex verification is not returned as a successful empty result', async () => {
   const controller = new AbortController();
   const reason = new Error('Job deadline exceeded');
   await assert.rejects(executeResearchSearch({ keyword: prompt }, () => {}, {
     signal: controller.signal,
     webResearcher: async () => ({ report: 'A candidate report', sources: [] }),
     researchCompiler: async () => ({ papers: [{ title: 'A candidate paper', sourceUrls: [] }], claims: [] }),
-    scholarSearch: async () => { controller.abort(reason); throw reason; },
+    paperVerifier: async () => { controller.abort(reason); throw reason; },
   }), error => error === reason);
 });
 
@@ -87,7 +87,7 @@ function scholar(paperId, title, year = 2024) {
     venue: 'CHI',
     citationCount: 12,
     url: `https://example.org/${paperId}`,
-    abstract: 'A verified Google Scholar snippet.',
+    abstract: 'A verified paper abstract.',
   };
 }
 
@@ -268,10 +268,10 @@ test('research and graph inputs are separated by an immutable, verified bundle',
         contraryPaperTitles: [],
       }],
     }),
-    scholarSearch: async (query) => {
-      if (query.includes('Alpha')) return { results: [scholar('excluded', 'Paper Alpha', 2020)] };
-      if (query.includes('Beta')) return { results: [scholar('beta', 'Paper Beta')] };
-      return { results: [] };
+    paperVerifier: async ({ title }) => {
+      if (title.includes('Alpha')) return { status: 'verified', method: 'title', record: scholar('excluded', 'Paper Alpha', 2020) };
+      if (title.includes('Beta')) return { status: 'verified', method: 'title', record: scholar('beta', 'Paper Beta') };
+      return { status: 'not_found' };
     },
   });
   assert.equal(result.searchMode, 'research');
@@ -311,7 +311,7 @@ test('aggregates web research and compilation usage against one request budget',
       });
       return { rewrittenResearchPrompt: 'compiled query', papers: [], claims: [] };
     },
-    scholarSearch: async () => ({ results: [] }),
+    paperVerifier: async () => ({ status: 'not_found' }),
   });
 
   const completed = activity.find((event) => event.kind === 'budget_complete');
@@ -326,11 +326,11 @@ test('aggregates web research and compilation usage against one request budget',
   });
 });
 
-test('Scholar verification requires a strong title match', () => {
-  assert.equal(selectScholarMatch({ title: 'Exact Paper', year: 2024 }, [
+test('OpenAlex title verification requires a strong title match', () => {
+  assert.equal(selectTitleMatch({ title: 'Exact Paper', year: 2024 }, [
     scholar('wrong', 'Entirely Different Topic', 2024),
   ]), null);
-  assert.equal(selectScholarMatch({ title: 'Exact Paper', year: 2024 }, [
+  assert.equal(selectTitleMatch({ title: 'Exact Paper', year: 2024 }, [
     scholar('right', 'Exact Paper', 2024),
   ]).paperId, 'right');
 });

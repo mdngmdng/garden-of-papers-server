@@ -44,7 +44,7 @@ const options = () => ({
     return { report: 'A controlled study investigates the claim.', sources: [] };
   },
   researchCompiler: async () => ({ rewrittenResearchPrompt: body.claim, papers: [{ title: body.paperTitle, authors: ['Author'], year: 2024 }], claims: [] }),
-  scholarSearch: async () => ({ results: [{ paperId: 'paper1', title: body.paperTitle, authors: ['Author'], year: 2024, url: 'https://example.org/p', abstract: '' }] }),
+  paperVerifier: async () => ({ status: 'verified', method: 'title', record: { paperId: 'paper1', title: body.paperTitle, authors: ['Author'], year: 2024, url: 'https://example.org/p', abstract: '' } }),
   astaService: { isConfigured: () => false },
 });
 test('claim searches use GPT research and preserve the original claim', async () => {
