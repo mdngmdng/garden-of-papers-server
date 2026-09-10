@@ -111,13 +111,14 @@ function parseResearchDocument(value) {
       return;
     }
     if (node.kind !== "paragraph" || !Number.isInteger(node.pageIndex) || node.pageIndex < 0 || !Number.isInteger(node.endPageIndex) || node.endPageIndex < node.pageIndex || node.endPageIndex > 1e4 || !text(node.sourceText) || !Array.isArray(node.sentences) || !node.sentences.length || node.sentences.length > 150 || !Array.isArray(node.groups) || node.assessment !== void 0 && (!["supported", "limited", "descriptive"].includes(node.assessment.status) || !text(node.assessment.rationale, 3e3))) throw Error();
+    if (node.sourceReview !== void 0 && (node.sourceReview?.reason !== "source-allocation" || !Array.isArray(node.sourceReview.lineIds) || !node.sourceReview.lineIds.length || node.sourceReview.lineIds.length > 5e3 || node.sourceReview.lineIds.some((n, i, all) => !Number.isInteger(n) || n < 1 || n > 2e4 || i > 0 && n <= all[i - 1]) || !node.sourceSpans || node.sentences.length !== 1 || node.sentences[0]?.text !== node.sourceText || node.sentences[0]?.quote !== node.sourceText || node.sentences[0]?.role !== "claim" || node.groups.length)) throw Error();
     if (node.sourceSpans !== void 0 && (!Array.isArray(node.sourceSpans) || !node.sourceSpans.length || node.sourceSpans.length > 5e3 || node.sourceSpans.some((span, i, spans) => !span || !Number.isInteger(span.pageIndex) || span.pageIndex < node.pageIndex || span.pageIndex > node.endPageIndex || !Number.isInteger(span.start) || span.start < 0 || !Number.isInteger(span.length) || span.length <= 0 || span.start + span.length > 24e4 || i > 0 && span.pageIndex < spans[i - 1].pageIndex) || node.sourceSpans.reduce((n, span) => n + span.length, 0) !== normalizedResearchText(node.sourceText).text.length)) throw Error();
     let cursor = 0;
     for (const s of node.sentences) {
       if (!s) throw Error();
       id(s.id);
       if (!text(s.text, 5e3) || !text(s.quote, 1e4) || !["claim", "support", "context", "duplicate"].includes(s.role)) throw Error();
-      if (splitResearchSentences(s.text, "ko").length !== 1 || splitResearchSentences(s.quote).length !== 1) throw Error();
+      if (!node.sourceReview && (splitResearchSentences(s.text, "ko").length !== 1 || splitResearchSentences(s.quote).length !== 1)) throw Error();
       const range = exactResearchRange(node.sourceText, s.quote, cursor);
       if (!range) throw Error();
       cursor = range.startChar + range.length;
@@ -167,6 +168,7 @@ function researchDocumentMarkdown(document) {
   const visit = (nodes, depth) => nodes.flatMap((n) => {
     const pad = "  ".repeat(depth);
     if (n.kind === "section") return [`${pad}- ${n.title}`, ...visit(n.children, depth + 1)];
+    if (n.sourceReview) return [`${pad}- \uC6D0\uBB38 \uD655\uC778 \uD544\uC694 \xB7 p. ${n.pageIndex + 1}`, ...n.sourceText.split("\n").map((line) => `${pad}  > ${line}`)];
     const claim = n.sentences.find((s) => s.role === "claim");
     const rendered = /* @__PURE__ */ new Set();
     const details = n.sentences.filter((s) => s.role === "support" || s.role === "context").flatMap((s) => {
@@ -706,6 +708,91 @@ function assembleResearchOutline(value, source, onMissing) {
   if (!researchParagraphs(document).length) throw invalid();
   return document;
 }
+function assembleResearchOutlineWithReview(value, source) {
+  let flagged = [];
+  const document = assembleResearchOutline(value, source, (lines) => {
+    flagged = lines;
+  });
+  if (!flagged.length) return document;
+  const spanKey = (span) => `${span.pageIndex}:${span.start}:${span.length}`;
+  const lineBySpan = new Map(source.lines.map((line) => [spanKey(line), line.id]));
+  const paragraphs = researchParagraphs(document);
+  const idsByParagraph = new Map(paragraphs.map((p) => [p.id, p.sourceSpans.map((span) => lineBySpan.get(spanKey(span)))]));
+  const uncertain = new Set(flagged.map((line) => line.id));
+  const removed = /* @__PURE__ */ new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const p of paragraphs) {
+      const ids = idsByParagraph.get(p.id);
+      if (!removed.has(p.id) && ids.some((id) => uncertain.has(id))) {
+        removed.add(p.id);
+        ids.forEach((id) => uncertain.add(id));
+        changed = true;
+      }
+    }
+  }
+  const positions = /* @__PURE__ */ new Map();
+  let number = 0;
+  const index = (node) => {
+    const id = `r${++number}`;
+    const first = Math.min(
+      ...(node.kind === "section" ? node.headingLineRanges : node.lineRanges).map((r) => r.start),
+      ...node.kind === "section" ? node.children.map(index) : []
+    );
+    positions.set(id, first);
+    return first;
+  };
+  value.sections.forEach(index);
+  const keep = (nodes) => nodes.filter((node) => !removed.has(node.id)).map((node) => {
+    if (node.kind === "section") node.children = keep(node.children);
+    return node;
+  });
+  document.sections.forEach((section) => {
+    section.children = keep(section.children);
+  });
+  const groups = [];
+  let group = [], size = 0;
+  for (const line of source.lines.filter((line2) => uncertain.has(line2.id))) {
+    const previous = group.at(-1);
+    if (previous && (line.id !== previous.id + 1 || size + line.text.length > 4e3 && !/[-\u2010]\s*$/u.test(previous.text))) {
+      groups.push(group);
+      group = [];
+      size = 0;
+    }
+    group.push(line);
+    size += line.text.length + 1;
+  }
+  if (group.length) groups.push(group);
+  const insert = (section, block, first) => {
+    let at = -1;
+    section.children.forEach((child, i) => {
+      if ((positions.get(child.id) ?? Infinity) <= first) at = i;
+    });
+    const previous = section.children[at];
+    if (previous?.kind === "section") insert(previous, block, first);
+    else section.children.splice(at + 1, 0, block);
+  };
+  for (const lines of groups) {
+    const first = lines[0], last = lines.at(-1), id = `review-${first.id}-${last.id}`;
+    const sourceText = lines.map((line) => line.text).join("\n");
+    const block = {
+      kind: "paragraph",
+      id,
+      pageIndex: first.pageIndex,
+      endPageIndex: last.pageIndex,
+      sourceText,
+      sourceSpans: lines.map(({ pageIndex, start, length }) => ({ pageIndex, start, length })),
+      sourceReview: { reason: "source-allocation", lineIds: lines.map((line) => line.id) },
+      groups: [],
+      sentences: [{ id: `${id}-source`, quote: sourceText, text: sourceText, role: "claim", duplicateOf: null }]
+    };
+    const section = document.sections.filter((s) => positions.get(s.id) <= first.id).at(-1) ?? document.sections[0];
+    insert(section, block, first.id);
+    positions.set(id, first.id);
+  }
+  return document;
+}
 function applyResearchReading(value, paragraphs) {
   const result = value;
   const invalid = () => Error("\uD55C\uAD6D\uC5B4 \uBC88\uC5ED\uACFC \uC6D0\uBB38 \uBB38\uC7A5\uC758 1:1 \uB300\uC751\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC0DD\uC131\uD574 \uC8FC\uC138\uC694.");
@@ -912,13 +999,13 @@ Remove the ENTIRE excluded figure caption including continuation lines from body
         outline = applyResearchOutlinePatch(outline, edit, indexed.lines.length);
         previousPatchError = void 0;
       } catch (error) {
-        if (attempt === 1) throw error;
         previousPatchError = error instanceof Error ? error.message : String(error);
+        if (attempt === 1) break;
         continue;
       }
       flagged = inspect();
     }
-    const document = assembleResearchOutline(outline, indexed);
+    const document = assembleResearchOutlineWithReview(outline, indexed);
     if (!validateResearchDocumentSource(document, text)) throw Error("\uBB38\uB2E8 \uC704\uCE58\uAC00 PDF \uC6D0\uBB38\uACFC \uC77C\uCE58\uD558\uC9C0 \uC54A\uC544 \uC5F0\uAD6C \uBB38\uC11C\uB97C \uC644\uC131\uD558\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4.");
     if (sourceOnly) {
       if (measured) document.generation = generation;
@@ -926,7 +1013,7 @@ Remove the ENTIRE excluded figure caption including continuation lines from body
     }
     const chunks = [];
     let chunk = [], size = 0;
-    for (const paragraph of researchParagraphs(document)) {
+    for (const paragraph of researchParagraphs(document).filter((p) => !p.sourceReview)) {
       if (chunk.length && (size + paragraph.sourceText.length > 1e4 || chunk.length >= 16)) {
         chunks.push(chunk);
         chunk = [];
@@ -975,14 +1062,14 @@ The provided previousTranslations FAILED validation. Each original is ONE senten
         applyResearchTranslations(translated, paragraphs2);
       }
     };
-    const paragraphs = researchParagraphs(document);
-    const reading = call(
+    const paragraphs = researchParagraphs(document).filter((p) => !p.sourceReview);
+    const reading = paragraphs.length ? call(
       "research_reading",
       RESEARCH_READING_INSTRUCTIONS,
       RESEARCH_READING_SCHEMA,
       [{ type: "input_text", text: JSON.stringify(paragraphs.map((p) => ({ id: p.id, sentences: p.sentences.map((s) => ({ id: s.id, text: s.quote })) }))) }],
       16e3
-    ).then((result) => applyResearchReading(result, paragraphs));
+    ).then((result) => applyResearchReading(result, paragraphs)) : Promise.resolve();
     await Promise.all([reading, ...Array.from({ length: Math.min(3, chunks.length) }, worker)]);
     if (measured) document.generation = generation;
     const parsed = parseResearchDocument(document);
