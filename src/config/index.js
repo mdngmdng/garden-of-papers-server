@@ -79,8 +79,7 @@ module.exports = {
       1_000,
       32_000,
     )),
-    citationGraphModel:
-      process.env.OPENAI_CITATION_GRAPH_MODEL || 'gpt-5.6-sol',
+    citationGraphModel: 'gpt-5.6-luna',
     embeddingModel:
       process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
     embeddingDimensions: Math.max(

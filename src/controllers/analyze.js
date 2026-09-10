@@ -1,11 +1,10 @@
-const { analyzeRelations, generateClusterLabels, findRelevantSentences, findClosestSentence, summarizePaper, storytelling, generatePlacementReasons } = require('../services/gemini');
+const { analyzeRelations, generateClusterLabels, findRelevantSentences, summarizePaper, storytelling, generatePlacementReasons } = require('../services/gemini');
 const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
 const pdfStorage = require('../services/pdfStorage');
 const {
   CitationGraphAnalysisError,
   analyzeCitationGraph,
-  sentenceRecordsFromPages,
 } = require('../services/citationGraphAnalysis');
 const { extractPdfTextPages } = require('../services/pdfCitationFallback');
 const {
@@ -546,43 +545,6 @@ async function loadCachedPaperTeiXml(projectName, doc, fallbackFileId) {
   };
 }
 
-async function loadPaperSearchSentences(projectName, doc, fallbackFileId) {
-  const storageFileId = String(doc.fileId || fallbackFileId || doc._id);
-  try {
-    const cached = await loadCachedPaperTeiXml(
-      projectName,
-      doc,
-      fallbackFileId,
-    );
-    return {
-      storageFileId,
-      sentenceRecords: extractSentences(cached.teiXml).map((text) => ({
-        text,
-        pageIndex: undefined,
-      })),
-    };
-  } catch (teiError) {
-    console.log(
-      `[ClosestSentence] Cached TEI unavailable for ${storageFileId}; `
-      + 'using local PDF text extraction',
-    );
-    const pdfKey = await pdfStorage.resolvePdfS3Key(
-      projectName,
-      storageFileId,
-    );
-    const pdfBuffer = await s3Service.downloadPdfBuffer(pdfKey);
-    const pages = await extractPdfTextPages(pdfBuffer);
-    return {
-      storageFileId,
-      pages,
-      sentenceRecords: sentenceRecordsFromPages(pages).map((sentence) => ({
-        text: sentence.text,
-        pageIndex: sentence.pageNumber - 1,
-      })),
-    };
-  }
-}
-
 // POST /analyze/citation-graph
 // 한 번의 OpenAI 분석으로 인용 맥락 메모와 인용된 논문의 실제 근거 구절을 함께 생성한다.
 exports.citationGraph = async (req, res) => {
@@ -799,41 +761,16 @@ exports.closestSentence = async (req, res) => {
       }
     }
 
-    const target = await loadPaperSearchSentences(projectName, doc, fileId);
-    const sentences = target.sentenceRecords.map((sentence) => sentence.text);
-    if (sentences.length === 0) {
-      return res.status(404).json({
-        error: 'No searchable sentences were extracted from the cited paper',
-      });
-    }
-
+    const storageFileId = String(doc.fileId || fileId || doc._id);
+    const pdfBuffer = await s3Service.downloadPdfBuffer(await pdfStorage.resolvePdfS3Key(projectName, storageFileId));
+    const pages = await extractPdfTextPages(pdfBuffer);
     const title = doc.paperName || paperTitle || 'Untitled';
-    console.log(
-      `[ClosestSentence] ${paperId || fileId}: comparing ${sentences.length} sentences`,
-    );
-    const match = {
-      ...(await findClosestSentence(
-        citationContext,
-        resolvedMarker,
-        title,
-        sentences,
-      )),
-      provider: 'gemini-chunked',
-    };
-    const { index } = match;
-    if (index < 0 || !sentences[index]) {
-      return res.status(422).json({
-        error: 'No semantically matching sentence was found',
-      });
-    }
-
-    console.log(
-      `[ClosestSentence] ${paperId || fileId}: selected sentence ${index} `
-      + `with ${match.provider}`,
-    );
+    const evidence = await analyzeCitationGraph({ sourceContext: citationContext, citationContext,
+      markerText: resolvedMarker, pages, paper: { id: String(doc._id), title } });
+    if (evidence.status === 'no_evidence') return res.status(422).json({ error: evidence.relevance, code: 'NO_CITATION_EVIDENCE' });
     return res.json({
       paperId: String(doc._id),
-      fileId: target.storageFileId,
+      fileId: storageFileId,
       title,
       context: citationContext,
       resolvedMarker: resolvedMarker || undefined,
@@ -848,13 +785,11 @@ exports.closestSentence = async (req, res) => {
               length: citationHit.length,
             }
           : undefined,
-      sentence: sentences[index],
-      sentenceIndex: index,
-      matchedPageIndex: target.sentenceRecords[index]?.pageIndex,
-      matchProvider: match.provider,
-      matchConfidence: Number.isFinite(match.confidence)
-        ? match.confidence
-        : undefined,
+      sentence: evidence.evidencePassages[0].segments[0].text,
+      sentenceIndex: -1,
+      matchedPageIndex: evidence.pageNumber - 1,
+      matchProvider: evidence.model,
+      evidencePassages: evidence.evidencePassages,
     });
   } catch (err) {
     console.error('[ClosestSentence] Error:', err.message);

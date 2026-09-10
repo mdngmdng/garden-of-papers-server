@@ -297,7 +297,7 @@ exports.updateData = async (req, res) => {
     citationSentenceRangeStartChar, citationSentenceRangeLength,
     relationshipInfo, referenceText, citationHitId, citationContexts,
     semanticPreparationStatus, semanticPreparationError,
-    citationGraphSelection, citationGraphNoteId, citationGraphModel,
+    citationGraphSelection, citationGraphNoteId, citationGraphModel, researchCitationRequestId,
     linkHighlightTexts, summaryNoteId,
     translations, citationHits, pageSizeList, referenceList, citationStatus,
     pdfPagePreview, pdfExcerpts, researchArtifact,
@@ -411,6 +411,7 @@ exports.updateData = async (req, res) => {
     if (citationGraphModel !== undefined) {
       update.citationGraphModel = citationGraphModel;
     }
+    if (researchCitationRequestId !== undefined) update.researchCitationRequestId = researchCitationRequestId;
     if (linkHighlightTexts !== null && linkHighlightTexts !== undefined && linkHighlightTexts.length !== 0) update.linkHighlightTexts = linkHighlightTexts;
     if (summaryNoteId && summaryNoteId !== '') update.summaryNoteId = summaryNoteId;
     if (translations !== null && translations !== undefined) update.translations = translations;
