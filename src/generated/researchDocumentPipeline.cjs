@@ -21,10 +21,13 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/maro/researchDocumentWorker.ts
 var researchDocumentWorker_exports = {};
 __export(researchDocumentWorker_exports, {
+  exactResearchRange: () => exactResearchRange,
   generateQuestionOutline: () => generateQuestionOutline,
   generateResearchDocument: () => generateResearchDocument,
   parseAIArtifactRequest: () => parseAIArtifactRequest,
-  parseAIArtifactResult: () => parseAIArtifactResult
+  parseAIArtifactResult: () => parseAIArtifactResult,
+  researchDocumentResultForClient: () => researchDocumentResultForClient,
+  splitResearchSentences: () => splitResearchSentences
 });
 module.exports = __toCommonJS(researchDocumentWorker_exports);
 
@@ -1244,10 +1247,42 @@ Each original is ONE sentence. Keep all its clauses in ONE Korean sentence using
   }
   throw Error("\uC9C8\uBB38 outline\uACFC \uC6D0\uBB38 \uBC1C\uCDCC\uC758 \uC5F0\uACB0\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uBD84\uC11D\uD574 \uC8FC\uC138\uC694.");
 }
+
+// src/maro/researchDocumentDelivery.ts
+var RESEARCH_DOCUMENT_RESULT_FORMAT = "source-review-v1";
+function researchDocumentResultForClient(result, format) {
+  if (!result.researchDocument || format === RESEARCH_DOCUMENT_RESULT_FORMAT) return result;
+  const document = structuredClone(result.researchDocument);
+  const visit = (nodes) => nodes.map((node) => {
+    if (node.kind === "section") return { ...node, children: visit(node.children) };
+    if (!node.sourceReview) return node;
+    const paragraph = { ...node };
+    delete paragraph.sourceReview;
+    paragraph.sentences = splitResearchSentences(node.sourceText).map((quote, index) => ({
+      id: index === 0 ? node.sentences[0].id : `${node.id}-source-${index + 1}`,
+      quote,
+      text: quote,
+      role: index === 0 ? "claim" : "context",
+      duplicateOf: null
+    }));
+    paragraph.groups = [];
+    return {
+      kind: "section",
+      id: `${node.id}-source-review`,
+      title: "\uC6D0\uBB38 \uD655\uC778 \uD544\uC694 \xB7 \uBB38\uB2E8 \uAD6C\uBD84 \uBBF8\uD655\uC778 (\uBC88\uC5ED \uC804 \uC6D0\uBB38)",
+      children: [paragraph]
+    };
+  });
+  document.sections = document.sections.map((section) => ({ ...section, children: visit(section.children) }));
+  return { ...result, researchDocument: document, text: researchDocumentMarkdown(document) };
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  exactResearchRange,
   generateQuestionOutline,
   generateResearchDocument,
   parseAIArtifactRequest,
-  parseAIArtifactResult
+  parseAIArtifactResult,
+  researchDocumentResultForClient,
+  splitResearchSentences
 });

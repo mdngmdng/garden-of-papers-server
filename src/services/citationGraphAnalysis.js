@@ -1,4 +1,5 @@
 const { findCitationEvidence } = require('./citationEvidence');
+const { splitResearchSentences, exactResearchRange } = require('../generated/researchDocumentPipeline.cjs');
 const MAX_SOURCE_CONTEXT = 30000;
 const MAX_CITATION_CONTEXT = 20000;
 const MAX_PASSAGE_CHARS = 1600;
@@ -72,7 +73,7 @@ function searchablePageText(value) {
 
 function sentenceRecordsFromPages(pages) {
   const records = [];
-  const segmenter = new Intl.Segmenter(undefined, { granularity: 'sentence' });
+  let sourceIndex = 0;
   let bibliographyStarted = false;
   for (const page of pages || []) {
     if (bibliographyStarted) break;
@@ -80,10 +81,11 @@ function sentenceRecordsFromPages(pages) {
     bibliographyStarted = searchable.bibliographyStarted;
     const pageText = normalizePdfText(searchable.text);
     if (!pageText) continue;
-    const segments = [...segmenter.segment(pageText)].map((entry) => entry.segment);
+    const segments = splitResearchSentences(pageText);
     let pageSentenceIndex = 0;
     for (const segment of segments) {
       for (const sentence of splitLongSentence(segment)) {
+        const globalIndex = sourceIndex++;
         if (
           sentence.length < 2
           || !/[\p{L}]{2}/u.test(sentence)
@@ -96,7 +98,7 @@ function sentenceRecordsFromPages(pages) {
           id: `p${pageNumber}-s${pageSentenceIndex + 1}`,
           pageNumber,
           pageSentenceIndex,
-          globalIndex: records.length,
+          globalIndex,
           text: sentence,
         });
         pageSentenceIndex += 1;
@@ -151,7 +153,8 @@ function normalizeInput(value) {
           ? page.text.replace(/\u0000/g, '').slice(0, 1_000_000)
           : '';
         if (!text.trim()) return [];
-        return [{ pageIndex: Math.max(0, Math.floor(Number(page.pageIndex) || 0)), text }];
+        return [{ pageIndex: Math.max(0, Math.floor(Number(page.pageIndex) || 0)), text,
+          rawText: typeof page.rawText === 'string' ? page.rawText.slice(0, 1_000_000) : text }];
       })
     : [];
   const input = {
@@ -186,9 +189,21 @@ function normalizeInput(value) {
 }
 
 
+function restoreCitationEvidenceSource(result, pages) {
+  if (result.status !== 'found') return result;
+  const evidencePassages = result.evidencePassages.map(p => ({ ...p, segments: p.segments.map(segment => {
+    const page = pages.find(p => p.pageIndex === segment.pageNumber - 1);
+    const text = page?.rawText ?? page?.text ?? '';
+    const range = exactResearchRange(text, segment.text);
+    if (!range) throw new CitationGraphAnalysisError('선택한 발췌문의 PDF 원문 위치를 확인하지 못했습니다.', 422);
+    return { ...segment, text: text.slice(range.startChar, range.startChar + range.length) };
+  }) }));
+  return { ...result, evidencePassages };
+}
+
 async function analyzeCitationGraph(value, options = {}) {
   const input = normalizeInput(value);
-  try { return await findCitationEvidence(input, sentenceRecordsFromPages(input.pages), options); }
+  try { return restoreCitationEvidenceSource(await findCitationEvidence(input, sentenceRecordsFromPages(input.pages), options), input.pages); }
   catch (error) { throw new CitationGraphAnalysisError(error.message, error.status || 502); }
 }
-module.exports = { CitationGraphAnalysisError, analyzeCitationGraph, normalizeInput, passageChunksFromSentences, sentenceRecordsFromPages };
+module.exports = { CitationGraphAnalysisError, analyzeCitationGraph, normalizeInput, passageChunksFromSentences, sentenceRecordsFromPages, restoreCitationEvidenceSource };

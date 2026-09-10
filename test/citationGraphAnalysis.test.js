@@ -2,11 +2,11 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const config = require('../src/config');
 const { analyzeCitationGraph, passageChunksFromSentences, sentenceRecordsFromPages } = require('../src/services/citationGraphAnalysis');
-const { discoveryBatches, selectedSentences } = require('../src/services/citationEvidence');
+const { discoveryBatches, selectedSentences, reviewPassages } = require('../src/services/citationEvidence');
 const input = { sourceContext: 'Readers keep provenance [22].', citationContext: 'Readers keep provenance [22].', markerText: '[22]',
   paper: { id: 'p22', title: 'Provenance' }, pages: [{ pageIndex: 0, text: 'We studied how readers track sources. They retain document provenance across multiple tasks.' },
     { pageIndex: 1, text: 'References\n[1] Bibliographic material cannot serve as evidence.' }] };
-const review = { summary: '출처를 추적하는 연구로 소개한다.', explanation: '', passages: [{ sentenceIds: ['p1-s2'], correspondence: 'direct', relevance: '문서의 출처를 유지하는 행동에 대응한다.' }] };
+const review = { summary: '출처를 추적하는 연구로 소개한다.', explanation: '', passages: [{ passageId: 'range-1', correspondence: 'direct', relevance: '문서의 출처를 유지하는 행동에 대응한다.' }] };
 function setup(t, values) {
   const previous = config.openai.apiKey; config.openai.apiKey = 'test'; t.after(() => { config.openai.apiKey = previous; });
   const calls = [];
@@ -44,6 +44,39 @@ test('rejects invented and non-contiguous source IDs instead of silently accepti
   const sentences = sentenceRecordsFromPages([{ pageIndex: 0, text: 'First sentence is a complete statement. Next sentence gives context. Third sentence gives a condition.' }]);
   assert.throws(() => selectedSentences(['p1-s1', 'p1-s3'], sentences), /이어지지/);
 });
+
+test('separated discovery leads reach review, which can only select verified consecutive ranges', async t => {
+  const body = { ...input, pages: [{ pageIndex: 0, text: 'First statement gives background. Next statement explains conditions. Third statement is related evidence.' }] };
+  const { calls, fetchImpl } = setup(t, [{ candidates: [{ sentenceIds: ['p1-s1', 'p1-s3'] }] },
+    { ...review, passages: [{ ...review.passages[0], passageId: 'range-2' }] }]);
+  const result = await analyzeCitationGraph(body, { fetchImpl });
+  assert.equal(result.status, 'found'); assert.equal(result.evidencePassage, 'Third statement is related evidence.');
+  const schema = calls[1].body.text.format.schema.properties.passages.items.properties;
+  assert.ok(schema.passageId.enum.includes('range-2')); assert.equal(schema.sentenceIds, undefined);
+  const records = sentenceRecordsFromPages(body.pages);
+  for (const range of reviewPassages(records, new Set(['p1-s1', 'p1-s3']))) {
+    assert.ok(range.sentences.length <= 5);
+    assert.deepEqual(selectedSentences(range.sentences.map(s => s.id), records), range.sentences);
+  }
+});
+
+test('unknown range IDs fail, while duplicate complete suggestions are safely coalesced', async t => {
+  const invalid = setup(t, [{ candidates: [{ sentenceIds: ['p1-s2'] }] }, { ...review, passages: [{ ...review.passages[0], passageId: 'invented' }] }]);
+  await assert.rejects(analyzeCitationGraph(input, { fetchImpl: invalid.fetchImpl }), /없는 원문 구간/);
+  const duplicate = setup(t, [{ candidates: [{ sentenceIds: ['p1-s2'] }] }, { ...review, passages: [review.passages[0], review.passages[0]] }]);
+  assert.equal((await analyzeCitationGraph(input, { fetchImpl: duplicate.fetchImpl })).evidencePassages.length, 1);
+});
+
+test('a verified range crossing pages retains separate exact PDF segments', async t => {
+  const body = { ...input, pages: [input.pages[0], { pageIndex: 1, text: 'This applies only to the observed tasks.' }] };
+  const { fetchImpl } = setup(t, [{ candidates: [{ sentenceIds: ['p1-s2'] }] },
+    { ...review, passages: [{ ...review.passages[0], passageId: 'range-2' }] }]);
+  const result = await analyzeCitationGraph(body, { fetchImpl });
+  assert.deepEqual(result.evidencePassages[0].segments, [
+    { pageNumber: 1, text: 'They retain document provenance across multiple tasks.' },
+    { pageNumber: 2, text: 'This applies only to the observed tasks.' },
+  ]);
+});
 test('long-paper discovery covers every sentence, including the end, with bounded overlapping batches', () => {
   const sentences = Array.from({ length: 600 }, (_, i) => ({ id: 's'+i, text: 'Body content '.repeat(35), globalIndex: i }));
   const batches = discoveryBatches(sentences);
@@ -75,4 +108,22 @@ test('builds bounded overlapping chunks without crossing PDF pages', () => {
   assert.ok(chunks.every((chunk) =>
     chunk.sentences.every((sentence) => sentence.pageNumber === chunk.pageNumber)));
   assert.equal(chunks.at(-1).pageNumber, 4);
+});
+
+test('scholarly abbreviations stay inside complete sentences and excluded text leaves a real gap', () => {
+  const quote = 'InkSeine supports active note taking from a user’s ink notes (Fig. 1).';
+  const records = sentenceRecordsFromPages([{ pageIndex: 0, text: quote + ' Copyright belongs to the authors. Another body sentence follows.' }]);
+  assert.equal(records[0].text, quote);
+  assert.equal(records[1].text, 'Another body sentence follows.');
+  assert.ok(records[1].globalIndex > records[0].globalIndex + 1);
+  assert.ok(reviewPassages(records, new Set(records.map(r => r.id))).every(r => r.sentences.length === 1));
+});
+
+test('wire quotations restore exact text-layer spaces and punctuation before reaching older PDF viewers', async t => {
+  const rawText = 'We studied how readers track sources. They retain document\nprovenance   across multiple tasks.';
+  const body = { ...input, pages: [{ ...input.pages[0], rawText }] };
+  const { fetchImpl } = setup(t, [{ candidates: [{ sentenceIds: ['p1-s2'] }] }, review]);
+  const result = await analyzeCitationGraph(body, { fetchImpl });
+  assert.equal(result.evidencePassages[0].segments[0].text, 'They retain document\nprovenance   across multiple tasks.');
+  assert.ok(rawText.includes(result.evidencePassages[0].segments[0].text));
 });

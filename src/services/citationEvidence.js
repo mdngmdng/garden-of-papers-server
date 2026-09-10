@@ -5,10 +5,10 @@ const BATCH_CHARS = 90_000;
 const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const ids = { type: 'array', minItems: 1, maxItems: 5, items: { type: 'string' } };
 const discoverySchema = object({ candidates: { type: 'array', maxItems: 8, items: object({ sentenceIds: ids }) } });
-const reviewSchema = object({
+const reviewSchema = passages => object({
   summary: { type: 'string' },
   explanation: { type: 'string' },
-  passages: { type: 'array', maxItems: 3, items: object({ sentenceIds: ids,
+  passages: { type: 'array', maxItems: 3, items: object({ passageId: { type: 'string', enum: passages.map(p => p.id) },
     correspondence: { type: 'string', enum: ['direct', 'partial'] }, relevance: { type: 'string' } }) },
 });
 
@@ -33,8 +33,9 @@ function discoveryBatches(sentences) {
   return batches;
 }
 
-// IDs must describe an actual consecutive passage; never silently drop fabricated IDs.
-function selectedSentences(selectedIds, available) {
+// Discovery selects leads, which need not be adjacent. Still reject every
+// fabricated ID rather than silently accepting a partially valid response.
+function candidateSentences(selectedIds, available) {
   if (!Array.isArray(selectedIds) || !selectedIds.length || selectedIds.length > 5 || new Set(selectedIds).size !== selectedIds.length) {
     throw failure('선택한 원문 문장 범위가 올바르지 않습니다.');
   }
@@ -42,8 +43,33 @@ function selectedSentences(selectedIds, available) {
   const selected = selectedIds.map(id => map.get(id));
   if (selected.some(s => !s)) throw failure('논문에 없는 원문 문장 번호가 반환되었습니다.');
   selected.sort((a, b) => a.globalIndex - b.globalIndex);
+  return selected;
+}
+
+function selectedSentences(selectedIds, available) {
+  const selected = candidateSentences(selectedIds, available);
   if (selected.some((s, i) => s.globalIndex !== selected[0].globalIndex + i)) throw failure('원문에서 이어지지 않는 문장들이 반환되었습니다.');
   return selected;
+}
+
+/** The model chooses one range ID, so it cannot accidentally stitch disjoint
+ * sentences into a quotation. Neighbour windows retain nearby qualifications. */
+function reviewPassages(sentences, candidateIds) {
+  const ranges = new Map();
+  const add = (start, end) => {
+    if (start < 0 || end >= sentences.length) return;
+    const selected = sentences.slice(start, end + 1);
+    if (selected.some((s, i) => s.globalIndex !== selected[0].globalIndex + i)) return;
+    const key = selected.map(s => s.id).join(',');
+    if (!ranges.has(key)) ranges.set(key, { id: `range-${ranges.size + 1}`, sentences: selected });
+  };
+  const seeds = sentences.flatMap((s, i) => candidateIds.has(s.id) ? [i] : []);
+  // Keep schema enums bounded. Large candidate pools are reviewed in batches.
+  for (const i of seeds) add(i, i);
+  for (let size = 2; size <= 5; size++) for (const i of seeds) {
+    for (let before = 0; before < size; before++) add(i - before, i + size - before - 1);
+  }
+  return [...ranges.values()];
 }
 
 async function findCitationEvidence(input, sentences, { fetchImpl = fetch, signal } = {}) {
@@ -75,10 +101,10 @@ async function findCitationEvidence(input, sentences, { fetchImpl = fetch, signa
   for (let offset = 0; offset < batches.length; offset += 2) {
     const results = await Promise.all(batches.slice(offset, offset + 2).map(async batch => {
       const value = await call('citation_evidence_discovery', 'low',
-        'Find passages in the cited paper corresponding to what the citing sentence attributes to this specific reference. Read the entire supplied body, including details. Keep multiple plausible passages (up to 8), each 1–5 consecutive sentences with necessary qualifications. Shared topic words alone are insufficient. Resolve attribution when several references occur together. Return candidates: [] when nothing corresponds. This is source tracing, not a claim that the author actually copied these words.',
+        'Find candidate sentences in the cited paper corresponding to what the citing sentence attributes to this specific reference. Read the entire supplied body, including details. Keep multiple plausible candidates (up to 8), each 1–5 sentence IDs. These are search leads and may be separated; a later review selects exact consecutive passages. Shared topic words alone are insufficient. Resolve attribution when several references occur together. Return candidates: [] when nothing corresponds. This is source tracing, not a claim that the author actually copied these words.',
         discoverySchema, `${context(input)}\n\nCited paper body:\n${formatted(batch)}`);
       if (!Array.isArray(value.candidates) || value.candidates.length > 8) throw failure('원문 후보 목록이 올바르지 않습니다.');
-      return value.candidates.flatMap(c => selectedSentences(c.sentenceIds, batch));
+      return value.candidates.flatMap(c => candidateSentences(c.sentenceIds, batch));
     }));
     for (const s of results.flat()) candidateIds.add(s.id);
   }
@@ -92,27 +118,39 @@ async function findCitationEvidence(input, sentences, { fetchImpl = fetch, signa
     for (let j = Math.max(0, i - 3); j <= Math.min(sentences.length - 1, i + 3); j++) reviewIds.add(sentences[j].id);
   }
   const available = sentences.filter(s => reviewIds.has(s.id));
-  const result = await call('citation_evidence_review', 'medium',
-    'Compare the citing claim with the candidate passages and their surrounding sentences. Check subject, method, result, conditions, negation, and whose claim it is. Select up to 3 distinct useful passages of 1–5 consecutive sentence IDs. direct means the attributed statement actually corresponds; partial means only part corresponds and relevance must state the limitation. Mere topical overlap or contradiction is not evidence: omit it. Return passages: [] if no adequate passage exists. Write summary (how the citing author describes this reference), explanation, and relevance in concise Korean. Never assert historical author provenance.',
-    reviewSchema, `${context(input)}\n\nCandidate passages with neighbouring sentences:\n${formatted(available)}`);
-  if (!Array.isArray(result.passages) || result.passages.length > 3) throw failure('발췌문 목록이 올바르지 않습니다.');
+  const ranges = reviewPassages(available, candidateIds);
+  const reviewed = [];
+  for (let offset = 0; offset < ranges.length; offset += 800) {
+    const choices = ranges.slice(offset, offset + 800);
+    const choiceIds = new Set(choices.flatMap(p => p.sentences.map(s => s.id)));
+    const result = await call('citation_evidence_review', 'medium',
+      'Compare the citing claim with the candidate passages and their surrounding sentences. Check subject, method, result, conditions, negation, and whose claim it is. Select up to 3 distinct non-overlapping passages using only the supplied range IDs. Each range is an exact consecutive quotation; select the shortest range that retains necessary context and qualifications. direct means the attributed statement actually corresponds; partial means only part corresponds and relevance must state the limitation. Mere topical overlap or contradiction is not evidence: omit it. Return passages: [] if no adequate passage exists. Write summary (how the citing author describes this reference), explanation, and relevance in concise Korean. Never assert historical author provenance.',
+      reviewSchema(choices), `${context(input)}\n\nCandidate passages with neighbouring sentences:\n${formatted(available.filter(s => choiceIds.has(s.id)))}\n\nSelectable ranges (inclusive sentence IDs):\n${choices.map(p => `${p.id}: ${p.sentences.map(s => s.id).join(', ')}`).join('\n')}`);
+    if (!Array.isArray(result.passages) || result.passages.length > 3) throw failure('발췌문 목록이 올바르지 않습니다.');
+    for (const p of result.passages) if (!choices.some(c => c.id === p.passageId)) throw failure('논문에 없는 원문 구간 번호가 반환되었습니다.');
+    reviewed.push(result);
+  }
+  const result = { summary: reviewed.find(r => r.passages.length)?.summary, explanation: reviewed[0]?.explanation,
+    passages: reviewed.flatMap(r => r.passages) };
   if (!result.passages.length) return empty(String(result.explanation || '이 인용 문맥에 대응하는 원문을 찾지 못했습니다.').slice(0, 1_000));
   const used = new Set();
-  const evidencePassages = result.passages.map(p => {
+  const evidencePassages = result.passages.flatMap(p => {
     if (!['direct', 'partial'].includes(p.correspondence) || typeof p.relevance !== 'string' || !p.relevance.trim()) throw failure('발췌문의 대응 관계를 확인하지 못했습니다.');
-    const selected = selectedSentences(p.sentenceIds, available);
-    if (selected.some(s => used.has(s.id))) throw failure('동일한 원문 구간이 중복 선택되었습니다.');
+    const selected = ranges.find(r => r.id === p.passageId).sentences;
+    // Overlapping suggestions carry no additional evidence. Keep the first full
+    // verified passage, never trim the second into a misleading fragment.
+    if (selected.some(s => used.has(s.id))) return [];
     selected.forEach(s => used.add(s.id));
-    return { sentenceIds: selected.map(s => s.id), text: selected.map(s => s.text).join(' '),
+    return [{ sentenceIds: selected.map(s => s.id), text: selected.map(s => s.text).join(' '),
       pageNumber: selected[0].pageNumber, endPageNumber: selected.at(-1).pageNumber,
       // Keep page boundaries so PDF highlights never need approximate multi-page matching.
       segments: [...new Set(selected.map(s => s.pageNumber))].map(pageNumber => ({ pageNumber,
         text: selected.filter(s => s.pageNumber === pageNumber).map(s => s.text).join(' ') })),
-      correspondence: p.correspondence, relevance: p.relevance.trim().slice(0, 1_000) };
-  });
+      correspondence: p.correspondence, relevance: p.relevance.trim().slice(0, 1_000) }];
+  }).slice(0, 3);
   const first = evidencePassages[0];
   return { model: MODEL, paperId: input.paper.id, status: 'found', summary: String(result.summary || '').slice(0, 500),
     evidencePassage: first.text, pageNumber: first.pageNumber, relevance: first.relevance, evidencePassages, usage };
 }
 
-module.exports = { MODEL, findCitationEvidence, discoveryBatches, selectedSentences };
+module.exports = { MODEL, findCitationEvidence, discoveryBatches, selectedSentences, reviewPassages };

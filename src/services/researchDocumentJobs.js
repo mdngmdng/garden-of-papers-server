@@ -1,11 +1,11 @@
 const { createHash, randomUUID } = require('node:crypto');
-const { parseAIArtifactRequest, generateResearchDocument, generateQuestionOutline, parseAIArtifactResult } = require('../generated/researchDocumentPipeline.cjs');
+const { parseAIArtifactRequest, generateResearchDocument, generateQuestionOutline, parseAIArtifactResult, researchDocumentResultForClient } = require('../generated/researchDocumentPipeline.cjs');
 const { studyAuditMiddleware, parseStudyContext } = require('./studyProviderAudit');
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const identifier = value => typeof value === 'string' && value.trim() && value.length <= 256;
 const failure = (message, status = 400) => Object.assign(new Error(message), { status });
-const publicJob = job => ({ jobId: job._id, status: job.status, ...(job.result ? { result: job.result } : {}),
+const publicJob = (job, format) => ({ jobId: job._id, status: job.status, ...(job.result ? { result: researchDocumentResultForClient(job.result, format) } : {}),
   ...(job.error ? { error: job.error } : {}) });
 
 /** Mongo owns request identity and results; HTTP disconnects cannot cancel paid work. */
@@ -84,17 +84,17 @@ function createResearchDocumentJobs({ collection, generate, now = () => new Date
         if (error.code !== 11000) throw error;
         const existing = await collection.findOne({ _id, workspaceId: body.workspaceId });
         if (!existing || existing.fingerprint !== fingerprint) throw failure('같은 분석 요청의 원문이 변경되었습니다. 다시 분석해 주세요.', 409);
-        schedule(); return publicJob(existing);
+        schedule(); return publicJob(existing, body.researchDocumentFormat);
       }
-      schedule(); return publicJob(job);
+      schedule(); return publicJob(job, body.researchDocumentFormat);
     },
-    async get(id, workspaceId) {
+    async get(id, workspaceId, format) {
       if (!/^[a-f0-9]{64}$/.test(id) || !identifier(workspaceId)) throw failure('분석 작업 정보가 올바르지 않습니다.');
       await expireInterrupted();
       const job = await collection.findOne({ _id: id, workspaceId });
       if (!job) throw failure('분석 작업을 찾을 수 없습니다.', 404);
       if (job.status === 'queued') schedule();
-      return publicJob(job);
+      return publicJob(job, format);
     },
   };
 }

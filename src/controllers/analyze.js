@@ -2,11 +2,13 @@ const { analyzeRelations, generateClusterLabels, findRelevantSentences, summariz
 const { extractSentences } = require('../services/grobid');
 const s3Service = require('../services/s3');
 const pdfStorage = require('../services/pdfStorage');
+const citedPaperSource = require('../services/citedPaperSource');
+const citationGraphAnalysis = require('../services/citationGraphAnalysis');
 const {
   CitationGraphAnalysisError,
   analyzeCitationGraph,
 } = require('../services/citationGraphAnalysis');
-const { extractPdfTextPages } = require('../services/pdfCitationFallback');
+const pdfCitationFallback = require('../services/pdfCitationFallback');
 const {
   findCitationHit,
   findCitationHits,
@@ -562,8 +564,10 @@ exports.citationGraph = async (req, res) => {
     markerText = '',
   } = req.body;
   if (
-    !projectName
+    typeof projectName !== 'string' || !projectName.trim()
     || (!paperId && !fileId)
+    || (paperId !== undefined && (typeof paperId !== 'string' || paperId.length > 256))
+    || (fileId !== undefined && (typeof fileId !== 'string' || fileId.length > 256))
     || !(String(sourceContext || '').trim() || String(citationContext || '').trim())
   ) {
     return res.status(400).json({
@@ -572,38 +576,33 @@ exports.citationGraph = async (req, res) => {
   }
 
   try {
-    const db = getClient().db(projectName);
-    const doc = await findPaperDocument(db, paperId, fileId);
-    if (!doc) {
-      return res.status(404).json({ error: 'Cited paper was not found' });
-    }
-    const storageFileId = String(doc.fileId || fileId || doc._id || '');
-    if (!storageFileId) {
-      return res.status(422).json({ error: 'Cited paper PDF is not available yet' });
-    }
+    const source = await citedPaperSource.resolveCitedPaperSource(projectName, { paperId, fileId, paperTitle, year, venue });
     const pdfBuffer = await s3Service.downloadPdfBuffer(
-      await pdfStorage.resolvePdfS3Key(projectName, storageFileId),
+      await pdfStorage.resolvePdfS3Key(projectName, source.fileId),
     );
-    const pages = await extractPdfTextPages(pdfBuffer);
-    const result = await analyzeCitationGraph({
+    const pages = await pdfCitationFallback.extractPdfTextPages(pdfBuffer);
+    const result = await citationGraphAnalysis.analyzeCitationGraph({
       sourceContext,
       citationContext,
       markerText,
       pages,
       paper: {
-        id: String(paperId || doc._id),
-        title: doc.paperName || paperTitle || 'Untitled',
+        id: source.paperId,
+        title: source.title,
         authors: Array.isArray(authors) ? authors : [],
-        year: doc.year || year || '',
-        venue: doc.publicationVenue || venue || '',
+        year: source.year,
+        venue: source.venue,
         abstract,
       },
     });
     return res.json(result);
   } catch (error) {
     console.error('[CitationGraph] Error:', error.message);
+    if (pdfStorage.isMissingObjectError(error)) {
+      return res.status(422).json({ error: '수집한 PDF 원본을 아직 읽을 수 없습니다. PDF 저장을 확인한 뒤 다시 탐색해 주세요.' });
+    }
     return res.status(
-      error instanceof CitationGraphAnalysisError ? error.status : 500,
+      error instanceof CitationGraphAnalysisError ? error.status : error.status || 500,
     ).json({ error: error.message });
   }
 };
@@ -763,7 +762,7 @@ exports.closestSentence = async (req, res) => {
 
     const storageFileId = String(doc.fileId || fileId || doc._id);
     const pdfBuffer = await s3Service.downloadPdfBuffer(await pdfStorage.resolvePdfS3Key(projectName, storageFileId));
-    const pages = await extractPdfTextPages(pdfBuffer);
+    const pages = await pdfCitationFallback.extractPdfTextPages(pdfBuffer);
     const title = doc.paperName || paperTitle || 'Untitled';
     const evidence = await analyzeCitationGraph({ sourceContext: citationContext, citationContext,
       markerText: resolvedMarker, pages, paper: { id: String(doc._id), title } });

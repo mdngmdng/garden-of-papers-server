@@ -29,7 +29,7 @@ test('acceptance returns before generation; duplicate requests share one durable
   assert.equal((await jobs.get(first.jobId, 'board')).status, 'running');
   await assert.rejects(jobs.get(first.jobId, 'other-board'), { status: 404 });
   await assert.rejects(jobs.enqueue({ ...input, sources: [{ ...input.sources[0], text: '[PDF page 1]\nDifferent text.' }] }), { status: 409 });
-  finish({ title: '완성', researchDocument: { version: 2 } });
+  finish({ title: '완성' });
   await until(async () => (await jobs.get(first.jobId, 'board')).status === 'completed');
   const reloaded = createResearchDocumentJobs({ collection: db, generate: () => { throw Error('must not regenerate'); } });
   assert.equal((await reloaded.enqueue(input)).result.title, '완성');
@@ -70,5 +70,31 @@ test('question jobs retain every paper, reject changed secondary sources, and re
   await until(async () => (await jobs.get(jobId, 'board')).status === 'completed');
   assert.equal((await jobs.enqueue(body)).result.questionOutline.excerpts[0].sourceId, 'stable-second');
   await assert.rejects(jobs.enqueue({ ...body, sources: [body.sources[0], { ...body.sources[1], text: '[PDF page 1]\nChanged original.' }] }), { status: 409 });
+  await tick(); assert.equal(calls, 1);
+});
+
+test('completed jobs project review blocks for old tabs without mutating or regenerating the saved result', async () => {
+  const sourceText = 'First original sentence. Second original sentence.';
+  const result = { title: '완성', text: '', quotes: [], anchor: null, researchDocument: {
+    version: 2, title: '완성', sections: [{ kind: 'section', id: 'section', title: 'Section', children: [{
+      kind: 'paragraph', id: 'review', pageIndex: 0, endPageIndex: 0, sourceText,
+      sourceReview: { reason: 'source-allocation', lineIds: [1, 2] },
+      sourceSpans: [{ pageIndex: 0, start: 0, length: sourceText.replace(/\s/g, '').length }],
+      sentences: [{ id: 'review-s1', text: sourceText, quote: sourceText, role: 'claim', duplicateOf: null }], groups: [],
+    }] }],
+  } };
+  let calls = 0;
+  const db = collection(), jobs = createResearchDocumentJobs({ collection: db, generate: async () => { calls++; return result; } });
+  const { jobId } = await jobs.enqueue(input);
+  await until(async () => (await jobs.get(jobId, 'board')).status === 'completed');
+  const oldTab = await jobs.get(jobId, 'board');
+  const newTab = await jobs.get(jobId, 'board', 'source-review-v1');
+  assert.equal(newTab.result.researchDocument.sections[0].children[0].sourceReview.reason, 'source-allocation');
+  assert.equal(oldTab.result.researchDocument.sections[0].children[0].kind, 'section');
+  const { parseAIArtifactResult } = require('../src/generated/researchDocumentPipeline.cjs');
+  assert.ok(parseAIArtifactResult(oldTab.result, input.sources, 'document', 'research-document'));
+  assert.deepEqual((await jobs.enqueue(input)).result, oldTab.result);
+  assert.deepEqual((await jobs.enqueue({ ...input, researchDocumentFormat: 'source-review-v1' })).result, newTab.result);
+  assert.deepEqual(db.rows.get(jobId).result, result);
   await tick(); assert.equal(calls, 1);
 });

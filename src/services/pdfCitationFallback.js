@@ -437,6 +437,9 @@ async function extractPdfTextPages(pdfBuffer) {
       pages.push({
         pageIndex: pageNumber - 1,
         text,
+        // Preserve the text layer byte-for-byte for exact quote/highlight delivery.
+        rawText: content.items.filter(item => typeof item?.str === 'string')
+          .map(item => `${item.str}${item.hasEOL ? '\n' : ' '}`).join(''),
         lines: pageLinesFromItems(content.items),
         widthPt: viewport.width,
         heightPt: viewport.height,
