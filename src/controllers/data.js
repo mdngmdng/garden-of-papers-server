@@ -299,7 +299,7 @@ exports.updateData = async (req, res) => {
     citationGraphSelection, citationGraphNoteId, citationGraphModel,
     linkHighlightTexts, summaryNoteId,
     translations, citationHits, pageSizeList, referenceList, citationStatus,
-    pdfPagePreview, pdfExcerpts,
+    pdfPagePreview, pdfExcerpts, researchArtifact,
   } = req.body;
 
   try {
@@ -413,6 +413,7 @@ exports.updateData = async (req, res) => {
     if (linkHighlightTexts !== null && linkHighlightTexts !== undefined && linkHighlightTexts.length !== 0) update.linkHighlightTexts = linkHighlightTexts;
     if (summaryNoteId && summaryNoteId !== '') update.summaryNoteId = summaryNoteId;
     if (translations !== null && translations !== undefined) update.translations = translations;
+    if (type === 'GX.MAROScientificPaper' && researchArtifact?.purpose === 'research-document') update.researchArtifact = researchArtifact;
     if (Array.isArray(citationHits) && citationHits.length !== 0) update.citationHits = citationHits;
     if (Array.isArray(pageSizeList) && pageSizeList.length !== 0) update.pageSizeList = pageSizeList;
     if (Array.isArray(referenceList) && referenceList.length !== 0) update.referenceList = referenceList;
