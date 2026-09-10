@@ -607,6 +607,15 @@ var ResearchOutlineError = class extends Error {
     this.name = "ResearchOutlineError";
   }
 };
+function hasParagraphGap(lines, source) {
+  const last = lines.at(-1), previous = lines.at(-2), next = source.lines[last.id];
+  if (!previous?.layout || !last.layout || !next?.layout || previous.pageIndex !== last.pageIndex || next.pageIndex !== last.pageIndex || previous.id !== last.id - 1 || !/[\p{L}\p{N}][”’"')\]]*\s*$/u.test(last.text) || !/^\s*[“‘"'(\[]*(?:\d+(?:\.\d+)*\.?\s+)?[\p{Lu}\p{Lo}]/u.test(next.text)) return false;
+  const height = Math.max(previous.layout.h, last.layout.h, next.layout.h);
+  if (height <= 0 || Math.abs(previous.layout.x - last.layout.x) > height * 2 || Math.abs(next.layout.x - last.layout.x) > height * 2) return false;
+  const leading = previous.layout.y - last.layout.y;
+  const gap = last.layout.y - next.layout.y;
+  return leading >= height * 0.8 && leading <= height * 1.6 && gap >= Math.max(height * 1.6, leading * 1.5);
+}
 function assembleResearchOutline(value, source, onMissing) {
   const outline = value;
   const invalid = (code = "outline-format", lineIds = []) => new ResearchOutlineError(code, lineIds);
@@ -666,7 +675,7 @@ function assembleResearchOutline(value, source, onMissing) {
     lines.forEach((line) => body.add(line.id));
     const sourceText = lines.map((l) => l.text).join("\n");
     const linkFootnote = /https?:\/\//i.test(sourceText) && bodyHeight > 0 && lines.every((line) => line.layout && line.layout.h < bodyHeight * 0.9);
-    if (!linkFootnote && !/[.!?:;][”’"')\]\d\s]*$/u.test(sourceText)) issues.add(lines[lines.length - 1].id);
+    if (!linkFootnote && !/[.!?:;][”’"')\]\d\s]*$/u.test(sourceText) && !hasParagraphGap(lines, source)) issues.add(lines[lines.length - 1].id);
     const sentences = splitResearchSentences(sourceText).map((quote, i) => ({ id: `${id}s${i + 1}`, quote, text: "", role: "context", duplicateOf: null }));
     if (!sentences.length || sentences.length > 150 || sourceText.length > 3e4) throw invalid("paragraph-size", lines.map((l) => l.id));
     return {
