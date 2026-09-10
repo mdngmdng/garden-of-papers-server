@@ -1,5 +1,5 @@
 const { preserveEvidenceRequests } = require('./evidenceRequestCompatibility');
-const { repairDuplicatePersistenceKeys, repairLegacyIncomingKeys } = require('./persistenceIdentity');
+const { repairDuplicatePersistenceKeys, repairLegacyIncomingKeys, compatibleFallbackPaperIdentity } = require('./persistenceIdentity');
 const { getClient } = require('./mongo');
 const { gzipSync, gunzipSync } = require('node:zlib');
 
@@ -134,7 +134,8 @@ function validateObjectIdentities(objects, previousObjects = []) {
     }
     const existing = previous.get(id);
     if (existing?.persistenceKey && object.persistenceKey &&
-        (existing.persistenceKey !== object.persistenceKey || existing.type !== object.type)) {
+        (existing.persistenceKey !== object.persistenceKey || existing.type !== object.type) &&
+        !compatibleFallbackPaperIdentity(object, existing)) {
       throw new WorkspaceSnapshotError('Workspace object identity changed', 409, 'object_identity_conflict');
     }
     ids.add(id);

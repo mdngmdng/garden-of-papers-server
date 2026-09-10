@@ -259,6 +259,41 @@ test('rejects duplicate object ids and changed client identities without saving'
 });
 
 for (const method of ['save', 'patch']) {
+  test(`${method} reconciles a legacy row-id fallback and keeps subsequent recovery saves durable`, async () => {
+    const { service } = fixture();
+    const initial = workspace();
+    initial.objects = [{ id: 'paper', type: 'GX.MAROScientificPaper', persistenceKey: 'paper', title: 'texSketch', x: 1 },
+      { id: 'note', type: 'GX.MARONote', text: 'keep my note', parentPaperId: 'paper' }];
+    await service.ensure(initial);
+    const submit = async (object, revision, mutationId) => service[method]({ projectName: 'garden', baseRevision: revision, mutationId,
+      state: { ...initial, objects: [object, initial.objects[1]] },
+      delta: { camera: initial.camera, upsertedObjects: [object], removedObjectIds: [] } });
+    const upgraded = { ...initial.objects[0], persistenceKey: 'original-client-uuid', x: 20 };
+    await submit(upgraded, 0, 'first:recovery');
+    assert.equal((await service.load('garden')).objects[0].persistenceKey, 'original-client-uuid');
+    // A second old tab still sends its fallback key or no key at all.
+    for (const [index, key] of ['paper', undefined].entries()) {
+      const incoming = { ...upgraded, persistenceKey: key, x: 30 + index };
+      await submit(incoming, index + 1, `old-tab-${index}:canonical`);
+      const saved = await service.load('garden');
+      assert.equal(saved.objects[0].persistenceKey, upgraded.persistenceKey);
+      assert.equal(saved.objects[0].x, incoming.x);
+      assert.deepEqual(saved.objects[1], initial.objects[1]);
+    }
+    const before = await service.load('garden');
+    for (const object of [
+      { ...upgraded, persistenceKey: 'unrelated-uuid' },
+      { ...upgraded, persistenceKey: 'paper', title: 'Different paper' },
+      { ...upgraded, persistenceKey: 'paper', type: 'GX.MARONote' },
+      { ...upgraded, persistenceKey: 'paper', syncSourceId: 'different-instance' },
+    ]) {
+      await assert.rejects(submit(object, 3, 'must-not-write'), error => error.code === 'object_identity_conflict');
+    }
+    assert.deepEqual(await service.load('garden'), before);
+  });
+}
+
+for (const method of ['save', 'patch']) {
   test(`${method} repairs already-stored pasted notes without removing their content`, async () => {
     const { service, collection } = fixture();
     const initial = workspace();

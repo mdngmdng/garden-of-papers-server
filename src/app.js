@@ -10,6 +10,7 @@ const { connect } = require('./services/mongo');
 const { createWebSocketServer } = require('./services/websocket');
 const { spawnUdpRelay } = require('./services/udpRelay');
 const { studyAuditMiddleware, createAuditedProviderFetch } = require('./services/studyProviderAudit');
+const { createWorkspaceWriteQueue } = require('./services/workspaceWriteQueue');
 
 global.fetch = createAuditedProviderFetch(global.fetch);
 
@@ -53,6 +54,7 @@ app.use(cors({
 // Compressing them prevents multi-megabyte boards from spending most of their
 // load deadline crossing the public tunnel to the browser.
 app.use(compression());
+app.use(createWorkspaceWriteQueue());
 app.use(express.json({ limit: '50mb' }));
 app.use(studyAuditMiddleware);
 

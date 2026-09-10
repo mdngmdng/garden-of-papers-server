@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const { getClient } = require('../services/mongo');
 const syncKeys = require('../services/syncKeys');
 const pdfPreviewService = require('../services/pdfPreview');
+const { compatibleFallbackPaperIdentity } = require('../services/persistenceIdentity');
 
 function getIdQuery(id) {
   const value = String(id ?? '');
@@ -427,7 +428,7 @@ exports.updateData = async (req, res) => {
     update._gopUpdatedAt = new Date();
 
     try {
-      const updatedData = await collection.findOneAndUpdate(
+      let updatedData = await collection.findOneAndUpdate(
         {
           ...getIdQuery(_id),
           ...(req.body.clientObjectId ? {
@@ -440,6 +441,25 @@ exports.updateData = async (req, res) => {
         },
         { returnDocument: 'after' },
       );
+
+      if (!updatedData && req.body.clientObjectId === String(_id)) {
+        const existing = await collection.findOne(getIdQuery(_id));
+        const asPaper = row => row && ({
+          id: String(row._id), type: row.type, title: row.paperName,
+          persistenceKey: row.clientObjectId, syncSourceId: row.copiedOrigianlPaperId,
+        });
+        if (existing?.clientObjectId && compatibleFallbackPaperIdentity(asPaper(req.body), asPaper(existing))) {
+          // Match the exact identity inspected above. Never rewrite the stored
+          // UUID to the browser's fallback id, or race a repaired/replaced row.
+          updatedData = await collection.findOneAndUpdate(
+            { _id: existing._id, type: existing.type, paperName: existing.paperName,
+              clientObjectId: existing.clientObjectId,
+              copiedOrigianlPaperId: existing.copiedOrigianlPaperId ?? null },
+            { $set: update, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
+            { returnDocument: 'after' },
+          );
+        }
+      }
 
       if (!updatedData) {
         if (req.body.clientObjectId) {
