@@ -58,3 +58,17 @@ test('queue caps simultaneous documents and starts the next after one finishes',
   finishes[1]({ title: 'second' }); finishes[2]({ title: 'third' });
   await until(async () => (await jobs.get(accepted[2].jobId, 'board')).status === 'completed');
 });
+
+test('question jobs retain every paper, reject changed secondary sources, and reuse completed answers', async () => {
+  let calls = 0;
+  const db = collection(), jobs = createResearchDocumentJobs({ collection: db, generate: async body => {
+    calls++; assert.equal(body.purpose, 'question-outline'); assert.equal(body.sources.length, 2);
+    return { title: '질문 답변', questionOutline: { excerpts: [{ sourceId: body.sources[1].paperId }] } };
+  } });
+  const body = { ...input, purpose: 'question-outline', sources: [...input.sources, { ...input.sources[0], paperId: 'stable-second', title: 'Second' }] };
+  const { jobId } = await jobs.enqueue(body);
+  await until(async () => (await jobs.get(jobId, 'board')).status === 'completed');
+  assert.equal((await jobs.enqueue(body)).result.questionOutline.excerpts[0].sourceId, 'stable-second');
+  await assert.rejects(jobs.enqueue({ ...body, sources: [body.sources[0], { ...body.sources[1], text: '[PDF page 1]\nChanged original.' }] }), { status: 409 });
+  await tick(); assert.equal(calls, 1);
+});

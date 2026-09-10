@@ -29,18 +29,27 @@ function auditResponseStream(response, record) {
   const decoder = new TextDecoder();
   const started = performance.now();
   let buffer = '', pending = [], pendingBytes = 0, queuedBytes = 0;
-  let writes = Promise.resolve(), writeError, timer, closed = false, terminal = '';
+  let writes = Promise.resolve(), writing = false, writeError, timer, closed = false, terminal = '';
   let eventCount = 0, lastEventType = '', lastEventAt = null;
   const diagnostics = () => ({ eventCount, lastEventType, lastEventAt, terminalEvent: terminal,
     elapsedMs: Math.round(performance.now() - started) });
   const flush = () => {
     clearTimeout(timer); timer = undefined;
-    if (pending.length) {
-      const events = pending, size = pendingBytes;
-      pending = []; pendingBytes = 0; queuedBytes += size;
-      writes = writes.then(async () => {
-        if (!writeError) await record('provider.stream', { events });
-      }).catch(error => { writeError = error; }).finally(() => { queuedBytes -= size; });
+    if (!writing && pending.length) {
+      writing = true;
+      // Coalesce events arriving during a slow journal write into the next batch.
+      // Enqueuing one new write every 100 ms otherwise creates minutes of backlog.
+      writes = (async () => {
+        try {
+          while (pending.length && !writeError) {
+            const events = pending;
+            queuedBytes = pendingBytes; pending = []; pendingBytes = 0;
+            await record('provider.stream', { events });
+            queuedBytes = 0;
+          }
+        } catch (error) { writeError = error; }
+        finally { writing = false; queuedBytes = 0; }
+      })();
     }
     return writes;
   };
@@ -75,7 +84,7 @@ function auditResponseStream(response, record) {
         buffer = blocks.pop() || '';
         for (const block of blocks) capture(block);
         if (done && buffer.trim()) { capture(buffer); buffer = ''; }
-        if (terminal || queuedBytes > 2 * 1024 * 1024) {
+        if (terminal || queuedBytes + pendingBytes > 2 * 1024 * 1024) {
           await flush();
           if (writeError) throw writeError;
         }
@@ -90,9 +99,14 @@ function auditResponseStream(response, record) {
       }
     },
     async cancel(reason) {
-      const cancelled = reader.cancel(reason);
-      await finish(null, !terminal);
-      await cancelled;
+      // Observe cancellation immediately: it can reject while the journal is
+      // still being saved. An unobserved AbortError would terminate Node.
+      const [cancelled, finished] = await Promise.allSettled([
+        reader.cancel(reason),
+        finish(null, !terminal),
+      ]);
+      if (finished.status === 'rejected') throw finished.reason;
+      if (cancelled.status === 'rejected') throw cancelled.reason;
     },
   });
   return new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });

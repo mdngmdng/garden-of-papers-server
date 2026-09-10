@@ -1,5 +1,5 @@
 const { createHash, randomUUID } = require('node:crypto');
-const { parseAIArtifactRequest, generateResearchDocument, parseAIArtifactResult } = require('../generated/researchDocumentPipeline.cjs');
+const { parseAIArtifactRequest, generateResearchDocument, generateQuestionOutline, parseAIArtifactResult } = require('../generated/researchDocumentPipeline.cjs');
 const { studyAuditMiddleware, parseStudyContext } = require('./studyProviderAudit');
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -70,10 +70,12 @@ function createResearchDocumentJobs({ collection, generate, now = () => new Date
     async enqueue(body, auditHeader) {
       if (!identifier(body?.workspaceId) || !identifier(body?.requestId)) throw failure('보드와 분석 요청 정보가 필요합니다.');
       const input = parseAIArtifactRequest(body);
-      if (input.purpose !== 'research-document' || !/^\[PDF page 1\]/.test(input.sources[0].text)) throw failure('문장 위치를 확인할 PDF 본문이 필요합니다.');
+      if (!['research-document', 'question-outline'].includes(input.purpose) || input.sources.some(s => !/^\[PDF page 1\]/.test(s.text))) throw failure('문장 위치를 확인할 PDF 본문이 필요합니다.');
       const _id = hash([body.workspaceId, body.requestId]);
       // PDFJS's generated font IDs, signed URLs, and Mongo paper IDs can change on reload.
-      const fingerprint = hash([input.kind, input.purpose, input.prompt, input.sources[0].title, input.sources[0].text]);
+      const fingerprint = hash(input.purpose === 'research-document'
+        ? [input.kind, input.purpose, input.prompt, input.sources[0].title, input.sources[0].text]
+        : [input.kind, input.purpose, input.prompt, input.sources.map(s => [s.title, s.text])]);
       const job = { _id, workspaceId: body.workspaceId, requestId: body.requestId, fingerprint, input, status: 'queued',
         createdAt: now(), updatedAt: now(), expiresAt: new Date(+now() + 7 * 86400000),
         auditHeader: parseStudyContext(auditHeader)?.workspaceId === body.workspaceId ? auditHeader : null };
@@ -101,8 +103,10 @@ async function generate(input, signal) {
   const key = require('../config').openai.apiKey;
   if (!key) throw failure('서버에 AI 생성 키가 설정되지 않았습니다.', 503);
   const source = input.sources[0];
-  const document = await generateResearchDocument({ text: source.text, pdfUrl: source.pdfUrl, layout: source.researchLayout, key, signal });
-  const result = parseAIArtifactResult({ researchDocument: document }, input.sources, input.kind, input.purpose);
+  const generated = input.purpose === 'question-outline'
+    ? { questionOutline: await generateQuestionOutline({ sources: input.sources, question: input.prompt, key, signal }) }
+    : { researchDocument: await generateResearchDocument({ text: source.text, pdfUrl: source.pdfUrl, layout: source.researchLayout, key, signal }) };
+  const result = parseAIArtifactResult(generated, input.sources, input.kind, input.purpose);
   if (!result) throw Error('연구 문서 형식이 올바르지 않습니다.');
   return result;
 }
