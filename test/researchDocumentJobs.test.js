@@ -20,6 +20,20 @@ const input = { workspaceId: 'board', requestId: 'request', kind: 'document', pu
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function until(predicate) { for (let i = 0; i < 100; i++) { if (await predicate()) return; await tick(); } throw Error('condition not reached'); }
 
+test('retains completion diagnostics without publishing them or restarting a failed job', async () => {
+  const db = collection(); let calls = 0;
+  const diagnostics = { status: 'incomplete', reason: 'max_output_tokens', outputTokens: 50000, attempts: 2, responseId: 'response' };
+  const jobs = createResearchDocumentJobs({ collection: db, generate: async () => {
+    calls++; throw Object.assign(Error('분석 답변이 길어 작성을 완료하지 못했습니다.'), { generationDiagnostics: diagnostics });
+  } });
+  const { jobId } = await jobs.enqueue({ ...input, purpose: undefined });
+  await until(async () => (await jobs.get(jobId, 'board')).status === 'failed');
+  assert.deepEqual(db.rows.get(jobId).generationDiagnostics, diagnostics);
+  assert.equal(db.rows.get(jobId).input, undefined);
+  assert.equal((await jobs.get(jobId, 'board')).generationDiagnostics, undefined);
+  await jobs.enqueue({ ...input, purpose: undefined }); await tick(); assert.equal(calls, 1);
+});
+
 test('acceptance returns before generation; duplicate requests share one durable result across clients', async () => {
   const db = collection(); let calls = 0, finish;
   const jobs = createResearchDocumentJobs({ collection: db, generate: () => { calls++; return new Promise(resolve => { finish = resolve; }); } });

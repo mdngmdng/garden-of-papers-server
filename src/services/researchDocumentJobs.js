@@ -47,7 +47,8 @@ function createResearchDocumentJobs({ collection, generate, now = () => new Date
     } catch (error) {
       await collection.updateOne({ _id: job._id, status: 'running', runId: job.runId }, {
         $set: { status: 'failed', error: ['AbortError', 'TimeoutError'].includes(error?.name)
-          ? '논문 분석 시간이 초과되었습니다. 다시 분석해 주세요.' : String(error?.message || '연구 문서를 생성하지 못했습니다.').slice(0, 2000), updatedAt: now() },
+          ? '논문 분석 시간이 초과되었습니다. 다시 분석해 주세요.' : String(error?.message || '연구 문서를 생성하지 못했습니다.').slice(0, 2000), updatedAt: now(),
+          ...(error?.generationDiagnostics ? { generationDiagnostics: error.generationDiagnostics } : {}) },
         $unset: { input: '', auditHeader: '', leaseUntil: '' },
       });
     } finally { active.delete(job._id); schedule(); }
