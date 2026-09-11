@@ -1,9 +1,20 @@
 const { createHash, randomUUID } = require('node:crypto');
-const { parseAIArtifactRequest, generateResearchDocument, generateQuestionOutline, parseAIArtifactResult, researchDocumentResultForClient } = require('../generated/researchDocumentPipeline.cjs');
+const { parseAIArtifactRequest, generateResearchDocument, generateAIArtifact, parseAIArtifactResult, researchDocumentResultForClient } = require('../generated/researchDocumentPipeline.cjs');
 const { studyAuditMiddleware, parseStudyContext } = require('./studyProviderAudit');
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const identifier = value => typeof value === 'string' && value.trim() && value.length <= 256;
+const pdfIdentity = source => {
+  if (source.pdfKey?.startsWith('file:')) return source.pdfKey;
+  if (!source.pdfUrl) return null;
+  const url = new URL(source.pdfUrl);
+  url.hash = '';
+  for (const name of [...url.searchParams.keys()]) {
+    if (/^(?:x-amz-.+|x-goog-.+|awsaccesskeyid|signature|expires|policy|key-pair-id)$/i.test(name)) url.searchParams.delete(name);
+  }
+  url.searchParams.sort();
+  return url.href;
+};
 const failure = (message, status = 400) => Object.assign(new Error(message), { status });
 const publicJob = (job, format) => ({ jobId: job._id, status: job.status, ...(job.result ? { result: researchDocumentResultForClient(job.result, format) } : {}),
   ...(job.error ? { error: job.error } : {}) });
@@ -70,12 +81,13 @@ function createResearchDocumentJobs({ collection, generate, now = () => new Date
     async enqueue(body, auditHeader) {
       if (!identifier(body?.workspaceId) || !identifier(body?.requestId)) throw failure('보드와 분석 요청 정보가 필요합니다.');
       const input = parseAIArtifactRequest(body);
-      if (!['research-document', 'question-outline'].includes(input.purpose) || input.sources.some(s => !/^\[PDF page 1\]/.test(s.text))) throw failure('문장 위치를 확인할 PDF 본문이 필요합니다.');
+      if (input.purpose === 'research-document' && input.sources.some(s => !/^\[PDF page 1\]/.test(s.text))) throw failure('문장 위치를 확인할 PDF 본문이 필요합니다.');
       const _id = hash([body.workspaceId, body.requestId]);
       // PDFJS's generated font IDs, signed URLs, and Mongo paper IDs can change on reload.
       const fingerprint = hash(input.purpose === 'research-document'
         ? [input.kind, input.purpose, input.prompt, input.sources[0].title, input.sources[0].text]
-        : [input.kind, input.purpose, input.prompt, input.sources.map(s => [s.title, s.text])]);
+        : [input.kind, input.purpose, input.prompt, input.sources.map(s => [s.paperId, s.kind, s.title, s.text,
+          s.pageIndex, s.selectedText, pdfIdentity(s)])]);
       const job = { _id, workspaceId: body.workspaceId, requestId: body.requestId, fingerprint, input, status: 'queued',
         createdAt: now(), updatedAt: now(), expiresAt: new Date(+now() + 7 * 86400000),
         auditHeader: parseStudyContext(auditHeader)?.workspaceId === body.workspaceId ? auditHeader : null };
@@ -102,10 +114,9 @@ function createResearchDocumentJobs({ collection, generate, now = () => new Date
 async function generate(input, signal) {
   const key = require('../config').openai.apiKey;
   if (!key) throw failure('서버에 AI 생성 키가 설정되지 않았습니다.', 503);
+  if (input.purpose !== 'research-document') return generateAIArtifact(input, key, signal);
   const source = input.sources[0];
-  const generated = input.purpose === 'question-outline'
-    ? { questionOutline: await generateQuestionOutline({ sources: input.sources, question: input.prompt, key, signal }) }
-    : { researchDocument: await generateResearchDocument({ text: source.text, pdfUrl: source.pdfUrl, layout: source.researchLayout, key, signal }) };
+  const generated = { researchDocument: await generateResearchDocument({ text: source.text, pdfUrl: source.pdfUrl, layout: source.researchLayout, key, signal }) };
   const result = parseAIArtifactResult(generated, input.sources, input.kind, input.purpose);
   if (!result) throw Error('연구 문서 형식이 올바르지 않습니다.');
   return result;

@@ -59,17 +59,38 @@ test('queue caps simultaneous documents and starts the next after one finishes',
   await until(async () => (await jobs.get(accepted[2].jobId, 'board')).status === 'completed');
 });
 
-test('question jobs retain every paper, reject changed secondary sources, and reuse completed answers', async () => {
+test('argument jobs retain all six papers, reject changed secondary sources, and reuse completed answers', async () => {
   let calls = 0;
   const db = collection(), jobs = createResearchDocumentJobs({ collection: db, generate: async body => {
-    calls++; assert.equal(body.purpose, 'question-outline'); assert.equal(body.sources.length, 2);
-    return { title: '질문 답변', questionOutline: { excerpts: [{ sourceId: body.sources[1].paperId }] } };
+    calls++; assert.equal(body.purpose, undefined); assert.equal(body.sources.length, 6);
+    return { title: '리서치 갭', text: '분석 결과\n[[ai-quote:q1]]', quotes: [{ id: 'q1', sourceId: body.sources[1].paperId, text: 'An original evidence sentence.', pageIndex: 0 }], anchor: null };
   } });
-  const body = { ...input, purpose: 'question-outline', sources: [...input.sources, { ...input.sources[0], paperId: 'stable-second', title: 'Second' }] };
+  const body = { ...input, purpose: undefined, sources: Array.from({ length: 6 }, (_, i) => ({ ...input.sources[0], paperId: `stable-${i}`,
+    title: `Paper ${i}`, pdfUrl: `https://papers.example/p${i}.pdf?signature=first` })) };
   const { jobId } = await jobs.enqueue(body);
   await until(async () => (await jobs.get(jobId, 'board')).status === 'completed');
-  assert.equal((await jobs.enqueue(body)).result.questionOutline.excerpts[0].sourceId, 'stable-second');
-  await assert.rejects(jobs.enqueue({ ...body, sources: [body.sources[0], { ...body.sources[1], text: '[PDF page 1]\nChanged original.' }] }), { status: 409 });
+  assert.equal((await jobs.enqueue(body)).result.quotes[0].sourceId, 'stable-1');
+  const reloaded = createResearchDocumentJobs({ collection: db, generate: () => { throw Error('must not regenerate'); } });
+  const refreshed = { ...body, sources: body.sources.map(s => ({ ...s, pdfUrl: s.pdfUrl.replace('first', 'refreshed') })) };
+  assert.equal((await reloaded.enqueue(refreshed)).result.quotes[0].sourceId, 'stable-1');
+  for (const change of [{ text: '[PDF page 1]\nChanged original.' }, { selectedText: 'A newly selected passage.' }, { pageIndex: 3 },
+    { pdfUrl: 'https://papers.example/a-different-paper.pdf' }, { pdfUrl: 'https://papers.example/p1.pdf?id=different' }, { kind: 'document' }]) {
+    await assert.rejects(jobs.enqueue({ ...body, sources: body.sources.map((s, i) => i === 1 ? { ...s, ...change } : s) }), { status: 409 });
+  }
+  await tick(); assert.equal(calls, 1);
+});
+
+test('post-it jobs are durable and retired question outlines are rejected before enqueue', async () => {
+  let calls = 0;
+  const db = collection(), jobs = createResearchDocumentJobs({ collection: db, generate: async () => {
+    calls++; return { title: '요약', text: '짧은 요약', quotes: [], anchor: null };
+  } });
+  await assert.rejects(jobs.enqueue({ ...input, purpose: 'question-outline' }), /Argument sheet/);
+  assert.equal(db.rows.size, 0);
+  const body = { ...input, kind: 'post-it', purpose: undefined };
+  const { jobId } = await jobs.enqueue(body);
+  await until(async () => (await jobs.get(jobId, 'board')).status === 'completed');
+  assert.equal((await jobs.enqueue(body)).result.text, '짧은 요약');
   await tick(); assert.equal(calls, 1);
 });
 
