@@ -78,7 +78,31 @@ function exactResearchRange(pageText, quote, from = 0) {
   return { startChar, length: from + source.offsets[at + target.length - 1] + 1 - startChar };
 }
 function splitResearchSentences(value, locale = "en") {
-  const quoted = locale === "ko" ? value.replace(/[.!?](?=[”’"']\s*(?:라고|라며|라는|이라고|이라며|이라는|고\s))/gu, "\xB7") : value;
+  const parentheses = [], stack = [];
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === "(" || value[i] === "\uFF08") stack.push(i);
+    else if ((value[i] === ")" || value[i] === "\uFF09") && stack.length) parentheses.push({ start: stack.pop(), end: i });
+  }
+  const masked = value.split("");
+  for (const quote of value.matchAll(/“[^”]*”|‘[^’]*’|"[^"]*"/gu)) {
+    const start = quote.index, end = start + quote[0].length - 1;
+    const afterQuote = value.slice(end + 1);
+    const parenthesis = parentheses.find((p) => p.start < start && p.end > end);
+    const afterParenthesis = parenthesis ? value.slice(parenthesis.end + 1).replace(/^[)）]+/u, "") : "";
+    const particles = /^(?:라고|라며|라는|이라고|이라며|이라는|으로|에서|처럼|보다|은|는|이|가|을|를|에|와|과|도|만|나|로|의)/u;
+    const reporting = locale === "ko" && /^\s*(?:라고|라며|라는|이라고|이라며|이라는|고\s)/u.test(afterQuote);
+    const attached = locale === "ko" && particles.test(afterQuote);
+    const example = parenthesis && /^[\s)）]*$/u.test(value.slice(end + 1, parenthesis.end)) && (/^\s*(?:[a-z]|[,;:.!?])/u.test(afterParenthesis) || locale === "ko" && particles.test(afterParenthesis));
+    if (!reporting && !attached && !example) continue;
+    const inside = quote[0].slice(1, -1);
+    const closing = /[.!?]+\s*$/u.exec(inside);
+    if (closing) {
+      for (let i = closing.index; i < inside.length; i++) if (/[.!?]/u.test(inside[i])) masked[start + 1 + i] = "\xB7";
+    }
+    for (const ellipsis of inside.matchAll(/\.{2,}/g)) for (let i = 0; i < ellipsis[0].length; i++) masked[start + 1 + ellipsis.index + i] = "\xB7";
+  }
+  const embedded = masked.join("");
+  const quoted = locale === "ko" ? embedded.replace(/[.!?](?=[”’"']\s*(?:라고|라며|라는|이라고|이라며|이라는|고\s))/gu, "\xB7") : embedded;
   const protectedText = quoted.replace(/[\r\n]/g, " ").replace(/\b(?:e\.g|i\.e|et al|Figs?|Eqs?|Secs?|Dr|Prof|Mr|Mrs|Ms|vs|No|Vol|pp)\./gi, (m) => m.replace(/\./g, "\xB7")).replace(/\b[A-Z]\.(?=\s*[A-Z]\b)/g, (m) => m.replace(".", "\xB7"));
   return [...new Intl.Segmenter(locale, { granularity: "sentence" }).segment(protectedText)].map((s) => value.slice(s.index, s.index + s.segment.length).trim()).filter(Boolean);
 }
@@ -860,7 +884,10 @@ function assembleResearchOutlineWithReview(value, source) {
 }
 function applyResearchReading(value, paragraphs) {
   const result = value;
-  const invalid = () => Error("\uD55C\uAD6D\uC5B4 \uBC88\uC5ED\uACFC \uC6D0\uBB38 \uBB38\uC7A5\uC758 1:1 \uB300\uC751\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC0DD\uC131\uD574 \uC8FC\uC138\uC694.");
+  const invalid = () => Object.assign(
+    Error("\uC6D0\uBB38 \uBB38\uB2E8\uC758 \uD575\uC2EC \uBB38\uC7A5\uACFC \uC138\uBD80 \uB0B4\uC6A9 \uAD6C\uC131\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uBD84\uC11D\uD574 \uC8FC\uC138\uC694."),
+    { generationDiagnostics: { stage: "research_reading", reason: "paragraph_structure" } }
+  );
   if (!result || !Array.isArray(result.paragraphs) || result.paragraphs.length !== paragraphs.length) throw invalid();
   const seen = /* @__PURE__ */ new Set();
   for (const output of result.paragraphs) {
@@ -906,11 +933,17 @@ function applyResearchReading(value, paragraphs) {
 function applyResearchTranslations(value, paragraphs) {
   const translations = value?.translations;
   const sentences = paragraphs.flatMap((p) => p.sentences), seen = /* @__PURE__ */ new Set();
-  const invalid = () => Error("\uD55C\uAD6D\uC5B4 \uBC88\uC5ED\uACFC \uC6D0\uBB38 \uBB38\uC7A5\uC758 1:1 \uB300\uC751\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC0DD\uC131\uD574 \uC8FC\uC138\uC694.");
-  if (!Array.isArray(translations) || translations.length !== sentences.length) throw invalid();
+  const invalid = (reason, sentenceId, actualCount) => Object.assign(
+    Error("\uD55C\uAD6D\uC5B4 \uBC88\uC5ED\uACFC \uC6D0\uBB38 \uBB38\uC7A5\uC758 1:1 \uB300\uC751\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uC0DD\uC131\uD574 \uC8FC\uC138\uC694."),
+    { generationDiagnostics: { stage: "research_translation", reason, sentenceId, actualCount } }
+  );
+  if (!Array.isArray(translations) || translations.length !== sentences.length) throw invalid("translation_count", void 0, translations?.length);
   for (const t of translations) {
     const sentence = sentences.find((s) => s.id === t?.id);
-    if (!sentence || seen.has(t.id) || typeof t.text !== "string" || !t.text.trim() || t.text.length > 5e3 || splitResearchSentences(t.text, "ko").length !== 1) throw invalid();
+    if (!sentence || seen.has(t.id)) throw invalid("sentence_id", t?.id);
+    if (typeof t.text !== "string" || !t.text.trim() || t.text.length > 5e3) throw invalid("translation_text", t.id);
+    const sentenceCount = splitResearchSentences(t.text, "ko").length;
+    if (sentenceCount !== 1) throw invalid("sentence_boundary", t.id, sentenceCount);
     seen.add(t.id);
     sentence.text = t.text.trim();
   }
