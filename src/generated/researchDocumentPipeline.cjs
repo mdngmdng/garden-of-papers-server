@@ -89,10 +89,12 @@ function splitResearchSentences(value, locale = "en") {
     const afterQuote = value.slice(end + 1);
     const parenthesis = parentheses.find((p) => p.start < start && p.end > end);
     const afterParenthesis = parenthesis ? value.slice(parenthesis.end + 1).replace(/^[)）]+/u, "") : "";
+    const beforeParenthesis = parenthesis ? value.slice(0, parenthesis.start).trimEnd() : "";
     const particles = /^(?:라고|라며|라는|이라고|이라며|이라는|으로|에서|처럼|보다|은|는|이|가|을|를|에|와|과|도|만|나|로|의)/u;
     const reporting = locale === "ko" && /^\s*(?:라고|라며|라는|이라고|이라며|이라는|고\s)/u.test(afterQuote);
     const attached = locale === "ko" && particles.test(afterQuote);
-    const example = parenthesis && /^[\s)）]*$/u.test(value.slice(end + 1, parenthesis.end)) && (/^\s*(?:[a-z]|[,;:.!?])/u.test(afterParenthesis) || locale === "ko" && particles.test(afterParenthesis));
+    const koreanContinuation = locale === "ko" && !!beforeParenthesis && !/[.!?…][”’"')）\]]*$/u.test(beforeParenthesis) && new RegExp("^\\s+\\p{Script=Hangul}", "u").test(afterParenthesis);
+    const example = parenthesis && /^[\s)）]*$/u.test(value.slice(end + 1, parenthesis.end)) && (/^\s*(?:[a-z]|[,;:.!?])/u.test(afterParenthesis) || locale === "ko" && particles.test(afterParenthesis) || koreanContinuation);
     if (!reporting && !attached && !example) continue;
     const inside = quote[0].slice(1, -1);
     const closing = /[.!?]+\s*$/u.exec(inside);
@@ -138,13 +140,13 @@ function parseResearchDocument(value) {
       return;
     }
     if (node.kind !== "paragraph" || !Number.isInteger(node.pageIndex) || node.pageIndex < 0 || !Number.isInteger(node.endPageIndex) || node.endPageIndex < node.pageIndex || node.endPageIndex > 1e4 || !text(node.sourceText) || !Array.isArray(node.sentences) || !node.sentences.length || node.sentences.length > 150 || !Array.isArray(node.groups) || node.assessment !== void 0 && (!["supported", "limited", "descriptive"].includes(node.assessment.status) || !text(node.assessment.rationale, 3e3))) throw Error();
-    if (node.sourceReview !== void 0 && (node.sourceReview?.reason !== "source-allocation" || !Array.isArray(node.sourceReview.lineIds) || !node.sourceReview.lineIds.length || node.sourceReview.lineIds.length > 5e3 || node.sourceReview.lineIds.some((n, i, all) => !Number.isInteger(n) || n < 1 || n > 2e4 || i > 0 && n <= all[i - 1]) || !node.sourceSpans || node.sentences.length !== 1 || node.sentences[0]?.text !== node.sourceText || node.sentences[0]?.quote !== node.sourceText || node.sentences[0]?.role !== "claim" || node.groups.length)) throw Error();
+    if (node.sourceReview !== void 0 && (!["source-allocation", "translation-alignment"].includes(node.sourceReview?.reason) || !Array.isArray(node.sourceReview.lineIds) || !node.sourceReview.lineIds.length || node.sourceReview.lineIds.length > 5e3 || node.sourceReview.lineIds.some((n, i, all) => !Number.isInteger(n) || n < 1 || n > 2e4 || i > 0 && n <= all[i - 1]) || !node.sourceSpans || node.sentences.length !== 1 || node.sentences[0]?.text !== node.sourceText || node.sentences[0]?.quote !== node.sourceText || node.sentences[0]?.role !== "claim" || node.groups.length)) throw Error();
     if (node.sourceSpans !== void 0 && (!Array.isArray(node.sourceSpans) || !node.sourceSpans.length || node.sourceSpans.length > 5e3 || node.sourceSpans.some((span, i, spans) => !span || !Number.isInteger(span.pageIndex) || span.pageIndex < node.pageIndex || span.pageIndex > node.endPageIndex || !Number.isInteger(span.start) || span.start < 0 || !Number.isInteger(span.length) || span.length <= 0 || span.start + span.length > 24e4 || i > 0 && span.pageIndex < spans[i - 1].pageIndex) || node.sourceSpans.reduce((n, span) => n + span.length, 0) !== normalizedResearchText(node.sourceText).text.length)) throw Error();
     let cursor = 0;
     for (const s of node.sentences) {
       if (!s) throw Error();
       id(s.id);
-      if (!text(s.text, 5e3) || !text(s.quote, 1e4) || !["claim", "support", "context", "duplicate"].includes(s.role)) throw Error();
+      if (!text(s.text, node.sourceReview ? 3e4 : 5e3) || !text(s.quote, node.sourceReview ? 3e4 : 1e4) || !["claim", "support", "context", "duplicate"].includes(s.role)) throw Error();
       if (!node.sourceReview && (splitResearchSentences(s.text, "ko").length !== 1 || splitResearchSentences(s.quote).length !== 1)) throw Error();
       const range = exactResearchRange(node.sourceText, s.quote, cursor);
       if (!range) throw Error();
@@ -195,7 +197,7 @@ function researchDocumentMarkdown(document) {
   const visit = (nodes, depth) => nodes.flatMap((n) => {
     const pad = "  ".repeat(depth);
     if (n.kind === "section") return [`${pad}- ${n.title}`, ...visit(n.children, depth + 1)];
-    if (n.sourceReview) return [`${pad}- \uC6D0\uBB38 \uD655\uC778 \uD544\uC694 \xB7 p. ${n.pageIndex + 1}`, ...n.sourceText.split("\n").map((line) => `${pad}  > ${line}`)];
+    if (n.sourceReview) return [`${pad}- ${n.sourceReview.reason === "translation-alignment" ? "\uBC88\uC5ED \uD655\uC778 \uD544\uC694 \xB7 \uBC88\uC5ED \uB300\uC751\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD574 \uC6D0\uBB38\uC73C\uB85C \uB0A8\uACBC\uC2B5\uB2C8\uB2E4" : "\uC6D0\uBB38 \uD655\uC778 \uD544\uC694"} \xB7 p. ${n.pageIndex + 1}`, ...n.sourceText.split("\n").map((line) => `${pad}  > ${line}`)];
     const claim = n.sentences.find((s) => s.role === "claim");
     const rendered = /* @__PURE__ */ new Set();
     const details = n.sentences.filter((s) => s.role === "support" || s.role === "context").flatMap((s) => {
@@ -1122,6 +1124,7 @@ Remove the ENTIRE excluded figure caption including continuation lines from body
     }
     if (chunk.length) chunks.push(chunk);
     let next = 0;
+    const translationReviewIds = /* @__PURE__ */ new Set();
     const worker = async () => {
       while (next < chunks.length) {
         const paragraphs2 = chunks[next++];
@@ -1156,8 +1159,14 @@ The provided previousTranslations FAILED validation. Each original is ONE senten
           if (!Array.isArray(fixed) || fixed.some((t) => !invalid.some((s) => s.id === t?.id))) throw Error("\uBC88\uC5ED \uBCF4\uC815\uC758 \uC6D0\uBB38 \uBB38\uC7A5 ID\uAC00 \uC62C\uBC14\uB974\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
           translations = [...translations.filter((t) => !invalid.some((s) => s.id === t.id)), ...fixed];
         }
-        translated = { translations };
-        applyResearchTranslations(translated, paragraphs2);
+        for (const paragraph of paragraphs2) {
+          try {
+            applyResearchTranslations({ translations: translations.filter((t) => paragraph.sentences.some((s) => s.id === t.id)) }, [paragraph]);
+          } catch (error) {
+            if (error?.generationDiagnostics?.stage !== "research_translation") throw error;
+            translationReviewIds.add(paragraph.id);
+          }
+        }
       }
     };
     const paragraphs = researchParagraphs(document).filter((p) => !p.sourceReview);
@@ -1169,6 +1178,16 @@ The provided previousTranslations FAILED validation. Each original is ONE senten
       16e3
     ).then((result) => applyResearchReading(result, paragraphs)) : Promise.resolve();
     await Promise.all([reading, ...Array.from({ length: Math.min(3, chunks.length) }, worker)]);
+    const spanKey = (span) => `${span.pageIndex}:${span.start}:${span.length}`;
+    const lineBySpan = new Map(indexed.lines.map((line) => [spanKey(line), line.id]));
+    for (const paragraph of paragraphs.filter((p) => translationReviewIds.has(p.id))) {
+      paragraph.sourceReview = {
+        reason: "translation-alignment",
+        lineIds: [...new Set(paragraph.sourceSpans.map((span) => lineBySpan.get(spanKey(span))))].sort((a, b) => a - b)
+      };
+      paragraph.sentences = [{ id: `${paragraph.id}-source`, text: paragraph.sourceText, quote: paragraph.sourceText, role: "claim", duplicateOf: null }];
+      paragraph.groups = [];
+    }
     if (measured) document.generation = generation;
     const parsed = parseResearchDocument(document);
     if (!parsed || !validateResearchDocumentSource(parsed, text)) throw Error("\uBC88\uC5ED\uB41C \uBB38\uC7A5\uACFC PDF \uC6D0\uBB38\uC758 1:1 \uC5F0\uACB0\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
@@ -1278,13 +1297,13 @@ ${input.prompt}` });
 }
 
 // src/maro/researchDocumentDelivery.ts
-var RESEARCH_DOCUMENT_RESULT_FORMAT = "source-review-v1";
+var RESEARCH_DOCUMENT_RESULT_FORMAT = "source-review-v2";
 function researchDocumentResultForClient(result, format) {
   if (!result.researchDocument || format === RESEARCH_DOCUMENT_RESULT_FORMAT) return result;
   const document = structuredClone(result.researchDocument);
   const visit = (nodes) => nodes.map((node) => {
     if (node.kind === "section") return { ...node, children: visit(node.children) };
-    if (!node.sourceReview) return node;
+    if (!node.sourceReview || format === "source-review-v1" && node.sourceReview.reason === "source-allocation") return node;
     const paragraph = { ...node };
     delete paragraph.sourceReview;
     paragraph.sentences = splitResearchSentences(node.sourceText).map((quote, index) => ({
@@ -1298,7 +1317,7 @@ function researchDocumentResultForClient(result, format) {
     return {
       kind: "section",
       id: `${node.id}-source-review`,
-      title: "\uC6D0\uBB38 \uD655\uC778 \uD544\uC694 \xB7 \uBB38\uB2E8 \uAD6C\uBD84 \uBBF8\uD655\uC778 (\uBC88\uC5ED \uC804 \uC6D0\uBB38)",
+      title: node.sourceReview.reason === "translation-alignment" ? "\uBC88\uC5ED \uD655\uC778 \uD544\uC694 \xB7 \uBC88\uC5ED \uB300\uC751 \uBBF8\uD655\uC778 (\uBC88\uC5ED \uC804 \uC6D0\uBB38)" : "\uC6D0\uBB38 \uD655\uC778 \uD544\uC694 \xB7 \uBB38\uB2E8 \uAD6C\uBD84 \uBBF8\uD655\uC778 (\uBC88\uC5ED \uC804 \uC6D0\uBB38)",
       children: [paragraph]
     };
   });
