@@ -599,13 +599,20 @@ function indexResearchSource(text, layout = []) {
       const split = heading?.[0].length;
       return split ? [{ text: match[0].slice(0, split).trimEnd(), index: match.index, layout: layout2 }, { text: match[0].slice(split), index: match.index + split, layout: layout2 }] : [{ text: match[0], index: match.index, layout: layout2 }];
     });
-    const inlineGroups = /* @__PURE__ */ new Set();
+    const inlineGroups = /* @__PURE__ */ new Map();
+    for (const fragment of fragments) {
+      const group = "inlineGroup" in fragment ? fragment.inlineGroup : void 0;
+      if (typeof group === "number") inlineGroups.set(group, [...inlineGroups.get(group) ?? [], fragment]);
+    }
+    const anchors = new Map([...inlineGroups].map(([group, members]) => {
+      const lineIndex2 = members.reduce((left, member) => member.layout.x < left.layout.x ? member : left).layout.lineIndex;
+      return [group, members.find((member) => member.layout.lineIndex === lineIndex2)];
+    }));
     const ordered = fragments.flatMap((fragment) => {
       const group = "inlineGroup" in fragment ? fragment.inlineGroup : void 0;
       if (typeof group !== "number") return [fragment];
-      if (inlineGroups.has(group)) return [];
-      inlineGroups.add(group);
-      return fragments.filter((other) => "inlineGroup" in other && other.inlineGroup === group).sort((a, b) => a.layout.x - b.layout.x);
+      if (anchors.get(group) !== fragment) return [];
+      return inlineGroups.get(group).sort((a, b) => a.layout.x - b.layout.x);
     });
     const offsetAt = (position) => {
       let low = 0, high = normalized.offsets.length;
@@ -950,6 +957,21 @@ function applyResearchTranslations(value, paragraphs) {
     sentence.text = t.text.trim();
   }
 }
+var ResearchResponseError = class extends Error {
+  constructor(stage, response, payload) {
+    const reason = payload.incomplete_details?.reason ?? payload.error?.code;
+    super(reason === "max_output_tokens" ? "AI \uC751\uB2F5\uC774 \uCD9C\uB825 \uAE38\uC774 \uD55C\uB3C4\uC5D0 \uB3C4\uB2EC\uD574 \uBD84\uC11D\uC744 \uC644\uB8CC\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uB2E4\uC2DC \uBD84\uC11D\uD574 \uC8FC\uC138\uC694." : `AI \uBD84\uC11D \uC751\uB2F5\uC774 \uC644\uB8CC\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4 (${payload.status ?? response.status}). \uB2E4\uC2DC \uBD84\uC11D\uD574 \uC8FC\uC138\uC694.`);
+    this.name = "ResearchResponseError";
+    this.generationDiagnostics = {
+      stage,
+      reason,
+      httpStatus: response.status,
+      responseStatus: payload.status,
+      inputTokens: payload.usage?.input_tokens,
+      outputTokens: payload.usage?.output_tokens
+    };
+  }
+};
 async function responsePayload(response) {
   if (!response.ok || !response.headers.get("content-type")?.includes("text/event-stream")) return await response.json();
   const reader = response.body?.getReader();
@@ -1002,15 +1024,15 @@ async function generateResearchDocument({ text, pdfUrl, layout, key, signal, fet
       })
     });
     const payload = await responsePayload(response);
-    if (!response.ok || payload.status !== "completed") throw Error(`AI \uBB38\uC11C \uC0DD\uC131\uC774 \uC644\uB8CC\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4 (${response.status}). \uB2E4\uC2DC \uC0DD\uC131\uD574 \uC8FC\uC138\uC694.`);
-    const parts = payload.output?.filter((o) => o.type === "message").flatMap((o) => o.content ?? []) ?? [];
-    if (parts.some((p) => p.type === "refusal")) throw Error("AI\uAC00 \uC5F0\uAD6C \uBB38\uC11C\uB97C \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
     generation.requests++;
     generation.inputTokens += payload.usage?.input_tokens ?? 0;
     if (payload.usage?.input_tokens === void 0 || payload.usage?.output_tokens === void 0) measured = false;
     generation.cachedInputTokens += payload.usage?.input_tokens_details?.cached_tokens ?? 0;
     generation.cacheWriteInputTokens += payload.usage?.input_tokens_details?.cache_write_tokens ?? 0;
     generation.outputTokens += payload.usage?.output_tokens ?? 0;
+    if (!response.ok || payload.status !== "completed") throw new ResearchResponseError(name, response, payload);
+    const parts = payload.output?.filter((o) => o.type === "message").flatMap((o) => o.content ?? []) ?? [];
+    if (parts.some((p) => p.type === "refusal")) throw Error("AI\uAC00 \uC5F0\uAD6C \uBB38\uC11C\uB97C \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
     return JSON.parse(parts.filter((p) => p.type === "output_text").map((p) => p.text ?? "").join(""));
   };
   try {
@@ -1129,7 +1151,7 @@ Remove the ENTIRE excluded figure caption including continuation lines from body
       while (next < chunks.length) {
         const paragraphs2 = chunks[next++];
         const body = paragraphs2.map((p) => ({ id: p.id, sentences: p.sentences.map((s) => ({ id: s.id, text: s.quote })) }));
-        let translated = await call("research_translation", RESEARCH_TRANSLATION_INSTRUCTIONS, RESEARCH_TRANSLATION_SCHEMA, [{ type: "input_text", text: JSON.stringify(body) }], 24e3);
+        const translated = await call("research_translation", RESEARCH_TRANSLATION_INSTRUCTIONS, RESEARCH_TRANSLATION_SCHEMA, [{ type: "input_text", text: JSON.stringify(body) }], 24e3);
         let translations = translated?.translations;
         const sentences = paragraphs2.flatMap((p) => p.sentences);
         if (!Array.isArray(translations) || translations.some((t) => !t || !sentences.some((s) => s.id === t.id))) throw Error("\uBC88\uC5ED \uC751\uB2F5\uC758 \uC6D0\uBB38 \uBB38\uC7A5 ID\uAC00 \uC62C\uBC14\uB974\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
@@ -1143,18 +1165,24 @@ Remove the ENTIRE excluded figure caption including continuation lines from body
             const plain = !/[.!?]/.test(s.quote.replace(/\.{2,}|…+/g, "").replace(/[.!?][”’"')\]\d\s]*$/u, "")) && /[.!?][”’"')\]\d\s]*$/u.test(s.quote);
             return object({ id: { type: "string", enum: [s.id] }, text: { ...str, ...plain ? { pattern: `^[^.!?]*[.!?][\u201D\u2019"')\\]\\s]*$` } : {} } });
           }) }) });
-          const repair = await call(
-            "research_translation_repair",
-            `${RESEARCH_TRANSLATION_INSTRUCTIONS}
+          let repair;
+          try {
+            repair = await call(
+              "research_translation_repair",
+              `${RESEARCH_TRANSLATION_INSTRUCTIONS}
 The provided previousTranslations FAILED validation. Each original is ONE sentence, but its translation was split, omitted, or repeated. Correct ONLY these IDs. Rephrase the previous Korean clauses as ONE grammatical Korean sentence with a single final predicate, using connective endings such as ~\uD558\uBA70, ~\uD558\uC5EC, or ~\uB294\uB370 as appropriate to the original relationship. Do not merely repeat the failed translation. A colon introducing an explanation must stay within the same Korean sentence. Punctuation INSIDE a quotation also counts as a sentence boundary: do not split the quoted speech into multiple sentences. Keep a reporting clause and its quotation in the SAME sentence. Preserve an ellipsis as \u2026, not three ASCII full stops. Preserve all source content, citations and qualifications; do not summarize.`,
-            repairSchema,
-            [{ type: "input_text", text: JSON.stringify(invalid.map((s) => ({
-              id: s.id,
-              text: s.quote,
-              previousTranslations: translations.filter((t) => t.id === s.id).map((t) => ({ text: t.text, sentenceCount: typeof t.text === "string" ? splitResearchSentences(t.text, "ko").length : 0 }))
-            }))) }],
-            24e3
-          );
+              repairSchema,
+              [{ type: "input_text", text: JSON.stringify(invalid.map((s) => ({
+                id: s.id,
+                text: s.quote,
+                previousTranslations: translations.filter((t) => t.id === s.id).map((t) => ({ text: t.text, sentenceCount: typeof t.text === "string" ? splitResearchSentences(t.text, "ko").length : 0 }))
+              }))) }],
+              Math.min(8e3, Math.max(1024, invalid.reduce((n, s) => n + s.quote.length * 3 + 128, 0)))
+            );
+          } catch (error) {
+            if (error instanceof ResearchResponseError && error.generationDiagnostics.reason === "max_output_tokens") break;
+            throw error;
+          }
           const fixed = repair?.translations;
           if (!Array.isArray(fixed) || fixed.some((t) => !invalid.some((s) => s.id === t?.id))) throw Error("\uBC88\uC5ED \uBCF4\uC815\uC758 \uC6D0\uBB38 \uBB38\uC7A5 ID\uAC00 \uC62C\uBC14\uB974\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.");
           translations = [...translations.filter((t) => !invalid.some((s) => s.id === t.id)), ...fixed];
