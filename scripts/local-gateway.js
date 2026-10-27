@@ -59,10 +59,11 @@ function writeGatewayError(response, statusCode, message) {
   response.end(body);
 }
 
-const tlsKey = fs.readFileSync(tlsKeyPath);
-const tlsCert = fs.readFileSync(tlsCertPath);
-const server = https.createServer(
-  { key: tlsKey, cert: tlsCert },
+// ngrok terminates public HTTPS. Optional HTTP is restricted to the existing loopback listener.
+const useHttp = process.env.GOP_GATEWAY_PROTOCOL === 'http';
+const tlsOptions = useHttp ? {} : { key: fs.readFileSync(tlsKeyPath), cert: fs.readFileSync(tlsCertPath) };
+const server = (useHttp ? http : https).createServer(
+  tlsOptions,
   (request, response) => {
     const targetPath = rewritePath(request.url);
     if (targetPath === null) {
@@ -84,6 +85,7 @@ const server = https.createServer(
           proxyResponse.statusMessage,
           proxyResponse.headers,
         );
+        proxyResponse.on('error', () => response.destroy());
         proxyResponse.pipe(response);
       },
     );
@@ -96,6 +98,9 @@ const server = https.createServer(
       writeGatewayError(response, 502, 'Garden server upstream is unavailable.');
     });
     request.on('aborted', () => proxyRequest.destroy());
+    request.on('error', () => proxyRequest.destroy());
+    response.on('error', () => proxyRequest.destroy());
+    response.on('close', () => proxyRequest.destroy());
     request.pipe(proxyRequest);
   },
 );
@@ -115,7 +120,13 @@ server.on('upgrade', (request, socket, head) => {
     headers: upstreamHeaders(request.headers),
   });
 
+  // A restarted API or disconnected browser must close only its socket pair.
+  socket.on('error', () => proxyRequest.destroy());
+  socket.on('close', () => proxyRequest.destroy());
   proxyRequest.on('upgrade', (proxyResponse, proxySocket, proxyHead) => {
+    proxySocket.on('error', () => socket.destroy());
+    proxySocket.on('close', () => socket.destroy());
+    socket.on('close', () => proxySocket.destroy());
     const statusLine = [
       `HTTP/${proxyResponse.httpVersion}`,
       proxyResponse.statusCode,
@@ -149,6 +160,6 @@ server.on('clientError', (_error, socket) => {
 
 server.listen(listenPort, listenHost, () => {
   console.log(
-    `Garden gateway listening on https://${listenHost}:${listenPort}${publicPrefix} -> http://${upstreamHost}:${upstreamPort}`,
+    `Garden gateway listening on ${useHttp ? 'http' : 'https'}://${listenHost}:${listenPort}${publicPrefix} -> http://${upstreamHost}:${upstreamPort}`,
   );
 });

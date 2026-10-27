@@ -1,5 +1,4 @@
-const { createAuditedAxios } = require('./studyProviderAudit');
-const axios = createAuditedAxios(require('axios'));
+const axios = require('axios');
 const config = require('../config');
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';

@@ -5,13 +5,13 @@ const { gzipSync, gunzipSync } = require('node:zlib');
 
 const SNAPSHOT_DATABASE = 'GardenOfPapersSystem';
 const SNAPSHOT_COLLECTION = 'WorkspaceSnapshots';
-const SNAPSHOT_HISTORY_COLLECTION = 'WorkspaceSnapshotHistory';
-const SNAPSHOT_HISTORY_DELTA_COLLECTION = 'WorkspaceSnapshotDeltas';
 const INLINE_SNAPSHOT_BYTES = 12 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 40 * 1024 * 1024;
 const MAX_STORED_SNAPSHOT_BYTES = 14 * 1024 * 1024;
 const SNAPSHOT_ENCODING = 'gzip-json-v1';
 const RETIRED_SKETCH_TYPE = 'GX.MAROPtCurve';
+const OBJECT_ENCODING = 'gzip-objects-v1';
+const objectKey = id => Buffer.from(id, 'utf8').toString('base64url');
 
 function withoutRetiredSketches(state) {
   if (!state || !Array.isArray(state.objects)) return state;
@@ -43,32 +43,6 @@ function defaultCollection() {
     );
   }
   return client.db(SNAPSHOT_DATABASE).collection(SNAPSHOT_COLLECTION);
-}
-
-function defaultHistoryCollection() {
-  const client = getClient();
-  if (!client) {
-    throw new WorkspaceSnapshotError(
-      'MongoDB is not connected',
-      503,
-      'database_unavailable',
-    );
-  }
-  return client.db(SNAPSHOT_DATABASE).collection(SNAPSHOT_HISTORY_COLLECTION);
-}
-
-function defaultHistoryDeltaCollection() {
-  const client = getClient();
-  if (!client) {
-    throw new WorkspaceSnapshotError(
-      'MongoDB is not connected',
-      503,
-      'database_unavailable',
-    );
-  }
-  return client
-    .db(SNAPSHOT_DATABASE)
-    .collection(SNAPSHOT_HISTORY_DELTA_COLLECTION);
 }
 
 function requiredString(value, name, maxLength = 256) {
@@ -144,6 +118,13 @@ function validateObjectIdentities(objects, previousObjects = []) {
 }
 
 function decodeStoredState(document) {
+  if (document?.stateEncoding === OBJECT_ENCODING) {
+    return withoutRetiredSketches({ ...document.stateMeta, objects: document.objectOrder.map(id => {
+      const payload = document.objectPayloads?.[objectKey(id)];
+      if (!payload) throw new WorkspaceSnapshotError('Workspace object is missing', 503, 'object_missing');
+      return JSON.parse(gunzipSync(storedPayloadBuffer(payload)).toString('utf8'));
+    }) });
+  }
   if (document?.stateEncoding === SNAPSHOT_ENCODING && document.statePayload) {
     const payload = document.statePayload;
     const bytes = Buffer.isBuffer(payload)
@@ -169,46 +150,43 @@ function publicState(document) {
   return state ? { ...state, objects: repairDuplicatePersistenceKeys(state.objects) } : state;
 }
 
-function stateStorageFields(state, serializedState) {
-  state = withoutRetiredSketches(state);
-  const bytes = Buffer.byteLength(serializedState, 'utf8');
-  if (bytes <= INLINE_SNAPSHOT_BYTES) {
-    return {
-      set: { state },
-      unset: { stateEncoding: '', statePayload: '' },
-    };
-  }
-
-  const statePayload = gzipSync(Buffer.from(serializedState), { level: 6 });
-  if (statePayload.byteLength > MAX_STORED_SNAPSHOT_BYTES) {
-    throw new WorkspaceSnapshotError(
-      'Compressed workspace snapshot is too large',
-      413,
-      'snapshot_too_large',
-    );
-  }
-  return {
-    set: {
-      stateEncoding: SNAPSHOT_ENCODING,
-      statePayload,
-    },
-    unset: { state: '' },
-  };
+function encodeObject(object) {
+  const json = JSON.stringify(object);
+  const payload = gzipSync(Buffer.from(json), { level: 6 });
+  return { payload, meta: { id: object.id, type: object.type, persistenceKey: object.persistenceKey || '',
+    bytes: payload.byteLength, jsonBytes: Buffer.byteLength(json) } };
 }
 
-function historyStorageFields(serializedState) {
-  const statePayload = gzipSync(Buffer.from(serializedState), { level: 6 });
-  if (statePayload.byteLength > MAX_STORED_SNAPSHOT_BYTES) {
-    throw new WorkspaceSnapshotError(
-      'Compressed workspace history snapshot is too large',
-      413,
-      'snapshot_too_large',
-    );
+function checkObjectStorage(meta, stateMeta, order) {
+  const overhead = Buffer.byteLength(JSON.stringify([meta, stateMeta, order])) + order.reduce((n, id) => n + objectKey(id).length + 32, 0);
+  if (Object.values(meta).reduce((n, value) => n + value.bytes, overhead) > MAX_STORED_SNAPSHOT_BYTES ||
+      Object.values(meta).reduce((n, value) => n + value.jsonBytes, 0) > MAX_SNAPSHOT_BYTES) {
+    throw new WorkspaceSnapshotError('Workspace snapshot is too large', 413, 'snapshot_too_large');
   }
-  return {
-    stateEncoding: SNAPSHOT_ENCODING,
-    statePayload,
-  };
+}
+
+function stateStorageFields(state, _serializedState, priorMeta = {}) {
+  state = withoutRetiredSketches(state);
+  const { objects, ...stateMeta } = state;
+  const objectOrder = objects.map(object => object.id);
+  const objectPayloads = {}, objectMeta = {};
+  for (const object of objects) {
+    const encoded = encodeObject(object), key = objectKey(object.id);
+    objectPayloads[key] = encoded.payload;
+    objectMeta[key] = { ...encoded.meta, ...(priorMeta[key]?.legacyPersistenceKey ? { legacyPersistenceKey: priorMeta[key].legacyPersistenceKey } : {}) };
+  }
+  checkObjectStorage(objectMeta, stateMeta, objectOrder);
+  return { set: { stateEncoding: OBJECT_ENCODING, stateMeta, objectOrder, objectPayloads, objectMeta },
+    unset: { state: '', statePayload: '' } };
+}
+
+function repairIncomingObjects(incoming, document, previous) {
+  const compatible = incoming.map(object => {
+    const meta = document.objectMeta?.[objectKey(object.id)];
+    return meta?.legacyPersistenceKey && object.persistenceKey === meta.legacyPersistenceKey && object.type === meta.type
+      ? { ...object, persistenceKey: meta.persistenceKey } : object;
+  });
+  return repairLegacyIncomingKeys(compatible, previous);
 }
 
 function storedPayloadBuffer(payload) {
@@ -224,112 +202,6 @@ function storedPayloadBuffer(payload) {
     );
   }
   return Buffer.from(payload?.buffer || payload);
-}
-
-function publicTransition(document) {
-  if (
-    document?.transitionEncoding !== SNAPSHOT_ENCODING
-    || !document.transitionPayload
-  ) {
-    return document?.transition ?? null;
-  }
-  return JSON.parse(
-    gunzipSync(storedPayloadBuffer(document.transitionPayload)).toString(
-      'utf8',
-    ),
-  );
-}
-
-function geometryChanged(left, right) {
-  return left.x !== right.x
-    || left.y !== right.y
-    || left.width !== right.width
-    || left.height !== right.height
-    || left.zIndex !== right.zIndex;
-}
-
-function onlyGeometryChanged(left, right) {
-  const omitted = new Set([
-    'x',
-    'y',
-    'width',
-    'height',
-    'zIndex',
-    'updatedAt',
-  ]);
-  const compact = (object) => Object.fromEntries(
-    Object.entries(object).filter(([key]) => !omitted.has(key)),
-  );
-  return JSON.stringify(compact(left)) === JSON.stringify(compact(right));
-}
-
-function buildObjectPatch(previous, next) {
-  const changes = {};
-  const removedKeys = [];
-  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
-  keys.delete('id');
-  for (const key of keys) {
-    if (!(key in next)) {
-      removedKeys.push(key);
-      continue;
-    }
-    if (JSON.stringify(previous[key]) === JSON.stringify(next[key])) continue;
-    changes[key] = structuredClone(next[key]);
-  }
-  return { id: next.id, changes, removedKeys };
-}
-
-function buildObjectDelta(fromState, toState) {
-  const fromById = new Map(
-    fromState.objects.map((object) => [object.id, object]),
-  );
-  const toById = new Map(toState.objects.map((object) => [object.id, object]));
-  const upsertedObjects = [];
-  const patchedObjects = [];
-  const removedObjectIds = [];
-  const summary = { created: 0, deleted: 0, moved: 0, updated: 0 };
-
-  for (const object of toState.objects) {
-    const previous = fromById.get(object.id);
-    if (!previous) {
-      upsertedObjects.push(structuredClone(object));
-      summary.created += 1;
-      continue;
-    }
-    if (JSON.stringify(previous) === JSON.stringify(object)) continue;
-    patchedObjects.push(buildObjectPatch(previous, object));
-    if (geometryChanged(previous, object) && onlyGeometryChanged(previous, object)) {
-      summary.moved += 1;
-    } else {
-      summary.updated += 1;
-    }
-  }
-  for (const object of fromState.objects) {
-    if (toById.has(object.id)) continue;
-    removedObjectIds.push(object.id);
-    summary.deleted += 1;
-  }
-
-  return {
-    schemaVersion: toState.schemaVersion,
-    fromRevision: fromState.revision,
-    toRevision: toState.revision,
-    targetUpdatedAt: toState.updatedAt,
-    camera: structuredClone(toState.camera),
-    upsertedObjects,
-    patchedObjects,
-    removedObjectIds,
-    summary,
-  };
-}
-
-function buildHistoryTransition(fromState, toState) {
-  return {
-    fromRevision: fromState.revision,
-    toRevision: toState.revision,
-    forward: buildObjectDelta(fromState, toState),
-    backward: buildObjectDelta(toState, fromState),
-  };
 }
 
 function summarizeState(state) {
@@ -360,12 +232,8 @@ function createWorkspaceSnapshotService(
   getCollection = defaultCollection,
   now = () => new Date(),
   onWorkspaceSaved = null,
-  getHistoryCollection = defaultHistoryCollection,
-  getHistoryDeltaCollection = defaultHistoryDeltaCollection,
 ) {
   let indexesReady = null;
-  let historyIndexesReady = null;
-  let historyDeltaIndexesReady = null;
 
   async function collection() {
     const value = getCollection();
@@ -382,152 +250,6 @@ function createWorkspaceSnapshotService(
     }
     await indexesReady;
     return value;
-  }
-
-  async function historyCollection() {
-    const value = getHistoryCollection();
-    if (!historyIndexesReady) {
-      historyIndexesReady = Promise.all([
-        value.createIndex(
-          { projectName: 1, revision: -1 },
-          { name: 'workspace_history_project_revision' },
-        ),
-        value.createIndex(
-          { projectName: 1, savedAt: -1 },
-          { name: 'workspace_history_project_saved' },
-        ),
-        value.createIndex(
-          { projectName: 1, reason: 1, savedAt: -1 },
-          { name: 'workspace_history_manual_saved' },
-        ),
-      ]).catch((error) => {
-        historyIndexesReady = null;
-        throw error;
-      });
-    }
-    await historyIndexesReady;
-    return value;
-  }
-
-  async function historyDeltaCollection() {
-    const value = getHistoryDeltaCollection();
-    if (!historyDeltaIndexesReady) {
-      historyDeltaIndexesReady = Promise.all([
-        value.createIndex(
-          { projectName: 1, toRevision: -1 },
-          { name: 'workspace_delta_project_revision' },
-        ),
-      ]).catch((error) => {
-        historyDeltaIndexesReady = null;
-        throw error;
-      });
-    }
-    await historyDeltaIndexesReady;
-    return value;
-  }
-
-  async function recordTransition(fromState, toState) {
-    if (
-      !fromState
-      || !toState
-      || fromState.projectName !== toState.projectName
-      || fromState.revision === toState.revision
-    ) {
-      return null;
-    }
-    const transition = buildHistoryTransition(fromState, toState);
-    const serialized = JSON.stringify(transition);
-    const transitionPayload = gzipSync(Buffer.from(serialized), { level: 6 });
-    if (transitionPayload.byteLength > MAX_STORED_SNAPSHOT_BYTES) {
-      throw new WorkspaceSnapshotError(
-        'Compressed workspace history delta is too large',
-        413,
-        'snapshot_too_large',
-      );
-    }
-    const deltas = await historyDeltaCollection();
-    const document = {
-      _id: `${toState.projectName}:${fromState.revision}:${toState.revision}`,
-      schemaVersion: 2,
-      projectName: toState.projectName,
-      fromRevision: fromState.revision,
-      toRevision: toState.revision,
-      transitionEncoding: SNAPSHOT_ENCODING,
-      transitionPayload,
-      summary: transition.forward.summary,
-      createdAt: now(),
-    };
-    await deltas.updateOne(
-      { _id: document._id },
-      { $set: document },
-      { upsert: true },
-    );
-    return transition;
-  }
-
-  async function recordTransitionSafely(fromState, toState) {
-    try {
-      return await recordTransition(fromState, toState);
-    } catch (error) {
-      console.error(
-        `[Workspace history] Failed to diff ${toState?.projectName || 'workspace'} r${fromState?.revision ?? '?'}→r${toState?.revision ?? '?'}:`,
-        error?.message || error,
-      );
-      return null;
-    }
-  }
-
-  async function recordHistory(
-    state,
-    reason = 'manual',
-    restoredFromRevision = null,
-    prepared = {},
-  ) {
-    const projectName = requiredString(state?.projectName, 'state.projectName');
-    const validated = prepared.serializedState
-      ? {
-          ownerName: requiredString(state.ownerName, 'state.ownerName'),
-          serializedState: prepared.serializedState,
-        }
-      : validateState(state, projectName);
-    const { ownerName, serializedState } = validated;
-    const revision = Number.isInteger(state.revision) ? state.revision : 0;
-    const history = await historyCollection();
-    const createdAt = now();
-    const savedAt = reason === 'manual'
-      ? createdAt
-      : new Date(state.updatedAt || createdAt);
-    const document = {
-      _id: prepared.historyId || (reason === 'manual'
-        ? `${projectName}:manual:revision-${revision}`
-        : `${projectName}:${reason}:${revision}`),
-      schemaVersion: 1,
-      ownerName,
-      projectName,
-      revision,
-      reason,
-      restoredFromRevision: Number.isInteger(restoredFromRevision)
-        ? restoredFromRevision
-        : null,
-      summary: summarizeState(state),
-      camera: structuredClone(state.camera),
-      ...(prepared.statePayload
-        ? {
-            stateEncoding: SNAPSHOT_ENCODING,
-            statePayload: prepared.statePayload,
-          }
-        : historyStorageFields(serializedState)),
-      savedAt: Number.isFinite(savedAt.getTime()) ? savedAt : createdAt,
-      createdAt,
-    };
-    await history.updateOne(
-      { _id: document._id },
-      { $setOnInsert: document },
-      { upsert: true },
-    );
-    if (prepared.previousState) {
-      await recordTransitionSafely(prepared.previousState, state);
-    }
   }
 
   function notifyWorkspaceSaved(state) {
@@ -582,7 +304,19 @@ function createWorkspaceSnapshotService(
         'not_found',
       );
     }
-    return publicState(document);
+    const state = publicState(document);
+    if (document.stateEncoding !== OBJECT_ENCODING) {
+      const fields = stateStorageFields(state);
+      const raw = decodeStoredState(document);
+      for (const object of raw.objects) {
+        const key = objectKey(object.id), meta = fields.set.objectMeta[key];
+        if (meta && object.persistenceKey && meta.persistenceKey !== object.persistenceKey) meta.legacyPersistenceKey = object.persistenceKey;
+      }
+      const result = await snapshots.updateOne({ _id: projectName, revision: document.revision,
+        stateEncoding: document.stateEncoding ?? { $exists: false } }, stateUpdate(fields.set, fields.unset));
+      if (result.matchedCount === 0) return load(projectName);
+    }
+    return state;
   }
 
   /** Check Wiki freshness without loading or decompressing the canvas payload. */
@@ -608,253 +342,12 @@ function createWorkspaceSnapshotService(
     if (!document) {
       return { deleted: false, projectName, ownerName: '' };
     }
-    const [snapshotResult] = await Promise.all([
-      snapshots.deleteOne({ _id: projectName }),
-      (await historyCollection()).deleteMany({ projectName }),
-      (await historyDeltaCollection()).deleteMany({ projectName }),
-    ]);
+    const snapshotResult = await snapshots.deleteOne({ _id: projectName });
     return {
       deleted: snapshotResult.deletedCount > 0,
       projectName,
       ownerName: String(document.ownerName || ''),
     };
-  }
-
-  async function listHistory(projectNameValue) {
-    const projectName = requiredString(projectNameValue, 'projectName');
-    const snapshots = await collection();
-    const current = await snapshots.findOne(
-      { _id: projectName },
-      {
-        projection: {
-          _id: 1,
-          revision: 1,
-          summary: 1,
-          camera: 1,
-          updatedAt: 1,
-        },
-      },
-    );
-    if (!current) {
-      throw new WorkspaceSnapshotError(
-        'Workspace snapshot not found',
-        404,
-        'not_found',
-      );
-    }
-    const history = await historyCollection();
-    const manualRows = await history
-      .find(
-        { projectName, reason: 'manual' },
-        {
-          projection: {
-            _id: 1,
-            revision: 1,
-            reason: 1,
-            restoredFromRevision: 1,
-            summary: 1,
-            camera: 1,
-            savedAt: 1,
-          },
-        },
-      )
-      .sort({ savedAt: -1 })
-      .toArray();
-    let currentDocument = null;
-    if (!current.summary || !current.camera) {
-      currentDocument = await snapshots.findOne({ _id: projectName });
-      const currentState = publicState(currentDocument);
-      current.summary = summarizeState(currentState);
-      current.camera = structuredClone(currentState.camera);
-    }
-    const currentRow = {
-      _id: `${projectName}:current:${current.revision}`,
-      revision: current.revision,
-      reason: 'current',
-      restoredFromRevision: null,
-      summary: current.summary,
-      camera: current.camera,
-      savedAt: now(),
-    };
-    const rows = [currentRow, ...manualRows];
-    const transitionByEntryId = new Map();
-    const deltas = await historyDeltaCollection();
-    const adjacentPairs = rows.slice(0, -1).map((newerRow, index) => {
-      const olderRow = rows[index + 1];
-      return {
-        newerRow,
-        olderRow,
-        deltaId: olderRow.revision === newerRow.revision
-          ? null
-          : `${projectName}:${olderRow.revision}:${newerRow.revision}`,
-      };
-    });
-    for (const pair of adjacentPairs) {
-      if (pair.deltaId) continue;
-      transitionByEntryId.set(String(pair.newerRow._id), {
-        fromRevision: pair.olderRow.revision,
-        toRevision: pair.newerRow.revision,
-        summary: { created: 0, deleted: 0, moved: 0, updated: 0 },
-      });
-    }
-    const deltaIds = adjacentPairs
-      .map((pair) => pair.deltaId)
-      .filter(Boolean);
-    const deltaDocuments = await deltas
-      .find({
-        projectName,
-        _id: { $in: deltaIds },
-      })
-      .toArray();
-    const deltaById = new Map(
-      deltaDocuments.map((document) => [String(document._id), document]),
-    );
-    const missingPairs = adjacentPairs.filter(
-      (pair) => pair.deltaId
-        && deltaById.get(pair.deltaId)?.schemaVersion !== 2,
-    );
-    const manualHistoryIds = [...new Set(missingPairs.flatMap((pair) => [
-      pair.olderRow,
-      pair.newerRow,
-    ])
-      .filter((row) => row.reason === 'manual')
-      .map((row) => row._id))];
-    const historyDocuments = manualHistoryIds.length
-      ? await history.find({
-        projectName,
-        _id: { $in: manualHistoryIds },
-      }).toArray()
-      : [];
-    const historyById = new Map(
-      historyDocuments.map((document) => [String(document._id), document]),
-    );
-    if (missingPairs.some((pair) => pair.newerRow.reason === 'current')) {
-      currentDocument ||= await snapshots.findOne({ _id: projectName });
-      historyById.set(String(currentRow._id), currentDocument);
-    }
-
-    await Promise.all(adjacentPairs.map(async ({
-      olderRow,
-      newerRow,
-      deltaId,
-    }) => {
-      if (!deltaId) return;
-      const deltaDocument = deltaById.get(deltaId);
-      let summary = deltaDocument?.summary ?? null;
-      if (deltaDocument?.schemaVersion !== 2) {
-        const olderDocument = historyById.get(String(olderRow._id));
-        const newerDocument = historyById.get(String(newerRow._id));
-        if (olderDocument && newerDocument) {
-          const transition = await recordTransitionSafely(
-            publicState(olderDocument),
-            publicState(newerDocument),
-          );
-          summary = transition?.forward?.summary ?? null;
-        }
-      }
-      if (summary) {
-        transitionByEntryId.set(String(newerRow._id), {
-          fromRevision: olderRow.revision,
-          toRevision: newerRow.revision,
-          summary,
-        });
-      }
-    }));
-    return {
-      currentRevision: current.revision,
-      entries: rows.map((row) => ({
-        id: String(row._id),
-        revision: row.revision,
-        reason: row.reason || 'autosave',
-        restoredFromRevision: Number.isInteger(row.restoredFromRevision)
-          ? row.restoredFromRevision
-          : null,
-        savedAt: row.savedAt instanceof Date
-          ? row.savedAt.toISOString()
-          : String(row.savedAt || ''),
-        summary: row.summary || {},
-        camera: row.camera || null,
-        previousRevision:
-          transitionByEntryId.get(String(row._id))?.fromRevision ?? null,
-        diffFromPrevious:
-          transitionByEntryId.get(String(row._id))?.summary ?? null,
-      })),
-    };
-  }
-
-  async function createHistorySnapshot(projectNameValue, snapshotIdValue) {
-    const projectName = requiredString(projectNameValue, 'projectName');
-    const snapshots = await collection();
-    const currentDocument = await snapshots.findOne({ _id: projectName });
-    if (!currentDocument) {
-      throw new WorkspaceSnapshotError(
-        'Workspace snapshot not found',
-        404,
-        'not_found',
-      );
-    }
-    const currentState = publicState(currentDocument);
-    validateState(currentState, projectName);
-    const history = await historyCollection();
-    const snapshotId = snapshotIdValue == null
-      ? `revision-${currentState.revision}`
-      : requiredString(snapshotIdValue, 'snapshotId', 512);
-    const historyId = `${projectName}:manual:${snapshotId}`;
-    const existing = await history.findOne(
-      { _id: historyId, projectName, reason: 'manual' },
-      { projection: { _id: 1 } },
-    );
-    if (!existing) {
-      const [previousRow] = await history
-        .find({ projectName, reason: 'manual' })
-        .sort({ savedAt: -1 })
-        .limit(1)
-        .toArray();
-      const previousDocument = previousRow
-        ? await history.findOne({ _id: previousRow._id, projectName })
-        : null;
-      await recordHistory(currentState, 'manual', null, {
-        historyId,
-        previousState: previousDocument ? publicState(previousDocument) : null,
-      });
-    }
-    return listHistory(projectName);
-  }
-
-  async function getHistoryTransition(
-    projectNameValue,
-    fromRevisionValue,
-    toRevisionValue,
-  ) {
-    const projectName = requiredString(projectNameValue, 'projectName');
-    const fromRevision = Number(fromRevisionValue);
-    const toRevision = Number(toRevisionValue);
-    if (
-      !Number.isInteger(fromRevision)
-      || !Number.isInteger(toRevision)
-      || fromRevision < 0
-      || toRevision <= fromRevision
-    ) {
-      throw new WorkspaceSnapshotError(
-        'Workspace history revisions are invalid',
-        400,
-        'invalid_history_revision',
-      );
-    }
-    const deltas = await historyDeltaCollection();
-    const document = await deltas.findOne({
-      _id: `${projectName}:${fromRevision}:${toRevision}`,
-      projectName,
-    });
-    const transition = publicTransition(document);
-    if (!transition) {
-      throw new WorkspaceSnapshotError(
-        'Workspace history transition not found',
-        404,
-        'history_transition_not_found',
-      );
-    }
-    return transition;
   }
 
   async function ensure(state) {
@@ -921,7 +414,7 @@ function createWorkspaceSnapshotService(
       return { state: replayedState, replayed: true };
     }
     if (Array.isArray(state?.objects)) {
-      state = { ...state, objects: repairLegacyIncomingKeys(state.objects, decodeStoredState(current).objects) };
+      state = { ...state, objects: repairIncomingObjects(state.objects, current, decodeStoredState(current).objects) };
     }
     validateState(state, projectName);
     if (current.revision !== baseRevision) {
@@ -949,7 +442,7 @@ function createWorkspaceSnapshotService(
       updatedAt: timestamp.toISOString(),
     };
     const { serializedState } = validateState(savedState, projectName);
-    const storedState = stateStorageFields(savedState, serializedState);
+    const storedState = stateStorageFields(savedState, serializedState, current.objectMeta);
     const updated = await snapshots.findOneAndUpdate(
       { _id: projectName, revision: baseRevision },
       stateUpdate(
@@ -983,236 +476,106 @@ function createWorkspaceSnapshotService(
     );
   }
 
-  async function patch({
-    projectName: projectNameValue,
-    baseRevision,
-    mutationId: mutationIdValue,
-    delta,
-  }) {
+  async function patch({ projectName: projectNameValue, baseRevision, mutationId: mutationIdValue, delta }) {
     const projectName = requiredString(projectNameValue, 'projectName');
     const mutationId = requiredString(mutationIdValue, 'mutationId', 512);
-    if (!Number.isInteger(baseRevision) || baseRevision < 0) {
-      throw new WorkspaceSnapshotError(
-        'baseRevision is invalid',
-        400,
-        'invalid_request',
-      );
+    if (!Number.isInteger(baseRevision) || baseRevision < 0 || !delta ||
+        !Array.isArray(delta.upsertedObjects) || !Array.isArray(delta.removedObjectIds) ||
+        (delta.patchedObjects !== undefined && !Array.isArray(delta.patchedObjects)) || !delta.camera ||
+        !['x', 'y', 'scale'].every(key => Number.isFinite(delta.camera[key])) || delta.camera.scale <= 0) {
+      throw new WorkspaceSnapshotError('delta is invalid', 400, 'invalid_request');
     }
-    if (
-      !delta
-      || typeof delta !== 'object'
-      || !Array.isArray(delta.upsertedObjects)
-      || !Array.isArray(delta.removedObjectIds)
-      || !delta.camera
-    ) {
-      throw new WorkspaceSnapshotError(
-        'delta is invalid',
-        400,
-        'invalid_request',
-      );
-    }
-
+    const touched = [...delta.upsertedObjects.map(object => requiredString(object?.id, 'object.id')),
+      ...(delta.patchedObjects || []).map(object => requiredString(object?.id, 'object.id')),
+      ...delta.removedObjectIds.map(id => requiredString(id, 'removedObjectId'))];
+    if (new Set(touched).size !== touched.length) throw new WorkspaceSnapshotError('Duplicate object mutation', 400, 'duplicate_object_identity');
     const snapshots = await collection();
-    const current = await snapshots.findOne({ _id: projectName });
-    if (!current) {
-      throw new WorkspaceSnapshotError(
-        'Workspace snapshot not found',
-        404,
-        'not_found',
-      );
+    const projection = { _id: 1, revision: 1, stateEncoding: 1, stateMeta: 1, objectOrder: 1, objectMeta: 1,
+      lastMutationId: 1, recentMutations: 1, updatedAt: 1, ownerName: 1, projectName: 1 };
+    for (const id of touched) projection['objectPayloads.' + objectKey(id)] = 1;
+    const current = await snapshots.findOne({ _id: projectName }, { projection });
+    if (!current) throw new WorkspaceSnapshotError('Workspace snapshot not found', 404, 'not_found');
+    if (current.stateEncoding !== OBJECT_ENCODING) {
+      await load(projectName);
+      return patch({ projectName, baseRevision, mutationId, delta });
     }
-    const currentState = publicState(current);
-    if (current.lastMutationId === mutationId) {
-      return {
-        revision: current.revision,
-        updatedAt: currentState.updatedAt,
-        replayed: true,
-      };
+    const fingerprint = require('node:crypto').createHash('sha256').update(JSON.stringify([baseRevision, delta])).digest('hex');
+    const receipt = current.recentMutations?.find(item => item.id === mutationId);
+    if (receipt) {
+      if (receipt.fingerprint !== fingerprint) throw new WorkspaceSnapshotError('Mutation id reused with different changes', 409, 'mutation_mismatch');
+      return { protocolVersion: 2, revision: receipt.revision, updatedAt: receipt.updatedAt, replayed: true };
     }
-    if (current.revision !== baseRevision) {
-      throw new WorkspaceSnapshotError(
-        'Workspace revision conflict',
-        409,
-        'revision_conflict',
-        currentState,
-      );
-    }
-    const removed = new Set(
-      delta.removedObjectIds.map((id) => requiredString(id, 'removedObjectId')),
-    );
-    const upsertedObjects = repairLegacyIncomingKeys(delta.upsertedObjects, decodeStoredState(current).objects);
-    validateObjectIdentities(upsertedObjects, currentState.objects);
-    const byId = new Map(
-      currentState.objects
-        .filter((object) => !removed.has(object.id))
-        .map((object) => [object.id, object]),
-    );
-    for (const object of upsertedObjects) {
-      const id = requiredString(object?.id, 'object.id');
-      byId.set(id, preserveEvidenceRequests(byId.get(id), structuredClone(object)));
-    }
-
-    const timestamp = now();
-    const nextRevision = current.revision + 1;
-    const savedState = {
-      ...structuredClone(currentState),
-      schemaVersion: Number.isInteger(delta.schemaVersion)
-        ? delta.schemaVersion
-        : currentState.schemaVersion,
-      camera: structuredClone(delta.camera),
-      objects: [...byId.values()],
-      revision: nextRevision,
-      updatedAt: timestamp.toISOString(),
+    if (current.revision !== baseRevision) throw new WorkspaceSnapshotError('Workspace revision conflict', 409,
+      'revision_conflict', await load(projectName));
+    const decode = id => {
+      const payload = current.objectPayloads?.[objectKey(id)];
+      return payload ? JSON.parse(gunzipSync(storedPayloadBuffer(payload)).toString('utf8')) : undefined;
     };
-    const { serializedState } = validateState(savedState, projectName);
-    const storedState = stateStorageFields(savedState, serializedState);
-    const updated = await snapshots.findOneAndUpdate(
-      { _id: projectName, revision: baseRevision },
-      stateUpdate(
-        {
-          revision: nextRevision,
-          summary: summarizeState(savedState),
-          camera: structuredClone(savedState.camera),
-          ...storedState.set,
-          lastMutationId: mutationId,
-          updatedAt: timestamp,
-        },
-        storedState.unset,
-      ),
-      { returnDocument: 'after' },
-    );
-    if (updated) {
-      notifyWorkspaceSaved(publicState(updated));
-      return {
-        revision: nextRevision,
-        updatedAt: savedState.updatedAt,
-        replayed: false,
-      };
+    const changed = delta.upsertedObjects.map(object => structuredClone(object));
+    for (const patch of delta.patchedObjects || []) {
+      const old = decode(patch.id);
+      if (!old || !patch.changes || Array.isArray(patch.changes) || typeof patch.changes !== 'object' ||
+          !Array.isArray(patch.removedKeys)) throw new WorkspaceSnapshotError('Object patch is invalid', 400, 'invalid_request');
+      const keys = [...Object.keys(patch.changes), ...patch.removedKeys];
+      if (keys.some(key => typeof key !== 'string' || ['__proto__', 'prototype', 'constructor', 'id', 'type', 'persistenceKey'].includes(key))) {
+        throw new WorkspaceSnapshotError('Object patch changes identity', 400, 'invalid_request');
+      }
+      const object = { ...old, ...structuredClone(patch.changes) };
+      for (const key of patch.removedKeys) delete object[key];
+      changed.push(object);
     }
-
-    const latest = await snapshots.findOne({ _id: projectName });
-    if (latest?.lastMutationId === mutationId) {
-      return {
-        revision: latest.revision,
-        updatedAt: publicState(latest).updatedAt,
-        replayed: true,
-      };
+    const previous = touched.map(decode).filter(Boolean);
+    const repaired = repairIncomingObjects(withoutRetiredSketches({ objects: changed }).objects, current, previous);
+    validateObjectIdentities(repaired, previous);
+    const removed = new Set(delta.removedObjectIds);
+    const objectMeta = { ...current.objectMeta };
+    const set = {}, unset = {};
+    let order = current.objectOrder.filter(id => !removed.has(id));
+    const knownIds = new Set(order);
+    for (const id of removed) {
+      const key = objectKey(id);
+      delete objectMeta[key];
+      unset['objectPayloads.' + key] = '';
+      unset['objectMeta.' + key] = '';
     }
-    throw new WorkspaceSnapshotError(
-      'Workspace revision conflict',
-      409,
-      'revision_conflict',
-      publicState(latest),
-    );
-  }
-
-  async function restoreHistory({
-    projectName: projectNameValue,
-    historyId: historyIdValue,
-    baseRevision,
-    mutationId: mutationIdValue,
-  }) {
-    const projectName = requiredString(projectNameValue, 'projectName');
-    const historyId = requiredString(historyIdValue, 'historyId', 512);
-    const mutationId = requiredString(mutationIdValue, 'mutationId', 512);
-    if (!Number.isInteger(baseRevision) || baseRevision < 0) {
-      throw new WorkspaceSnapshotError(
-        'baseRevision is invalid',
-        400,
-        'invalid_request',
-      );
+    for (const incoming of repaired) {
+      const object = preserveEvidenceRequests(decode(incoming.id), incoming);
+      const key = objectKey(object.id), encoded = encodeObject(object);
+      objectMeta[key] = { ...encoded.meta, ...(objectMeta[key]?.legacyPersistenceKey ? { legacyPersistenceKey: objectMeta[key].legacyPersistenceKey } : {}) };
+      set['objectPayloads.' + key] = encoded.payload;
+      set['objectMeta.' + key] = objectMeta[key];
+      if (!knownIds.has(object.id)) { order.push(object.id); knownIds.add(object.id); }
     }
-    const snapshots = await collection();
-    const current = await snapshots.findOne({ _id: projectName });
-    if (!current) {
-      throw new WorkspaceSnapshotError(
-        'Workspace snapshot not found',
-        404,
-        'not_found',
-      );
+    const identities = new Set();
+    for (const meta of Object.values(objectMeta)) {
+      if (!meta.persistenceKey) continue;
+      const identity = meta.type + ':' + meta.persistenceKey;
+      if (identities.has(identity)) throw new WorkspaceSnapshotError('Duplicate workspace object identity', 400, 'duplicate_object_identity');
+      identities.add(identity);
     }
-    if (current.lastMutationId === mutationId) {
-      const replayedState = publicState(current);
-      return { state: replayedState, replayed: true };
-    }
-    if (current.revision !== baseRevision) {
-      throw new WorkspaceSnapshotError(
-        'Workspace revision conflict',
-        409,
-        'revision_conflict',
-        publicState(current),
-      );
-    }
-    const history = await historyCollection();
-    const historical = await history.findOne({
-      _id: historyId,
-      projectName,
-      reason: 'manual',
-    });
-    if (!historical) {
-      throw new WorkspaceSnapshotError(
-        'Workspace history snapshot not found',
-        404,
-        'not_found',
-      );
-    }
-    const historicalState = publicState(historical);
-    validateState(historicalState, projectName);
-    const currentState = publicState(current);
-
-    const timestamp = now();
-    const nextRevision = current.revision + 1;
-    const restoredState = {
-      ...structuredClone(historicalState),
-      ownerName: current.ownerName,
-      projectName,
-      id: projectName,
-      revision: nextRevision,
-      createdAt: currentState.createdAt || historicalState.createdAt,
-      updatedAt: timestamp.toISOString(),
-    };
-    const { serializedState } = validateState(restoredState, projectName);
-    const storedState = stateStorageFields(restoredState, serializedState);
-    const updated = await snapshots.findOneAndUpdate(
-      { _id: projectName, revision: baseRevision },
-      stateUpdate(
-        {
-          revision: nextRevision,
-          summary: summarizeState(restoredState),
-          camera: structuredClone(restoredState.camera),
-          ...storedState.set,
-          lastMutationId: mutationId,
-          updatedAt: timestamp,
-        },
-        storedState.unset,
-      ),
-      { returnDocument: 'after' },
-    );
-    if (!updated) {
-      const latest = await snapshots.findOne({ _id: projectName });
-      throw new WorkspaceSnapshotError(
-        'Workspace revision conflict',
-        409,
-        'revision_conflict',
-        publicState(latest),
-      );
-    }
-    const savedState = publicState(updated);
-    notifyWorkspaceSaved(savedState);
-    return { state: savedState, replayed: false };
+    const timestamp = now(), revision = baseRevision + 1, updatedAt = timestamp.toISOString();
+    const stateMeta = { ...current.stateMeta, camera: structuredClone(delta.camera), revision, updatedAt,
+      schemaVersion: Number.isInteger(delta.schemaVersion) ? delta.schemaVersion : current.stateMeta.schemaVersion };
+    checkObjectStorage(objectMeta, stateMeta, order);
+    const summary = summarizeState({ objects: Object.values(objectMeta) });
+    Object.assign(set, { revision, stateMeta, objectOrder: order, summary, camera: stateMeta.camera,
+      lastMutationId: mutationId, updatedAt: timestamp,
+      recentMutations: [...(current.recentMutations || []), { id: mutationId, fingerprint, revision, updatedAt }].slice(-32) });
+    const result = await snapshots.updateOne({ _id: projectName, revision: baseRevision }, stateUpdate(set, unset));
+    if (!result.matchedCount) throw new WorkspaceSnapshotError('Workspace revision conflict', 409,
+      'revision_conflict', await load(projectName));
+    // Wiki checks the tiny saved revision before reading a board on demand.
+    // Autosave must not trigger a full-board read for background Wiki rebuilding.
+    return { protocolVersion: 2, revision, updatedAt, replayed: false };
   }
 
   return {
-    createHistorySnapshot,
     ensure,
-    getHistoryTransition,
     list,
-    listHistory,
     load,
     loadRevision,
     remove,
     patch,
-    restoreHistory,
     save,
   };
 }
@@ -1231,6 +594,5 @@ module.exports = {
     defaultCollection,
     () => new Date(),
     syncSavedWorkspaceToWiki,
-    defaultHistoryCollection,
   ),
 };

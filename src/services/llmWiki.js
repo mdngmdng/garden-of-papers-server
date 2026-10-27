@@ -1090,137 +1090,6 @@ function hasChanges(diff) {
     || diff.movedPapers.length > 0;
 }
 
-function list(values) {
-  return values.length ? values.map((value) => `  - ${value}`).join('\n') : '  - None';
-}
-
-function logMarkdown(workspace, diff) {
-  const paperDetails = workspace.papers.flatMap((paper) => [
-    `### ${paper.title}`,
-    '',
-    `- Canvas ID: \`${paper.id}\``,
-    `- Wiki file: \`${paper.filePath}\``,
-    `- PDF: file ID=${paper.pdf.fileId || 'none'}, pages=${paper.pdf.pageCount || 'unknown'}, extraction=${paper.sourceStatus}`,
-    `- Metadata: authors=${paper.authors.length}, abstract=${paper.abstract ? 'yes' : 'no'}, DOI=${paper.doi ? 'yes' : 'no'}`,
-    `- Attached notes transferred: ${paper.notes.length}`,
-    `- Highlights transferred: ${paper.highlights.length}`,
-    `- Canvas position transferred: \`${JSON.stringify(paper.position)}\``,
-    `- PDF text characters transferred: ${paper.sourceText.length}`,
-    '',
-  ]);
-  const noteDetails = [
-    ...workspace.papers.flatMap((paper) => paper.notes.map((note) => ({
-      kind: 'attached',
-      paperTitle: paper.title,
-      note,
-    }))),
-    ...workspace.unlinkedNotes.map((note) => ({
-      kind: 'canvas',
-      paperTitle: '',
-      note,
-    })),
-  ].flatMap(({ kind, paperTitle, note }) => [
-    `### Post-it ${note.id}`,
-    '',
-    `- Kind: ${kind}`,
-    paperTitle ? `- Parent paper: ${paperTitle}` : '- Parent paper: none',
-    `- PDF page: ${note.pageNumber ?? 'none'}`,
-    note.pageRect ? `- PDF region: \`${JSON.stringify(note.pageRect)}\`` : '- PDF region: none',
-    `- Canvas position: \`${JSON.stringify(note.position)}\``,
-    `- Text characters transferred: ${note.text.length}`,
-    '',
-  ]);
-  return [
-    '---',
-    'type: gop-llm-wiki-sync-log',
-    `workspace: ${quote(workspace.projectName)}`,
-    `source_revision: ${workspace.revision}`,
-    `synced_at: ${quote(workspace.syncedAt)}`,
-    '---',
-    '',
-    `# LLM Wiki sync — ${workspace.projectName}`,
-    '',
-    '## Summary',
-    '',
-    `- Papers in Wiki: ${workspace.counts.papers}`,
-    `- Post-its in Wiki: ${workspace.counts.notes}`,
-    `- Attached notes in Wiki: ${workspace.counts.attachedNotes}`,
-    `- Independent canvas notes in Wiki: ${workspace.counts.canvasNotes}`,
-    `- Highlights in Wiki: ${workspace.counts.highlights}`,
-    `- Paper positions in Wiki: ${workspace.counts.positions}`,
-    `- Unlinked notes in workspace index: ${workspace.unlinkedNotes.length}`,
-    `- Citation and canvas relationships in Wiki: ${workspace.counts.relationships}`,
-    `- Search nodes in Wiki: ${workspace.counts.searchNodes}`,
-    `- Search results in Wiki: ${workspace.counts.searchResults}`,
-    '',
-    '## Changes',
-    '',
-    '- Papers added:',
-    list(diff.papers.added),
-    '- Papers updated:',
-    list(diff.papers.updated),
-    '- Papers deleted:',
-    list(diff.papers.deleted),
-    '- Papers moved:',
-    list(diff.movedPapers),
-    '- Notes added / updated / deleted:',
-    `  - Added: ${diff.notes.added.length}`,
-    `  - Updated: ${diff.notes.updated.length}`,
-    `  - Deleted: ${diff.notes.deleted.length}`,
-    '- Highlights added / updated / deleted:',
-    `  - Added: ${diff.highlights.added.length}`,
-    `  - Updated: ${diff.highlights.updated.length}`,
-    `  - Deleted: ${diff.highlights.deleted.length}`,
-    '- Unlinked notes added / updated / deleted:',
-    `  - Added: ${diff.unlinkedNotes.added.length}`,
-    `  - Updated: ${diff.unlinkedNotes.updated.length}`,
-    `  - Deleted: ${diff.unlinkedNotes.deleted.length}`,
-    '- Relationships added / updated / deleted:',
-    `  - Added: ${diff.relationships.added.length}`,
-    `  - Updated: ${diff.relationships.updated.length}`,
-    `  - Deleted: ${diff.relationships.deleted.length}`,
-    '- Search nodes added / updated / deleted:',
-    `  - Added: ${diff.searchNodes.added.length}`,
-    `  - Updated: ${diff.searchNodes.updated.length}`,
-    `  - Deleted: ${diff.searchNodes.deleted.length}`,
-    '',
-    '## Data transferred by paper',
-    '',
-    ...paperDetails,
-    '## Data transferred by post-it',
-    '',
-    ...(noteDetails.length ? noteDetails : ['_No post-its_', '']),
-    '## Citation and canvas relationships transferred',
-    '',
-    ...(workspace.relationships.length
-      ? workspace.relationships.map((relationship) =>
-          `- ${relationship.startTitle} → ${relationship.endTitle} (\`${relationship.id}\`)`,
-        )
-      : ['_No relationships_']),
-    '',
-    '## Search nodes transferred',
-    '',
-    ...(workspace.searchNodes.length
-      ? workspace.searchNodes.map((node) =>
-          `- ${node.query || node.id}: ${node.results.length} saved results at \`${JSON.stringify(node.position)}\``,
-        )
-      : ['_No search nodes_']),
-    '',
-    '## Verification',
-    '',
-    '- [x] PDF identifiers and source locations recorded',
-    '- [x] Paper metadata recorded',
-    '- [x] Attached notes and PDF page locations recorded',
-    '- [x] Highlight text, pages, and regions recorded',
-    '- [x] Canvas coordinates and stacking order recorded',
-    '- [x] Citation arrows, evidence, and contexts recorded',
-    '- [x] Search nodes, result metadata, review states, and positions recorded',
-    '- [x] Generated Markdown document index persisted with the shared MongoDB snapshot',
-    '- [x] Deletions compared against the previous synced snapshot',
-    '',
-  ].join('\n');
-}
-
 function createMarkdownStore(rootValue = config.llmWikiRoot) {
   const root = path.resolve(rootValue);
 
@@ -2609,22 +2478,11 @@ function createLLMWikiService({
       characters: item.markdown.length,
     }));
 
-    const log = logMarkdown(workspace, diff);
-    const safeTimestamp = workspace.syncedAt.replace(/[:.]/g, '-');
-    const logPath = path.posix.join(
-      '_system',
-      'llm-wiki-logs',
-      slug(workspace.projectName, 'workspace'),
-      `${safeTimestamp}-sync.md`,
-    );
-    await markdownStore.write(logPath, log);
-
     const document = {
       ...workspace,
       _id: workspaceId,
       formatVersion: WIKI_FORMAT_VERSION,
       latestDiff: diff,
-      latestLog: { filePath: logPath, markdown: log },
       markdownDocuments,
       updatedAt: now(),
     };

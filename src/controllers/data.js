@@ -254,32 +254,6 @@ exports.uploadData = async (req, res) => {
   }
 };
 
-// POST /upload-log
-exports.uploadLog = async (req, res) => {
-  const data = req.body;
-
-  try {
-    const client = getClient();
-    const db = client.db(data.projectName);
-    const collection = db.collection('LogFile');
-
-    if (!syncKeys.checkKey(data.webSocketId, data.projectName)) {
-      return res.status(202).json();
-    }
-
-    const newData = await collection.insertOne(data);
-    if (!newData) {
-      return res.status(404).json({ status: 'error', message: 'Data not found' });
-    }
-
-    res.status(201).json(newData);
-    console.log('Data uploaded successfully.');
-  } catch (error) {
-    console.error('Failed to upload data:', error);
-    res.status(500).json({ status: 'error', message: 'Failed to upload data', data: error });
-  }
-};
-
 // POST /update-data
 exports.updateData = async (req, res) => {
   const {
@@ -322,8 +296,11 @@ exports.updateData = async (req, res) => {
 
     const update = {};
     const unset = {};
+    if (type === 'GX.MAROScientificPaper' && req.body.authorSource &&
+        /^[\w-]{6,64}$/.test(req.body.authorSource.authorId || '') &&
+        typeof req.body.authorSource.citationId === 'string') update.authorSource = req.body.authorSource;
     if (type !== '') update.type = type;
-    if (pos.x !== 0 || pos.y !== 0 || pos.z !== 0) update.pos = pos;
+    if (type === 'GX.MAROOrganization' || type === 'GX.MAROPerson' || type === 'GX.MAROWebEmbed' || pos.x !== 0 || pos.y !== 0 || pos.z !== 0) update.pos = pos;
     update.textValue = textValue;
     // Keep human-edit provenance in the legacy mirror, including undo to an AI draft.
     if (req.body.aiEditedAt === null) unset.aiEditedAt = '';

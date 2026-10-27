@@ -21,6 +21,27 @@ function workspace() {
   };
 }
 
+
+function setPath(target, path, value) {
+  const keys = path.split('.'); let cursor = target;
+  for (const key of keys.slice(0, -1)) cursor = cursor[key] ??= {};
+  cursor[keys.at(-1)] = structuredClone(value);
+}
+function getPath(target, path) { return path.split('.').reduce((value, key) => value?.[key], target); }
+function unsetPath(target, path) {
+  const keys = path.split('.'); let cursor = target;
+  for (const key of keys.slice(0, -1)) { cursor = cursor?.[key]; if (!cursor) return; }
+  delete cursor[keys.at(-1)];
+}
+function readState(document) {
+  if (document.state) return document.state;
+  const { gunzipSync } = require('node:zlib');
+  return { ...document.stateMeta, objects: document.objectOrder.map(id => {
+    const value = document.objectPayloads[Buffer.from(id).toString('base64url')];
+    return JSON.parse(gunzipSync(Buffer.from(value?.buffer && !ArrayBuffer.isView(value) ? value.buffer : value)).toString());
+  }) };
+}
+
 class MemorySnapshotCollection {
   constructor() {
     this.document = null;
@@ -45,9 +66,14 @@ class MemorySnapshotCollection {
     };
   }
 
-  async findOne(query) {
+  async findOne(query, options = {}) {
     if (!this.document || this.document._id !== query._id) return null;
-    return structuredClone(this.document);
+    if (!options.projection) return structuredClone(this.document);
+    const result = {};
+    for (const [key, include] of Object.entries(options.projection)) {
+      if (include && getPath(this.document, key) !== undefined) setPath(result, key, getPath(this.document, key));
+    }
+    return result;
   }
 
   async deleteOne(query) {
@@ -59,10 +85,18 @@ class MemorySnapshotCollection {
   }
 
   async updateOne(query, update) {
+    if (this.beforeAtomicUpdate && update.$set) {
+      const callback = this.beforeAtomicUpdate; this.beforeAtomicUpdate = null; callback(this);
+    }
     if (!this.document) {
+      if (!update.$setOnInsert) return { matchedCount: 0 };
       this.document = structuredClone(update.$setOnInsert);
       return { upsertedCount: 1, matchedCount: 0 };
     }
+    if (query.revision !== undefined && this.document.revision !== query.revision) return { matchedCount: 0 };
+    if (typeof query.stateEncoding === 'string' && this.document.stateEncoding !== query.stateEncoding) return { matchedCount: 0 };
+    for (const [key, value] of Object.entries(update.$set || {})) setPath(this.document, key, value);
+    for (const key of Object.keys(update.$unset || {})) unsetPath(this.document, key);
     return { upsertedCount: 0, matchedCount: 1 };
   }
 
@@ -87,122 +121,6 @@ class MemorySnapshotCollection {
   }
 }
 
-class MemoryHistoryCollection {
-  constructor() {
-    this.documents = new Map();
-  }
-
-  async createIndex() {
-    return 'workspace_history_index';
-  }
-
-  async updateOne(query, update) {
-    if (update.$set) {
-      const matched = this.documents.has(query._id);
-      this.documents.set(query._id, structuredClone(update.$set));
-      return {
-        upsertedCount: matched ? 0 : 1,
-        matchedCount: matched ? 1 : 0,
-      };
-    }
-    if (!this.documents.has(query._id)) {
-      this.documents.set(
-        query._id,
-        structuredClone(update.$setOnInsert),
-      );
-      return { upsertedCount: 1, matchedCount: 0 };
-    }
-    return { upsertedCount: 0, matchedCount: 1 };
-  }
-
-  async findOne(query) {
-    const document = this.documents.get(query._id);
-    if (!document || (
-      query.projectName && document.projectName !== query.projectName
-    ) || (query.reason && document.reason !== query.reason)) {
-      return null;
-    }
-    return structuredClone(document);
-  }
-
-  find(query) {
-    const allowedIds = new Set(query._id?.$in ?? []);
-    let rows = [...this.documents.values()]
-      .filter((row) => (
-        (!query.projectName || row.projectName === query.projectName)
-        && (!query.reason || row.reason === query.reason)
-        && (!allowedIds.size || allowedIds.has(row._id))
-      ))
-      .map((row) => structuredClone(row));
-    let skip = 0;
-    let limit = Number.POSITIVE_INFINITY;
-    return {
-      sort(specification) {
-        const direction = specification.revision ?? specification.savedAt ?? -1;
-        const field = specification.revision ? 'revision' : 'savedAt';
-        rows.sort((left, right) => {
-          const leftValue = field === 'savedAt'
-            ? new Date(left.savedAt).getTime()
-            : left.revision;
-          const rightValue = field === 'savedAt'
-            ? new Date(right.savedAt).getTime()
-            : right.revision;
-          return (leftValue - rightValue) * direction;
-        });
-        return this;
-      },
-      skip(value) {
-        skip = value;
-        return this;
-      },
-      limit(value) {
-        limit = value;
-        return this;
-      },
-      async toArray() {
-        return rows.slice(skip, skip + limit);
-      },
-    };
-  }
-
-  async deleteMany(query) {
-    const ids = new Set(query._id?.$in ?? []);
-    const revisionSets = (query.$or ?? [])
-      .flatMap((condition) => [
-        ...((condition.fromRevision?.$in ?? []).map((revision) => ({
-          field: 'fromRevision',
-          revision,
-        }))),
-        ...((condition.toRevision?.$in ?? []).map((revision) => ({
-          field: 'toRevision',
-          revision,
-        }))),
-      ]);
-    let deletedCount = 0;
-    for (const [id, document] of this.documents) {
-      const deleteById = ids.has(id);
-      const deleteByProject = Boolean(
-        query.projectName
-        && !query._id
-        && !query.$or
-        && document.projectName === query.projectName,
-      );
-      const deleteByRevision = (
-        !query.projectName || document.projectName === query.projectName
-      ) && revisionSets.some(
-        ({ field, revision }) => document[field] === revision,
-      );
-      if (
-        (deleteById || deleteByProject || deleteByRevision)
-        && this.documents.delete(id)
-      ) {
-        deletedCount += 1;
-      }
-    }
-    return { deletedCount };
-  }
-}
-
 test('loads only the canonical revision for Wiki freshness checks without decoding the board', async () => {
   const collection = new MemorySnapshotCollection();
   const reads = [];
@@ -218,20 +136,14 @@ test('loads only the canonical revision for Wiki freshness checks without decodi
 
 function fixture(onWorkspaceSaved = null) {
   const collection = new MemorySnapshotCollection();
-  const historyCollection = new MemoryHistoryCollection();
-  const historyDeltaCollection = new MemoryHistoryCollection();
   let timestamp = Date.parse('2026-08-03T00:00:00.000Z');
   const service = createWorkspaceSnapshotService(
     () => collection,
     () => new Date(timestamp += 1_000),
     onWorkspaceSaved,
-    () => historyCollection,
-    () => historyDeltaCollection,
   );
   return {
     collection,
-    historyCollection,
-    historyDeltaCollection,
     service,
   };
 }
@@ -299,7 +211,8 @@ for (const method of ['save', 'patch']) {
     const initial = workspace();
     await service.ensure(initial);
     const notes = ['a', 'b', 'c', 'd', 'e'].map(id => ({ id, type: 'GX.MARONote', persistenceKey: 'copied-key', text: `note ${id}` }));
-    collection.document.state.objects = structuredClone(notes);
+    collection.document.state = { ...initial, objects: structuredClone(notes) };
+    delete collection.document.stateEncoding;
     const loaded = await service.load('garden');
     assert.equal(new Set(loaded.objects.map(o => o.persistenceKey)).size, 5);
     const request = { projectName: 'garden', baseRevision: 0, mutationId: 'repair',
@@ -311,7 +224,7 @@ for (const method of ['save', 'patch']) {
     const saved = await service.load('garden');
     assert.equal(saved.revision, 1);
     assert.deepEqual(saved.objects.map(o => [o.id, o.text]), notes.map(o => [o.id, o.text]));
-    assert.equal(new Set(collection.document.state.objects.map(o => o.persistenceKey)).size, 5);
+    assert.equal(new Set(readState(collection.document).objects.map(o => o.persistenceKey)).size, 5);
     assert.equal(saved.objects[0].persistenceKey, 'copied-key');
     assert.equal(saved.objects[1].persistenceKey, 'recovered:b');
     const newCollision = { ...saved, objects: [...saved.objects, { ...saved.objects[0], id: 'new-copy' }] };
@@ -338,34 +251,6 @@ test('triggers Wiki synchronization from every successful canonical save', async
   assert.equal(synchronized.length, 1);
   assert.equal(synchronized[0].revision, 1);
   assert.equal(synchronized[0].objects[0].text, 'saved');
-});
-
-test('removes the canonical snapshot and every history artifact for a board', async () => {
-  const { collection, historyCollection, historyDeltaCollection, service } = fixture();
-  await service.ensure(workspace());
-  historyCollection.documents.set('garden:manual:one', {
-    _id: 'garden:manual:one',
-    projectName: 'garden',
-    reason: 'manual',
-  });
-  historyDeltaCollection.documents.set('garden:0:1', {
-    _id: 'garden:0:1',
-    projectName: 'garden',
-  });
-
-  assert.deepEqual(await service.remove('garden'), {
-    deleted: true,
-    ownerName: 'tester',
-    projectName: 'garden',
-  });
-  assert.equal(collection.document, null);
-  assert.equal(historyCollection.documents.size, 0);
-  assert.equal(historyDeltaCollection.documents.size, 0);
-  assert.deepEqual(await service.remove('garden'), {
-    deleted: false,
-    ownerName: '',
-    projectName: 'garden',
-  });
 });
 
 test('stores and updates a whole workspace as one revisioned document', async () => {
@@ -414,14 +299,15 @@ test('applies compact workspace deltas without returning the whole board', async
   });
 
   assert.deepEqual(Object.keys(result).sort(), [
+    'protocolVersion',
     'replayed',
     'revision',
     'updatedAt',
   ]);
   assert.equal(result.revision, 1);
-  assert.equal(collection.document.state.camera.x, 42);
+  assert.equal(readState(collection.document).camera.x, 42);
   assert.deepEqual(
-    collection.document.state.objects.map(({ id, text }) => [id, text]),
+    readState(collection.document).objects.map(({ id, text }) => [id, text]),
     [['note-1', 'new'], ['note-2', 'added']],
   );
 });
@@ -475,8 +361,8 @@ test('the conditional Mongo update rejects a save that races after its read', as
   await service.ensure(workspace());
   collection.beforeAtomicUpdate = (target) => {
     target.document.revision = 1;
-    target.document.state.revision = 1;
-    target.document.state.camera.x = 99;
+    target.document.stateMeta.revision = 1;
+    target.document.stateMeta.camera.x = 99;
     target.document.lastMutationId = 'other:1';
   };
 
@@ -519,88 +405,16 @@ test('compresses and restores boards that exceed the safe inline Mongo size', as
 
   assert.equal(saved.objects[0].text, largeWorkspace.objects[0].text);
   assert.equal(collection.document.state, undefined);
-  assert.equal(collection.document.stateEncoding, 'gzip-json-v1');
-  assert.ok(collection.document.statePayload.byteLength < INLINE_SNAPSHOT_BYTES);
+  assert.equal(collection.document.stateEncoding, 'gzip-objects-v1');
+  const key = Buffer.from('large-note').toString('base64url');
+  assert.ok(collection.document.objectPayloads[key].byteLength < INLINE_SNAPSHOT_BYTES);
 
-  collection.document.statePayload = new Binary(
-    collection.document.statePayload,
-  );
+  collection.document.objectPayloads[key] = new Binary(collection.document.objectPayloads[key]);
   const restoredFromMongoBinary = await service.load(largeWorkspace.id);
   assert.equal(
     restoredFromMongoBinary.objects[0].text,
     largeWorkspace.objects[0].text,
   );
-});
-
-test('retains all manual snapshots and restores the oldest after reopening with more than ten saved', async () => {
-  const { collection, historyCollection, historyDeltaCollection, service } = fixture();
-  const snapshotCount = 13;
-  let state = await service.ensure(workspace());
-  for (let index = 0; index < snapshotCount; index += 1) {
-    state.camera.x = index + 1;
-    const saved = await service.save({
-      projectName: 'garden',
-      baseRevision: state.revision,
-      mutationId: `writer:history-${index}`,
-      state,
-    });
-    state = saved.state;
-    await service.createHistorySnapshot('garden');
-  }
-
-  const reopened = createWorkspaceSnapshotService(
-    () => collection,
-    () => new Date(),
-    null,
-    () => historyCollection,
-    () => historyDeltaCollection,
-  );
-  const history = await reopened.listHistory('garden');
-  assert.equal(history.entries.length, snapshotCount + 1);
-  assert.equal(history.entries[0].reason, 'current');
-  assert.deepEqual(
-    history.entries.slice(1).map((entry) => entry.revision),
-    Array.from({ length: snapshotCount }, (_, index) => snapshotCount - index),
-  );
-  assert.equal(historyCollection.documents.size, snapshotCount);
-  assert.equal(
-    historyDeltaCollection.documents.size,
-    snapshotCount - 1,
-  );
-  const transition = await reopened.getHistoryTransition('garden', 1, 2);
-  assert.equal(transition.forward.camera.x, 2);
-  assert.equal(transition.backward.camera.x, 1);
-
-  const restored = await reopened.restoreHistory({
-    projectName: 'garden',
-    historyId: history.entries.at(-1).id,
-    baseRevision: state.revision,
-    mutationId: 'writer:restore-oldest',
-  });
-  assert.equal(restored.state.camera.x, 1);
-  assert.equal(restored.state.revision, snapshotCount + 1);
-  const after = await reopened.listHistory('garden');
-  assert.deepEqual(
-    after.entries.slice(1).map((entry) => entry.id),
-    history.entries.slice(1).map((entry) => entry.id),
-  );
-});
-
-test('does not create history snapshots during ordinary autosaves', async () => {
-  const { historyCollection, service } = fixture();
-  let state = await service.ensure(workspace());
-  state.camera.x = 12;
-  state = (await service.save({
-    projectName: 'garden',
-    baseRevision: state.revision,
-    mutationId: 'writer:autosave-only',
-    state,
-  })).state;
-
-  const history = await service.listHistory('garden');
-  assert.equal(state.revision, 1);
-  assert.deepEqual(history.entries.map((entry) => entry.reason), ['current']);
-  assert.equal(historyCollection.documents.size, 0);
 });
 
 test('rejects retired freehand curves from canonical saves and delta updates', async () => {
@@ -614,7 +428,7 @@ test('rejects retired freehand curves from canonical saves and delta updates', a
 
   const ensured = await service.ensure(initial);
   assert.deepEqual(ensured.objects, []);
-  assert.deepEqual(collection.document.state.objects, []);
+  assert.deepEqual(readState(collection.document).objects, []);
 
   await service.patch({
     projectName: 'garden',
@@ -634,137 +448,7 @@ test('rejects retired freehand curves from canonical saves and delta updates', a
 
   const loaded = await service.load('garden');
   assert.deepEqual(loaded.objects, []);
-  assert.deepEqual(collection.document.state.objects, []);
-});
-
-test('keeps distinct manual snapshots created at the same live revision', async () => {
-  const { historyCollection, service } = fixture();
-  await service.ensure(workspace());
-  await service.createHistorySnapshot('garden', 'first-branch');
-  await service.createHistorySnapshot('garden', 'second-branch');
-
-  const history = await service.listHistory('garden');
-  assert.deepEqual(
-    history.entries.slice(1).map((entry) => entry.id),
-    ['garden:manual:second-branch', 'garden:manual:first-branch'],
-  );
-  assert.deepEqual(
-    history.entries.slice(0, 2).map((entry) => entry.diffFromPrevious),
-    [
-      { created: 0, deleted: 0, moved: 0, updated: 0 },
-      { created: 0, deleted: 0, moved: 0, updated: 0 },
-    ],
-  );
-  assert.equal(historyCollection.documents.size, 2);
-});
-
-test('precomputes reversible object deltas for timeline scrubbing', async () => {
-  const { service } = fixture();
-  let state = workspace();
-  state.objects = [{
-    id: 'note-1',
-    type: 'GX.MARONote',
-    x: 0,
-    y: 0,
-    width: 100,
-    height: 100,
-    zIndex: 1,
-    text: 'same',
-    updatedAt: '2026-08-03T00:00:00.000Z',
-  }];
-  state = await service.ensure(state);
-  await service.createHistorySnapshot('garden');
-  state.objects[0].x = 40;
-  state.objects[0].updatedAt = '2026-08-03T00:00:01.000Z';
-  state.objects.push({
-    id: 'note-2',
-    type: 'GX.MARONote',
-    x: 120,
-    y: 0,
-    width: 100,
-    height: 100,
-    zIndex: 2,
-    text: 'new',
-    updatedAt: '2026-08-03T00:00:01.000Z',
-  });
-  state = (await service.save({
-    projectName: 'garden',
-    baseRevision: state.revision,
-    mutationId: 'writer:diff',
-    state,
-  })).state;
-  await service.createHistorySnapshot('garden');
-
-  const history = await service.listHistory('garden');
-  const revisionOne = history.entries.find(
-    (entry) => entry.revision === 1 && entry.reason === 'manual',
-  );
-  assert.deepEqual(revisionOne.diffFromPrevious, {
-    created: 1,
-    deleted: 0,
-    moved: 1,
-    updated: 0,
-  });
-  assert.equal(revisionOne.previousRevision, 0);
-  assert.equal(revisionOne.transitionFromPrevious, undefined);
-  assert.equal(revisionOne.transitionToPrevious, undefined);
-  const transition = await service.getHistoryTransition('garden', 0, 1);
-  assert.deepEqual(
-    transition.forward.upsertedObjects.map((object) => object.id),
-    ['note-2'],
-  );
-  assert.deepEqual(transition.forward.patchedObjects, [{
-    id: 'note-1',
-    changes: {
-      x: 40,
-      updatedAt: '2026-08-03T00:00:01.000Z',
-    },
-    removedKeys: [],
-  }]);
-  assert.deepEqual(transition.backward.removedObjectIds, ['note-2']);
-  assert.equal(transition.backward.patchedObjects[0].changes.x, 0);
-});
-
-test('restores a manual snapshot as a new live revision', async () => {
-  const { service } = fixture();
-  let state = await service.ensure(workspace());
-  state.camera.x = 10;
-  state = (await service.save({
-    projectName: 'garden',
-    baseRevision: 0,
-    mutationId: 'writer:first',
-    state,
-  })).state;
-  await service.createHistorySnapshot('garden');
-  state.camera.x = 99;
-  state = (await service.save({
-    projectName: 'garden',
-    baseRevision: 1,
-    mutationId: 'writer:second',
-    state,
-  })).state;
-  const before = await service.listHistory('garden');
-  const revisionOne = before.entries.find(
-    (entry) => entry.revision === 1 && entry.reason === 'manual',
-  );
-
-  const restored = await service.restoreHistory({
-    projectName: 'garden',
-    historyId: revisionOne.id,
-    baseRevision: 2,
-    mutationId: 'writer:restore',
-  });
-
-  assert.equal(restored.state.revision, 3);
-  assert.equal(restored.state.camera.x, 10);
-  const after = await service.listHistory('garden');
-  assert.equal(after.entries[0].revision, 3);
-  assert.equal(after.entries[0].reason, 'current');
-  assert.equal(after.entries[0].restoredFromRevision, null);
-  assert.deepEqual(
-    after.entries.slice(1).map((entry) => entry.revision),
-    [1],
-  );
+  assert.deepEqual(readState(collection.document).objects, []);
 });
 
 test('full and delta saves preserve request arrays omitted by old writers; explicit clearing remains reversible', async () => {
@@ -780,4 +464,100 @@ test('full and delta saves preserve request arrays omitted by old writers; expli
   kept.objects[0].claimEvidence.requests = [];
   const cleared = await service.save({ projectName: 'garden', baseRevision: 2, mutationId: 'current-clear', state: kept });
   assert.deepEqual(cleared.state.objects[0].claimEvidence.requests, []);
+});
+
+test('ordinary field sync reads only touched object payloads and returns a compact receipt', async () => {
+  let wikiRebuilds = 0;
+  const { service, collection } = fixture(() => { wikiRebuilds++; });
+  const initial = workspace();
+  initial.objects = ['changed', 'untouched'].map(id => ({ id, persistenceKey: id, type: 'GX.MARONote', x: 0,
+    text: 'A large document body'.repeat(100_000) }));
+  await service.ensure(initial);
+  const key = Buffer.from('untouched').toString('base64url');
+  const payload = collection.document.objectPayloads[key];
+  collection.document.objectPayloads[key] = Buffer.from('cannot be decompressed');
+  const reads = [], writes = [];
+  const find = collection.findOne.bind(collection), update = collection.updateOne.bind(collection);
+  collection.findOne = (query, options) => { reads.push(options); return find(query, options); };
+  collection.updateOne = (query, operation) => { writes.push(operation); return update(query, operation); };
+  const receipt = await service.patch({ projectName: 'garden', baseRevision: 0, mutationId: 'move:1',
+    delta: { camera: initial.camera, upsertedObjects: [], removedObjectIds: [],
+      patchedObjects: [{ id: 'changed', changes: { x: 100 }, removedKeys: [] }] } });
+  assert.ok(Buffer.byteLength(JSON.stringify(receipt)) < 120);
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].projection.objectPayloads, undefined);
+  assert.equal(reads[0].projection['objectPayloads.' + key], undefined);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].$set.objectPayloads, undefined);
+  assert.ok(writes[0].$set['objectPayloads.' + Buffer.from('changed').toString('base64url')]);
+  await Promise.resolve();
+  assert.equal(wikiRebuilds, 0);
+  collection.document.objectPayloads[key] = payload;
+  const loaded = await service.load('garden');
+  assert.equal(loaded.objects[0].x, 100);
+  assert.equal(loaded.objects[1].text, initial.objects[1].text);
+});
+
+test('a lost acknowledgement can be retried after a later commit without applying the old edit twice', async () => {
+  const { service, collection } = fixture();
+  const initial = workspace();
+  initial.objects = [{ id: 'note', type: 'GX.MARONote', text: 'keep', x: 0 }];
+  await service.ensure(initial);
+  const first = { projectName: 'garden', baseRevision: 0, mutationId: 'writer:1',
+    delta: { camera: initial.camera, upsertedObjects: [], removedObjectIds: [],
+      patchedObjects: [{ id: 'note', changes: { x: 1 }, removedKeys: [] }] } };
+  await service.patch(first);
+  await service.patch({ ...first, baseRevision: 1, mutationId: 'writer:2',
+    delta: { ...first.delta, patchedObjects: [{ id: 'note', changes: { x: 2 }, removedKeys: [] }] } });
+  const replay = await service.patch(first);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.revision, 1);
+  assert.equal(collection.document.revision, 2);
+  assert.equal((await service.load('garden')).objects[0].x, 2);
+  await assert.rejects(service.patch({ ...first, delta: { ...first.delta, camera: { x: 9, y: 0, scale: 1 } } }),
+    error => error.code === 'mutation_mismatch');
+});
+
+test('a racing delta commits no object changes when its revision check fails', async () => {
+  const { service, collection } = fixture();
+  const initial = workspace();
+  await service.ensure(initial);
+  collection.beforeAtomicUpdate = current => {
+    current.document.revision = 1;
+    current.document.stateMeta.revision = 1;
+  };
+  await assert.rejects(service.patch({ projectName: 'garden', baseRevision: 0, mutationId: 'race',
+    delta: { camera: initial.camera, upsertedObjects: [{ id: 'must-not-exist', type: 'GX.MARONote', text: 'new' }], removedObjectIds: [] } }),
+    error => error.code === 'revision_conflict');
+  assert.deepEqual((await service.load('garden')).objects, []);
+  assert.deepEqual(collection.document.objectPayloads, {});
+});
+
+test('legacy inline snapshots migrate once and subsequent saves stay incremental', async () => {
+  const { service, collection } = fixture();
+  const initial = workspace();
+  initial.objects = [{ id: 'note', type: 'GX.MARONote', text: 'original' }];
+  collection.document = { _id: 'garden', ownerName: 'tester', revision: 0, state: initial,
+    projectName: 'garden', updatedAt: new Date(initial.updatedAt) };
+  assert.equal((await service.load('garden')).objects[0].text, 'original');
+  assert.equal(collection.document.stateEncoding, 'gzip-objects-v1');
+  assert.equal(collection.document.state, undefined);
+  const find = collection.findOne.bind(collection);
+  collection.findOne = (query, options) => {
+    assert.ok(options?.projection, 'a normal delta must never read the entire board');
+    return find(query, options);
+  };
+  await service.patch({ projectName: 'garden', baseRevision: 0, mutationId: 'after-migration',
+    delta: { camera: initial.camera, upsertedObjects: [], removedObjectIds: [],
+      patchedObjects: [{ id: 'note', changes: { text: 'new' }, removedKeys: [] }] } });
+});
+
+test('removes the canonical workspace and reports an already-removed project', async () => {
+  const { service, collection } = fixture();
+  await service.ensure(workspace());
+  assert.equal(collection.document._id, 'garden');
+  assert.deepEqual(await service.remove('garden'), { deleted: true, projectName: 'garden', ownerName: 'tester' });
+  assert.equal(collection.document, null);
+  await assert.rejects(service.load('garden'), { status: 404 });
+  assert.deepEqual(await service.remove('garden'), { deleted: false, projectName: 'garden', ownerName: '' });
 });

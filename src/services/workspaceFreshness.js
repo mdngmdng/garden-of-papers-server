@@ -57,12 +57,15 @@ function createWorkspaceFreshnessService(
   async function sourceStatus(projectNameValue) {
     const projectName = requiredProjectName(projectNameValue);
     const databases = getDatabases();
+    const atomic = await databases.snapshots.findOne({ _id: projectName },
+      { projection: { revision: 1, updatedAt: 1, lastMutationId: 1, stateEncoding: 1 } });
+    if (atomic?.stateEncoding === 'gzip-objects-v1') return {
+      projectName, atomicRevision: atomic.revision,
+      atomicUpdatedAt: new Date(atomic.updatedAt).toISOString(), legacyUpdatedAt: null,
+      atomicStage: 'canonical', storageFormat: atomic.stateEncoding,
+    };
     const legacy = databases.legacy(projectName);
-    const [atomic, explicitlyUpdated, newestObject] = await Promise.all([
-      databases.snapshots.findOne(
-        { _id: projectName },
-        { projection: { revision: 1, updatedAt: 1, lastMutationId: 1 } },
-      ),
+    const [explicitlyUpdated, newestObject] = await Promise.all([
       legacy.findOne(
         { _gopUpdatedAt: { $exists: true } },
         {

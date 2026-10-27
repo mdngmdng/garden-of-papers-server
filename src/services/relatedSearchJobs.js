@@ -1,4 +1,5 @@
-const { auditStudyOperation } = require('./studyProviderAudit');
+// single-sheet-graph-query-v1
+const { normalizeSingleGraphQuery } = require('./graphQueryProtocol.cjs');
 const crypto = require('node:crypto');
 const asta = require('./asta');
 const grobid = require('./grobid');
@@ -171,6 +172,11 @@ function normalizeSearchIntent(value) {
 }
 
 function validateRelatedSearchInput(input) {
+  if (input?.graphQuery) {
+    if (input.searchIntent !== 'research') throw new Error('Graph queries require research intent.');
+    normalizeSingleGraphQuery(input.graphQuery);
+    return;
+  }
   const keyword = cleanText(input?.keyword, 4_000);
   if (input?.searchIntent === 'claim_evidence' || input?.searchIntent === 'prompt_search' || input?.searchIntent === 'research') {
     if (keyword.length < 2) throw new Error('AI 검색할 질문을 입력해 주세요. Enter a research question.');
@@ -605,14 +611,14 @@ function createRelatedSearchJob(input, runner = executeRelatedSearch) {
         : '백엔드가 논문 검색을 시작했습니다',
     });
     try {
-      const result = await auditStudyOperation('job.relatedSearchJobs', { input, jobId: jobId }, () => runner(
+      const result = await runner(
         input,
         (nextProgress) => updateJobProgress(jobId, nextProgress),
         {
           signal: controller.signal,
           onActivity: (activity) => appendJobActivity(jobId, activity),
         },
-      ));
+      );
       updateJob(jobId, {
         status: 'completed',
         progress: progress('completed', 100, 'Related papers are ready.'),

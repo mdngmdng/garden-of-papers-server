@@ -317,8 +317,9 @@ test('syncs PDF, metadata, notes, highlights, positions, and a Markdown audit lo
   assert.match(paperFile[1], /Compare the gesture vocabulary/);
   assert.match(paperFile[1], /A suggestive interface/);
   assert.match(paperFile[1], /"x": 100/);
-  assert.match(result.latestLogMarkdown, /PDF text characters transferred/);
-  assert.match(result.latestLogMarkdown, /Attached notes transferred: 1/);
+  assert.equal(result.latestLogMarkdown, '');
+  assert.equal(collection.document.latestLog, undefined);
+  assert.equal([...markdownStore.files.keys()].some(filePath => filePath.includes('llm-wiki-logs')), false);
 });
 
 test('reuses extracted PDF text for position-only updates and records note deletion', async () => {
@@ -1233,7 +1234,7 @@ test('organizes attached and independent canvas post-its with their locations', 
   assert.match(postIts[1], /PDF page: 5/);
   assert.match(postIts[1], /Independent canvas thought/);
   assert.match(postIts[1], /"x":880/);
-  assert.match(result.latestLogMarkdown, /Data transferred by post-it/);
+  assert.equal(result.latestLogMarkdown, '');
 });
 
 test('persists citation arrows, search nodes, and generated Markdown in MongoDB', async () => {
@@ -1356,8 +1357,8 @@ test('persists citation arrows, search nodes, and generated Markdown in MongoDB'
   assert.ok(collection.document.markdownDocuments.every(
     (item) => item.markdown === undefined,
   ));
-  assert.match(result.latestLogMarkdown, /Relationships added \/ updated \/ deleted/);
-  assert.match(result.latestLogMarkdown, /Search nodes transferred/);
+  assert.equal(result.latestLogMarkdown, '');
+  assert.equal(collection.document.latestLog, undefined);
 });
 
 test('queues a missing stored PDF for Bridge collection and exposes its ingestion status', async () => {

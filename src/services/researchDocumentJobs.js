@@ -1,6 +1,5 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { parseAIArtifactRequest, generateResearchDocument, generateAIArtifact, parseAIArtifactResult, researchDocumentResultForClient } = require('../generated/researchDocumentPipeline.cjs');
-const { studyAuditMiddleware, parseStudyContext } = require('./studyProviderAudit');
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const identifier = value => typeof value === 'string' && value.trim() && value.length <= 256;
@@ -29,27 +28,22 @@ function createResearchDocumentJobs({ collection, generate, now = () => new Date
   async function expireInterrupted() {
     await collection.updateMany({ status: 'running', leaseUntil: { $lt: now() } }, {
       $set: { status: 'failed', error: '분석 서버 작업이 중단되었습니다. 다시 분석해 주세요.', updatedAt: now() },
-      $unset: { input: '', auditHeader: '' },
+      $unset: { input: '' },
     });
   }
 
   async function run(job) {
     try {
-      const result = await new Promise((resolve, reject) => {
-        // Restore the originating recording context even when another request drains this job.
-        studyAuditMiddleware({ get: () => job.auditHeader }, null, () => {
-          Promise.resolve().then(() => generate(job.input, AbortSignal.timeout(500000))).then(resolve, reject);
-        });
-      });
+      const result = await generate(job.input, AbortSignal.timeout(500000));
       await collection.updateOne({ _id: job._id, status: 'running', runId: job.runId }, {
-        $set: { status: 'completed', result, updatedAt: now() }, $unset: { input: '', auditHeader: '', leaseUntil: '' },
+        $set: { status: 'completed', result, updatedAt: now() }, $unset: { input: '', leaseUntil: '' },
       });
     } catch (error) {
       await collection.updateOne({ _id: job._id, status: 'running', runId: job.runId }, {
         $set: { status: 'failed', error: ['AbortError', 'TimeoutError'].includes(error?.name)
           ? '논문 분석 시간이 초과되었습니다. 다시 분석해 주세요.' : String(error?.message || '연구 문서를 생성하지 못했습니다.').slice(0, 2000), updatedAt: now(),
           ...(error?.generationDiagnostics ? { generationDiagnostics: error.generationDiagnostics } : {}) },
-        $unset: { input: '', auditHeader: '', leaseUntil: '' },
+        $unset: { input: '', leaseUntil: '' },
       });
     } finally { active.delete(job._id); schedule(); }
   }
@@ -79,7 +73,7 @@ function createResearchDocumentJobs({ collection, generate, now = () => new Date
       schedule();
     },
     stop() { clearInterval(timer); timer = undefined; },
-    async enqueue(body, auditHeader) {
+    async enqueue(body) {
       if (!identifier(body?.workspaceId) || !identifier(body?.requestId)) throw failure('보드와 분석 요청 정보가 필요합니다.');
       const input = parseAIArtifactRequest(body);
       if (input.purpose === 'research-document' && input.sources.some(s => !/^\[PDF page 1\]/.test(s.text))) throw failure('문장 위치를 확인할 PDF 본문이 필요합니다.');
@@ -90,8 +84,7 @@ function createResearchDocumentJobs({ collection, generate, now = () => new Date
         : [input.kind, input.purpose, input.prompt, input.sources.map(s => [s.paperId, s.kind, s.title, s.text,
           s.pageIndex, s.selectedText, pdfIdentity(s)])]);
       const job = { _id, workspaceId: body.workspaceId, requestId: body.requestId, fingerprint, input, status: 'queued',
-        createdAt: now(), updatedAt: now(), expiresAt: new Date(+now() + 7 * 86400000),
-        auditHeader: parseStudyContext(auditHeader)?.workspaceId === body.workspaceId ? auditHeader : null };
+        createdAt: now(), updatedAt: now(), expiresAt: new Date(+now() + 7 * 86400000) };
       try { await collection.insertOne(job); }
       catch (error) {
         if (error.code !== 11000) throw error;

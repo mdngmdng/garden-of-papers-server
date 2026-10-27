@@ -22,6 +22,8 @@ function noStore(res) {
 exports.createJob = (req, res) => {
   try {
     const jobId = createRelatedSearchJob({
+      // single-sheet-graph-query-request-v1
+      graphQuery: req.body?.graphQuery,
       manuscript: req.body?.manuscript || {},
       sourcePapers: Array.isArray(req.body?.sourcePapers)
         ? req.body.sourcePapers

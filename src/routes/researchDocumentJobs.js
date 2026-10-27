@@ -3,7 +3,7 @@ const { researchDocumentJobs } = require('../services/researchDocumentJobs');
 
 router.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
 router.post('/', async (req, res) => {
-  try { res.status(202).json(await researchDocumentJobs().enqueue(req.body, req.get('x-gop-study-context'))); }
+  try { res.status(202).json(await researchDocumentJobs().enqueue(req.body)); }
   catch (error) { res.status(error.status || 400).json({ error: error.message || '분석 요청을 접수하지 못했습니다.' }); }
 });
 router.get('/:id', async (req, res) => {

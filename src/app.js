@@ -9,10 +9,7 @@ const config = require('./config');
 const { connect } = require('./services/mongo');
 const { createWebSocketServer } = require('./services/websocket');
 const { spawnUdpRelay } = require('./services/udpRelay');
-const { studyAuditMiddleware, createAuditedProviderFetch } = require('./services/studyProviderAudit');
 const { createWorkspaceWriteQueue } = require('./services/workspaceWriteQueue');
-
-global.fetch = createAuditedProviderFetch(global.fetch);
 
 // Routes
 const projectsRouter = require('./routes/projects');
@@ -23,7 +20,6 @@ const analyzeRouter = require('./routes/analyze');
 const extensionBridgeRouter = require('./routes/extensionBridge');
 const workspaceSnapshotsRouter = require('./routes/workspaceSnapshots');
 const llmWikiRouter = require('./routes/llmWiki');
-const studyRecordingsRouter = require('./routes/studyRecordings');
 const researchDocumentJobsRouter = require('./routes/researchDocumentJobs');
 
 const app = express();
@@ -37,7 +33,6 @@ app.use(cors({
     'Authorization',
     'Range',
     'ngrok-skip-browser-warning',
-    'x-gop-study-context',
   ],
   exposedHeaders: [
     'Accept-Ranges',
@@ -56,10 +51,14 @@ app.use(cors({
 app.use(compression());
 app.use(createWorkspaceWriteQueue());
 app.use(express.json({ limit: '50mb' }));
-app.use(studyAuditMiddleware);
 
 // Health check
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+// graph-research-health-v1
+app.get('/health', (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  res.json({ status: 'ok', capabilities: { ...require('./services/research').researchCapabilities,
+    workspaceSync: { protocolVersion: 2, storageFormat: 'gzip-objects-v1', intervalMs: 30000 } } });
+});
 
 // 기존 MARO 서버 엔드포인트 (Unity 클라이언트 호환)
 app.use('/', projectsRouter);
@@ -80,8 +79,29 @@ app.use('/api', workspaceSnapshotsRouter);
 
 // Automatic canvas -> Markdown wiki sync and workspace-grounded chat.
 app.use('/api/llm-wiki', llmWikiRouter);
-app.use('/api/study-recordings', studyRecordingsRouter);
 app.use('/api/research-document-jobs', researchDocumentJobsRouter);
+
+// Google Scholar people and author-scoped publication search.
+let scholarAuthorsRouter;
+app.use('/api/people', async (req, res, next) => {
+  try {
+    scholarAuthorsRouter ??= import('./services/scholarAuthors.mjs').then(({ createScholarAuthorRouter }) =>
+      createScholarAuthorRouter(express, { apiKey: config.serpApiKey }));
+    (await scholarAuthorsRouter)(req, res, next);
+  } catch { res.status(503).json({ error: '연구자 서비스를 시작하지 못했습니다.' }); }
+});
+
+// organization-profile-search-v1
+let organizationRouter;
+app.use('/api/organizations', async (req, res, next) => {
+  try {
+    organizationRouter ??= import('./services/organizationProfiles.mjs').then(({ createOrganizationRouter }) =>
+      createOrganizationRouter(express, { apiKey: config.serpApiKey,
+        compileProfile: require('./services/promptSearch').structuredResponse,
+        model: config.openai.researchCompileModel }));
+    (await organizationRouter)(req, res, next);
+  } catch { res.status(503).json({ error: '기관 검색 서비스를 시작하지 못했습니다.' }); }
+});
 
 const server = http.createServer(app);
 
