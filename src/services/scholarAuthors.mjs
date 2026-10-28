@@ -11,7 +11,24 @@ export function authorIdFromUrl(input) {
     return url.protocol === 'https:' && profileHosts.test(url.hostname) && url.pathname === '/citations' && idPattern.test(id) ? id : null;
   } catch { return null; }
 }
-function failure(message, status = 502) { return Object.assign(new Error(message), { status }); }
+function failure(message, status = 502, code = 'PROVIDER_ERROR') { return Object.assign(new Error(message), { status, code }); }
+function nameTokens(value) {
+  return String(value || '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+}
+function candidateMatch(name, description, terms) {
+  const names = new Set(nameTokens(name));
+  if (!names.size) return 0;
+  if (terms.every(term => names.has(term))) return names.size === terms.length ? 3 : 2;
+  // Additional query terms may describe an affiliation, but the candidate's
+  // full name must still match. A shared surname alone is not enough.
+  const context = new Set([...names, ...nameTokens(description)]);
+  return [...names].every(term => terms.includes(term)) && terms.every(term => context.has(term)) ? 1 : 0;
+}
+function abbreviatedNameMatch(name, terms) {
+  const names = nameTokens(name);
+  return names.some(term => term.length > 1 && terms.includes(term)) &&
+    names.every(term => terms.includes(term) || (term.length === 1 && terms.some(full => full.startsWith(term))));
+}
 function validId(id) {
   if (!idPattern.test(String(id || ''))) throw failure('유효한 Scholar 프로필 ID가 필요합니다.', 400);
   return id;
@@ -32,18 +49,27 @@ export function createScholarAuthorService({ apiKey, fetchImpl = globalThis.fetc
   const pending = new Map();
   let active = 0;
   const waiting = [];
-  async function limited(fn) {
+  async function limited(fn, deadline = Infinity) {
     if (active >= 2) {
       if (waiting.length >= 20) throw failure('요청이 많습니다. 잠시 후 다시 시도해 주세요.', 429);
-      await new Promise(resolve => waiting.push(resolve));
+      await new Promise((resolve, reject) => {
+        let timer;
+        const resume = () => { clearTimeout(timer); resolve(); };
+        waiting.push(resume);
+        if (Number.isFinite(deadline)) timer = setTimeout(() => {
+          const index = waiting.indexOf(resume);
+          if (index >= 0) waiting.splice(index, 1);
+          reject(failure('검색 요청이 밀려 있습니다. 잠시 후 다시 시도해 주세요.', 504, 'PROVIDER_TIMEOUT'));
+        }, Math.max(0, deadline - now()));
+      });
     } else active++;
     try { return await fn(); } finally { const next = waiting.shift(); if (next) next(); else active--; }
   }
-  async function cached(key, ttl, fn) {
+  async function cached(key, ttl, fn, deadline = Infinity) {
     const item = cache.get(key);
     if (item && item.expires > now()) return item.value;
     if (pending.has(key)) return pending.get(key);
-    const task = limited(fn).then(value => {
+    const task = limited(fn, deadline).then(value => {
       if (cache.size >= 200) cache.delete(cache.keys().next().value);
       cache.set(key, { value, expires: now() + ttl });
       return value;
@@ -51,18 +77,27 @@ export function createScholarAuthorService({ apiKey, fetchImpl = globalThis.fetc
     pending.set(key, task);
     return task;
   }
-  async function request(parameters) {
-    if (!apiKey) throw failure('Garden 서버에 SERPAPI_KEY를 설정해 주세요.', 503);
+  async function request(parameters, timeoutMs = 25_000) {
+    if (!apiKey) throw failure('Garden 서버에 SERPAPI_KEY를 설정해 주세요.', 503, 'PROVIDER_NOT_CONFIGURED');
+    if (timeoutMs <= 0) throw failure('검색 응답이 늦어지고 있습니다. 잠시 후 다시 시도하거나 Scholar 프로필 URL을 입력해 주세요.', 504, 'PROVIDER_TIMEOUT');
     const url = new URL('https://serpapi.com/search.json');
     for (const [key, value] of Object.entries({ ...parameters, api_key: apiKey, hl: 'en' })) url.searchParams.set(key, String(value));
-    const response = await fetchImpl(url, { signal: AbortSignal.timeout(25_000) });
-    if (!response.ok) throw failure(response.status === 429 ? '검색 제공자의 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.' : 'Scholar 정보를 가져오지 못했습니다. 다시 시도해 주세요.', response.status === 429 ? 429 : 502);
-    const data = await response.json();
-    if (data.error) {
-      if (/no results|hasn't returned any results/i.test(data.error)) return { organic_results: [] };
-      throw failure('Scholar 제공자가 요청을 처리하지 못했습니다. 프로필 공개 여부를 확인하거나 다시 시도해 주세요.');
+    try {
+      const response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!response.ok) throw failure(response.status === 429 ? '검색 제공자의 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.' : 'Scholar 정보를 가져오지 못했습니다. 다시 시도해 주세요.', response.status === 429 ? 429 : 502, response.status === 429 ? 'PROVIDER_LIMIT' : [401, 403].includes(response.status) ? 'PROVIDER_AUTH' : 'PROVIDER_ERROR');
+      const data = await response.json();
+      if (data.error) {
+        if (/no results|hasn't returned any results/i.test(data.error)) return { organic_results: [] };
+        throw failure('Scholar 제공자가 요청을 처리하지 못했습니다. 프로필 공개 여부를 확인하거나 다시 시도해 주세요.');
+      }
+      return data;
+    } catch (error) {
+      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+        throw failure('검색 응답이 늦어지고 있습니다. 잠시 후 다시 시도하거나 Scholar 프로필 URL을 입력해 주세요.', 504, 'PROVIDER_TIMEOUT');
+      }
+      if (error?.status) throw error;
+      throw failure('검색 제공자에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.', 502, 'PROVIDER_UNAVAILABLE');
     }
-    return data;
   }
   async function authorPage(authorId, offset = 0) {
     validId(authorId);
@@ -79,23 +114,57 @@ export function createScholarAuthorService({ apiKey, fetchImpl = globalThis.fetc
   }
   async function getProfile(authorId) { return profile(authorId, await authorPage(authorId)); }
   async function search(query) {
-    query = String(query || '').trim();
+    query = String(query || '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
     if (query.length < 2 || query.length > 300) throw failure('이름·소속 또는 Scholar 프로필 URL을 입력해 주세요.', 400);
     if (/^https?:/i.test(query)) {
       const id = authorIdFromUrl(query);
       if (!id) throw failure('Scholar의 citations?user=… 프로필 URL을 입력해 주세요.', 400);
       return { candidates: [{ authorId: id, name: id, profileUrl: `https://scholar.google.com/citations?user=${id}` }], direct: true };
     }
-    const data = await cached(`search:${query}`, HOUR, () => request({ engine: 'google', q: `site:scholar.google.com/citations ${query}`, num: 10 }));
-    const candidates = new Map();
-    for (const item of data.organic_results || []) {
-      const authorId = authorIdFromUrl(item.link);
-      if (authorId && !candidates.has(authorId)) candidates.set(authorId, {
-        authorId, name: String(item.title || '').replace(/\s*[-–—]\s*Google Scholar.*$/i, '').replace(/[‪‬]/g, ''),
-        description: String(item.snippet || ''), profileUrl: `https://scholar.google.com/citations?user=${authorId}`,
-      });
-    }
-    return { candidates: [...candidates.values()].slice(0, 10), direct: false };
+    const words = query.match(/[\p{L}\p{N}]+/gu) || [];
+    if (!words.length) throw failure('연구자 이름을 입력해 주세요.', 400, 'INVALID_QUERY');
+    const terms = [...new Set(nameTokens(query))];
+    // Quote each word so names are not silently corrected and affiliation
+    // terms and different name orders can still be used in the same query.
+    const searchQuery = `site:scholar.google.com/citations ${words.map(word => `"${word}"`).join(' ')}`;
+    // Both discovery attempts fit inside the web proxy's 32-second limit,
+    // including time spent waiting for the shared provider queue.
+    const deadline = now() + 28_000;
+    return cached(`search:v3:${terms.join(' ')}`, HOUR, async () => {
+      const candidates = new Map();
+      let primaryError;
+      try {
+        const data = await request({ engine: 'google', q: searchQuery, nfpr: 1, num: 10 }, Math.min(12_000, deadline - now()));
+        for (const item of data.organic_results || []) {
+          const authorId = authorIdFromUrl(item.link);
+          const name = String(item.title || '').replace(/\s*[-–—]\s*Google Scholar.*$/i, '').replace(/[‪‬]/g, '').trim();
+          const description = String(item.snippet || '');
+          const match = candidateMatch(name, description, terms);
+          if (authorId && match && (!candidates.has(authorId) || candidates.get(authorId).match < match)) candidates.set(authorId, {
+            authorId, name, description, match, profileUrl: `https://scholar.google.com/citations?user=${authorId}`,
+          });
+        }
+      } catch (error) {
+        if (['PROVIDER_NOT_CONFIGURED', 'PROVIDER_LIMIT', 'PROVIDER_AUTH'].includes(error.code)) throw error;
+        primaryError = error;
+      }
+      if (!candidates.size) {
+        const data = await request({ engine: 'google_scholar', q: `author:"${words.join(' ')}"` }, Math.min(15_000, deadline - now()));
+        for (const item of data.organic_results || []) {
+          for (const author of item.publication_info?.authors || []) {
+            const authorId = authorIdFromUrl(author.link);
+            if (!authorId || candidates.has(authorId) || !abbreviatedNameMatch(author.name, terms)) continue;
+            candidates.set(authorId, { authorId, name: String(author.name),
+              description: '논문의 저자 정보에서 찾은 후보입니다.',
+              nameQuery: query, match: 1, profileUrl: `https://scholar.google.com/citations?user=${authorId}` });
+          }
+        }
+        // A failed primary lookup plus no matching fallback is inconclusive.
+        if (!candidates.size && primaryError) throw primaryError;
+      }
+      return { candidates: [...candidates.values()].sort((a, b) => b.match - a.match).slice(0, 10)
+        .map(({ authorId, name, description, profileUrl, nameQuery }) => ({ authorId, name, description, profileUrl, ...(nameQuery ? { nameQuery } : {}) })), direct: false };
+    }, deadline);
   }
   async function articles(authorId, offset = 0, query = '') {
     query = String(query).trim().slice(0, 300);
@@ -159,7 +228,7 @@ export function createScholarAuthorRouter(express, options) {
   const router = express.Router();
   const service = createScholarAuthorService(options);
   router.get('/search', async (req, res) => {
-    try { res.json(await service.search(req.query.query)); } catch (error) { res.status(error.status || 502).json({ error: error.message }); }
+    try { res.json(await service.search(req.query.query)); } catch (error) { res.status(error.status || 502).json({ error: error.message, code: error.code }); }
   });
   router.get('/:authorId/:action', async (req, res) => {
     try {
@@ -168,10 +237,10 @@ export function createScholarAuthorRouter(express, options) {
         res.set({ 'content-type': result.type, 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' }).send(Buffer.from(result.bytes));
       } else if (req.params.action === 'articles') res.json(await service.articles(req.params.authorId, Number(req.query.offset || 0), req.query.query || ''));
       else res.status(404).json({ error: 'Unknown action' });
-    } catch (error) { res.status(error.status || 502).json({ error: error.message }); }
+    } catch (error) { res.status(error.status || 502).json({ error: error.message, code: error.code }); }
   });
   router.get('/:authorId', async (req, res) => {
-    try { res.json({ profile: await service.getProfile(req.params.authorId) }); } catch (error) { res.status(error.status || 502).json({ error: error.message }); }
+    try { res.json({ profile: await service.getProfile(req.params.authorId) }); } catch (error) { res.status(error.status || 502).json({ error: error.message, code: error.code }); }
   });
   return router;
 }
