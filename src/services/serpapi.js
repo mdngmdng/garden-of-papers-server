@@ -3,6 +3,15 @@ const config = require('../config');
 
 const BASE_URL = 'https://serpapi.com/search';
 
+function requireScholarResponse(data) {
+  // SerpAPI reports a successful empty search in the error field. Let callers
+  // distinguish a missing identity / zero citations from an upstream failure.
+  const empty = data?.search_metadata?.status === 'Success'
+    && data.error === "Google hasn't returned any results for this query."
+    && !(data.organic_results || []).length;
+  if (data?.error && !empty) throw new Error(data.error);
+}
+
 function extractYear(summary) {
   const matches = String(summary || '').match(/\b(?:19|20)\d{2}\b/g);
   if (!matches?.length) return null;
@@ -47,7 +56,7 @@ function normalizeScholarResult(result) {
  * Google Scholar 일반 검색.
  * SerpAPI의 organic_results를 웹 클라이언트의 ScholarResult 형식으로 정규화한다.
  */
-async function searchScholar(query, offset = 0, limit = 10, { signal } = {}) {
+async function searchScholar(query, offset = 0, limit = 10, { signal, noCache = false } = {}) {
   if (!query || String(query).trim().length < 2) {
     throw new Error('query must contain at least two characters');
   }
@@ -55,21 +64,21 @@ async function searchScholar(query, offset = 0, limit = 10, { signal } = {}) {
 
   const safeOffset = Math.max(0, Number(offset) || 0);
   const safeLimit = Math.max(1, Math.min(10, Number(limit) || 10));
+  const params = {
+    engine: 'google_scholar',
+    api_key: config.serpApiKey,
+    q: String(query).trim(),
+    start: safeOffset,
+    num: safeLimit,
+    hl: 'en',
+  };
+  if (noCache) params.no_cache = 'true';
   const response = await axios.get(BASE_URL, {
-    params: {
-      engine: 'google_scholar',
-      api_key: config.serpApiKey,
-      q: String(query).trim(),
-      start: safeOffset,
-      num: safeLimit,
-      hl: 'en',
-    },
+    params,
     timeout: 30000,
     signal,
   });
-  if (response.data?.error) {
-    throw new Error(response.data.error);
-  }
+  requireScholarResponse(response.data);
 
   const results = (response.data?.organic_results || [])
     .map(normalizeScholarResult)
@@ -118,9 +127,7 @@ async function searchScholarCitations(
     params,
     timeout: 30000,
   });
-  if (response.data?.error) {
-    throw new Error(response.data.error);
-  }
+  requireScholarResponse(response.data);
 
   const results = (response.data?.organic_results || [])
     .map(normalizeScholarResult)

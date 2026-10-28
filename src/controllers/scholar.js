@@ -37,7 +37,7 @@ exports.searchScholar = async (req, res) => {
         sortByDate,
         noCache: refresh,
       })
-      : await searchScholar(query, offset, limit);
+      : await searchScholar(query, offset, limit, { noCache: refresh });
     res.set(
       'Cache-Control',
       refresh
