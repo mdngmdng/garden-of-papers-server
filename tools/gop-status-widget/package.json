@@ -1,0 +1,42 @@
+{
+  "name": "gop-status-widget",
+  "version": "1.1.0",
+  "description": "A small desktop connection monitor for Garden of Papers",
+  "author": "Garden of Papers",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "build:mac": "electron-builder --mac zip --arm64 --publish never",
+    "build:windows": "electron-builder --win zip --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "app.gardenofpapers.status",
+    "productName": "GOP Status",
+    "artifactName": "GOP-Status-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "monitor.cjs",
+      "ui/**/*",
+      "assets/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "identity": null,
+      "icon": "assets/icon.png"
+    },
+    "win": {
+      "signAndEditExecutable": false,
+      "icon": "assets/icon.png"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

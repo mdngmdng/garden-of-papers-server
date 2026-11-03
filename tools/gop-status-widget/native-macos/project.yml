@@ -1,0 +1,67 @@
+name: GOPStatusNative
+options:
+  deploymentTarget:
+    macOS: '14.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    MARKETING_VERSION: '1.1.0'
+    CURRENT_PROJECT_VERSION: '2'
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: '-'
+    ENABLE_HARDENED_RUNTIME: YES
+    GENERATE_INFOPLIST_FILE: YES
+    ENABLE_APP_SANDBOX: YES
+    ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
+    MACOSX_DEPLOYMENT_TARGET: '14.0'
+targets:
+  GOPServer:
+    type: application
+    platform: macOS
+    sources: [App, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.gardenofpapers.serverwidget
+        PRODUCT_NAME: GOP Server
+        INFOPLIST_KEY_CFBundleDisplayName: GOP Server
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleURLTypes:
+          - CFBundleURLName: app.gardenofpapers.serverwidget
+            CFBundleURLSchemes: [gopstatus]
+    entitlements:
+      path: App/App.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+    dependencies:
+      - target: GOPServerWidget
+        embed: true
+  GOPServerWidget:
+    type: app-extension
+    platform: macOS
+    sources: [Widget, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.gardenofpapers.serverwidget.widget
+        PRODUCT_NAME: GOPServerWidget
+        INFOPLIST_KEY_CFBundleDisplayName: GOP Server
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+    info:
+      path: Widget/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widget/Widget.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+schemes:
+  GOPServer:
+    build:
+      targets:
+        GOPServer: all

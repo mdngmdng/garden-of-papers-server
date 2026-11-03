@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>GOP Status</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><div class="brand">GOP SERVER</div><div class="window-actions"><button id="refresh" title="Check now" aria-label="Check now">↻</button><button id="pin" title="Always on top" aria-label="Always on top" aria-pressed="true">⌖</button><button id="settingsButton" title="Settings" aria-label="Settings">⚙</button><button id="hide" title="Hide to menu bar / system tray" aria-label="Hide widget">−</button></div></header>
+<main id="dashboard">
+  <button id="open" class="status" title="Open Garden of Papers" aria-label="Open Garden of Papers"><span id="signal" class="signal checking"></span><strong id="title" aria-live="polite">Checking…</strong></button>
+  <div class="timestamps"><span id="checked">Checking server…</span><span id="next">Every minute</span></div>
+</main>
+<form id="settings" hidden><div class="settings-title"><h1>Connection settings</h1><button type="button" id="back" aria-label="Back">×</button></div><label class="field">Public health URL<input id="endpoint" type="url" required spellcheck="false"></label><label class="toggle"><input type="checkbox" id="monitorLocal"><span>Monitor the server on this computer<small>Enable only on the computer running GOP.</small></span></label><label class="toggle"><input type="checkbox" id="notifications"><span>Connection alerts<small>Notify after two failed checks and on recovery.</small></span></label><p class="hint">Checks run every minute while this computer is awake. A failed check can also mean a network problem.</p><p id="error" role="alert"></p><button class="primary" type="submit" id="save">Save settings</button><button type="button" class="quit" id="quit">Quit GOP Status</button></form>
+<script src="renderer.js"></script></body></html>
